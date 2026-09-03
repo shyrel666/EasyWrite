@@ -50,17 +50,17 @@ class WordDocumentParser:
     REGEX_H1 = [
         re.compile(r"^第[一二三四五六七八九十百0-9]+[章节篇部]\s*.*"),
         re.compile(r"^[一二三四五六七八九十]+[、.．]\s*.*"),
-        re.compile(r"^[0-9]+\s+[^\d\s].*"),
-        re.compile(r"^[0-9]+[、.．]\s+[^\d\s].*"),
+        re.compile(r"^[0-9]{1,2}\s+[^\d\s\W].*"),
+        re.compile(r"^[0-9]{1,2}[、.．]\s*.*"),
     ]
     REGEX_H2 = [
-        re.compile(r"^[0-9]+\.[0-9]+\s*.*"),
+        re.compile(r"^[0-9]{1,2}\.[0-9]{1,2}\s*.*"),
         re.compile(r"^[（(][一二三四五六七八九十]+[）)]\s*.*"),
     ]
     REGEX_H3 = [
-        re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+\s*.*"),
-        re.compile(r"^[0-9]+[）)]\s*.*"),
-        re.compile(r"^[（(][0-9]+[）)]\s*.*"),
+        re.compile(r"^[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}\s*.*"),
+        re.compile(r"^[0-9]{1,2}[）)]\s*.*"),
+        re.compile(r"^[（(][0-9]{1,2}[）)]\s*.*"),
     ]
 
     def __init__(self):
@@ -82,17 +82,24 @@ class WordDocumentParser:
         elif "heading 4" in style_name or "标题 4" in style_name:
             return 3
 
-        # 2. 正则规则兜底判断（长度一般不宜过长，小于60字符）
-        if len(text) <= 60:
-            for pat in self.REGEX_H3:
-                if pat.match(text):
-                    return 3
-            for pat in self.REGEX_H2:
-                if pat.match(text):
-                    return 2
-            for pat in self.REGEX_H1:
-                if pat.match(text):
-                    return 1
+        # 2. 标题一般不以逗号、分号或顿号结尾，且长度一般在 3~60 字符
+        if len(text) > 60 or len(text) < 2 or text[-1] in ["，", ",", "；", ";", "、"]:
+            return None
+
+        # 过滤年份、日期或金额假标题（如 "2026 年是...", "100 万元"）
+        if re.match(r"^(?:19|20)\d\d\s*年", text) or re.match(r"^\d+\s*(?:万|千|亿|元|个|条|家|台|套)", text):
+            return None
+
+        # 正则规则兜底判断
+        for pat in self.REGEX_H3:
+            if pat.match(text):
+                return 3
+        for pat in self.REGEX_H2:
+            if pat.match(text):
+                return 2
+        for pat in self.REGEX_H1:
+            if pat.match(text):
+                return 1
 
         return None
 

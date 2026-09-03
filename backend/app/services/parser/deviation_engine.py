@@ -36,9 +36,13 @@ class DeviationEngine:
         candidate_clauses = []
         raw_lines = [l.strip() for l in tender_text.split("\n") if l.strip()]
         for line in raw_lines:
+            line_has_star = "★" in line or line.startswith("▲")
             if len(line) > 25 and ("。" in line or "；" in line):
                 sub_parts = [p.strip() for p in re.split(r'[。；;]+', line) if p.strip()]
-                candidate_clauses.extend(sub_parts)
+                for sp in sub_parts:
+                    if line_has_star and not ("★" in sp or sp.startswith("▲")):
+                        sp = "★ " + sp
+                    candidate_clauses.append(sp)
             else:
                 candidate_clauses.append(line)
 
@@ -114,24 +118,42 @@ class DeviationEngine:
         hits = self.kb.search(query=item.clause_title, top_k=1)
         ref_context = hits[0]["content"][:200] if hits else ""
 
+        # 2. 召回企业中台相关技术组件与资质
+        from app.services.assets.asset_manager import asset_manager
+        matched_comp = asset_manager.match_assets_for_section(item.clause_title, [])
+        comp_context = matched_comp.get("context_text", "")
+
         user_prompt = (
             f"【招标文件要求】：{item.clause_title}\n"
-            f"【是否★号条款】：{'是' if item.is_star else '否'}\n"
+            f"【是否★号条款】：{'是（绝不可产生负偏离，只能完全满足或优越正偏离）' if item.is_star else '否'}\n"
             f"【我司全局事实】：投标企业【{facts.company_name}】，核心产品【{facts.core_product_name}】，"
             f"技术栈【{facts.architecture_stack}】，数据库【{facts.database_selection}】\n"
-            f"【知识库参考】：{ref_context}\n\n"
-            f"请直接给出该条款的【点对点具体实现技术论述与佐证】，说明如何完全满足或正偏离。"
+            f"【企业中台可用资产】：{comp_context[:250] if comp_context else '国家级软件著作权与信创互认证体系'}\n"
+            f"【历史标书参考】：{ref_context}\n\n"
+            f"请以 JSON 格式输出响应结果：\n"
+            f"{{\"response_status\": \"完全满足\" 或 \"正偏离\", \"response_detail\": \"点对点具体技术佐证阐述（50~120字）\"}}"
         )
 
         if self.llm.is_configured:
             try:
-                res = self.llm.chat_completion(
+                data = self.llm.chat_completion_structured(
                     system_prompt=DEVIATION_PROMPT,
                     user_prompt=user_prompt
                 )
-                item.response_detail = res.strip()
-                item.response_status = "完全满足"
-                return item
+                if data and isinstance(data, dict):
+                    item.response_status = data.get("response_status", "完全满足")
+                    item.response_detail = data.get("response_detail", "")
+                    if item.response_detail:
+                        return item
+                else:
+                    # 普通文本生成兜底提取
+                    res = self.llm.chat_completion(
+                        system_prompt=DEVIATION_PROMPT,
+                        user_prompt=user_prompt
+                    )
+                    item.response_detail = res.strip()
+                    item.response_status = "正偏离" if ("优于" in res or "正偏离" in res) else "完全满足"
+                    return item
             except Exception as e:
                 print(f"[DeviationEngine] LLM 响应生成失败: {e}")
 

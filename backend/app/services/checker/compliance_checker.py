@@ -1,4 +1,5 @@
 import re
+import jieba
 from typing import List, Dict, Any, Optional
 from app.models.schemas import OutlineNode, GlobalFacts, ComplianceCheckReport, DeviationItem
 from app.core.llm_client import llm_client
@@ -73,16 +74,17 @@ class ComplianceChecker:
 
         # 2. ★号条款点对点响应核查
         satisfied_count = 0
+        STOPWORDS = {"必须", "应当", "要求", "支持", "具备", "提供", "投标人", "所投", "系统", "平台", "以及", "并且", "进行", "满足", "条款", "项目"}
         for star in star_items:
             clean_star = star.replace("★", "").replace("▲", "").strip()
-            # 提取核心关键词（如“自主知识产权”、“等级保护”、“国密”）
-            key_terms = [t for t in re.split(r'[,，。；;\s]+', clean_star) if len(t) >= 4]
+            # 利用 jieba 分词提取核心技术词条（如“自主知识产权”、“软件著作权”、“等级保护”、“国密”、“SM4”、“达梦”）
+            words = [w.strip() for w in jieba.lcut(clean_star) if len(w.strip()) >= 2 and w.strip() not in STOPWORDS]
             
             matched = False
-            if key_terms:
-                # 检查标书正文中是否涵盖这些核心要求
-                hits = [term for term in key_terms if term in full_text]
-                if len(hits) >= max(1, len(key_terms) // 2):
+            if words:
+                hits = [term for term in words if term in full_text]
+                # 若命中了至少一半核心词条或命中了长关键词
+                if len(hits) >= max(1, len(words) // 2) or any(len(h) >= 4 for h in hits):
                     matched = True
             elif clean_star[:8] in full_text:
                 matched = True

@@ -20,19 +20,31 @@
           <button 
             @click="activeTab = 'workspace'" 
             :class="activeTab === 'workspace' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'"
-            class="px-3 py-1.5 rounded-md transition">标书编纂台</button>
+            class="px-2.5 py-1.5 rounded-md transition">标书编纂台</button>
+          <button 
+            @click="activeTab = 'tender'" 
+            :class="activeTab === 'tender' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'"
+            class="px-2.5 py-1.5 rounded-md transition">18项拆标台</button>
           <button 
             @click="activeTab = 'deviation'" 
             :class="activeTab === 'deviation' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'"
-            class="px-3 py-1.5 rounded-md transition">技术偏离表</button>
+            class="px-2.5 py-1.5 rounded-md transition">技术偏离表</button>
           <button 
             @click="activeTab = 'compliance'" 
             :class="activeTab === 'compliance' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'"
-            class="px-3 py-1.5 rounded-md transition">废标红线体检</button>
+            class="px-2.5 py-1.5 rounded-md transition">八维质检与合规</button>
+          <button 
+            @click="activeTab = 'assets'" 
+            :class="activeTab === 'assets' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'"
+            class="px-2.5 py-1.5 rounded-md transition">企业资产中台</button>
           <button 
             @click="activeTab = 'knowledge'" 
             :class="activeTab === 'knowledge' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'"
-            class="px-3 py-1.5 rounded-md transition">企业知识库</button>
+            class="px-2.5 py-1.5 rounded-md transition">历史标书库</button>
+          <button 
+            @click="activeTab = 'templates'" 
+            :class="activeTab === 'templates' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'"
+            class="px-2.5 py-1.5 rounded-md transition">Word模板中心</button>
         </nav>
       </div>
 

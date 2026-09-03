@@ -16,7 +16,6 @@
     body {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
     }
-    /* 自定义滚动条样式 */
     ::-webkit-scrollbar {
       width: 6px;
       height: 6px;
@@ -60,6 +59,13 @@
       margin-top: 0.8rem;
       margin-bottom: 0.4rem;
     }
+    .bid-doc-preview h4 {
+      font-family: "SimHei", "黑体", sans-serif;
+      font-size: 1.0rem;
+      font-weight: 600;
+      margin-top: 0.6rem;
+      margin-bottom: 0.3rem;
+    }
     .bid-doc-preview p {
       text-indent: 2em;
       margin-bottom: 0.8rem;
@@ -89,11 +95,10 @@
 
     <!-- 全局顶部导航栏 -->
     <header class="bg-slate-900 text-white px-5 py-2.5 flex items-center justify-between shadow-md z-30 shrink-0">
-      <div class="flex items-center space-x-6">
+      <div class="flex items-center space-x-5">
         <!-- Logo -->
         <div class="flex items-center space-x-2.5 cursor-pointer" @click="activeTab = 'workspace'">
           <div class="w-8 h-8 rounded bg-blue-600 flex items-center justify-center font-bold text-lg text-white shadow">
-            <!-- Document Blueprint Icon (Clean, no AI sparkles) -->
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
             </svg>
@@ -101,32 +106,42 @@
           <div>
             <div class="font-bold text-base tracking-wide flex items-center gap-2">
               EasyWrite
-              <span class="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-normal border border-slate-700">技术标 Copilot</span>
+              <span class="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-normal border border-slate-700">智能标书综合系统</span>
             </div>
           </div>
         </div>
 
-        <!-- 当前激活项目下拉切换 -->
-        <div class="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-md border border-slate-700 text-sm">
+        <!-- 项目快速选择器与切换 -->
+        <div class="flex items-center space-x-2 bg-slate-800/90 px-3 py-1.5 rounded-md border border-slate-700 text-sm">
           <span class="text-slate-400 text-xs">当前项目:</span>
           <span class="font-medium text-slate-200 max-w-xs truncate">{{ currentProject?.name || '加载中...' }}</span>
-          <button @click="showNewProjectModal = true" class="text-xs text-blue-400 hover:text-blue-300 ml-2 underline">切换/新建</button>
+          <button @click="showNewProjectModal = true" class="text-xs text-blue-400 hover:text-blue-300 ml-2 font-medium underline">
+            切换/管理
+          </button>
         </div>
 
         <!-- 主功能导航 -->
-        <nav class="flex items-center space-x-1 ml-4 text-sm font-medium">
+        <nav class="flex items-center space-x-1 text-sm font-medium">
           <button 
             @click="activeTab = 'workspace'" 
             :class="activeTab === 'workspace' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'"
-            class="px-3 py-1.5 rounded-md transition flex items-center gap-1.5">
+            class="px-2.5 py-1.5 rounded-md transition flex items-center gap-1">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
             标书编纂台
           </button>
 
           <button 
+            @click="activeTab = 'tender'" 
+            :class="activeTab === 'tender' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'"
+            class="px-2.5 py-1.5 rounded-md transition flex items-center gap-1">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+            18项拆标台
+          </button>
+
+          <button 
             @click="activeTab = 'deviation'" 
             :class="activeTab === 'deviation' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'"
-            class="px-3 py-1.5 rounded-md transition flex items-center gap-1.5">
+            class="px-2.5 py-1.5 rounded-md transition flex items-center gap-1">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
             技术偏离表
             <span v-if="currentProject?.deviation_matrix?.length" class="text-xs bg-slate-700 px-1.5 rounded-full">{{ currentProject.deviation_matrix.length }}</span>
@@ -135,23 +150,31 @@
           <button 
             @click="activeTab = 'compliance'" 
             :class="activeTab === 'compliance' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'"
-            class="px-3 py-1.5 rounded-md transition flex items-center gap-1.5">
+            class="px-2.5 py-1.5 rounded-md transition flex items-center gap-1">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
-            废标红线体检
+            八维质检与合规
+          </button>
+
+          <button 
+            @click="activeTab = 'assets'" 
+            :class="activeTab === 'assets' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'"
+            class="px-2.5 py-1.5 rounded-md transition flex items-center gap-1">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
+            企业资产中台
           </button>
 
           <button 
             @click="activeTab = 'knowledge'" 
             :class="activeTab === 'knowledge' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'"
-            class="px-3 py-1.5 rounded-md transition flex items-center gap-1.5">
+            class="px-2.5 py-1.5 rounded-md transition flex items-center gap-1">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"></path></svg>
-            企业知识库
+            历史标书库
           </button>
 
           <button 
             @click="activeTab = 'templates'" 
             :class="activeTab === 'templates' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'"
-            class="px-3 py-1.5 rounded-md transition flex items-center gap-1.5">
+            class="px-2.5 py-1.5 rounded-md transition flex items-center gap-1">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"></path></svg>
             Word 模板中心
           </button>
@@ -159,29 +182,36 @@
       </div>
 
       <!-- 右侧操作栏 -->
-      <div class="flex items-center space-x-3">
-        <!-- 模板快捷选择器 -->
+      <div class="flex items-center space-x-2.5">
+        <!-- AI 模型状态与配置入口 -->
+        <button 
+          @click="openAiSettingsModal"
+          title="点击打开 AI 大模型与算力配置中心"
+          class="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs px-2.5 py-1.5 rounded flex items-center gap-1.5 transition cursor-pointer">
+          <span :class="aiSettings.has_api_key ? 'bg-emerald-500' : 'bg-amber-500'" class="w-2 h-2 rounded-full"></span>
+          <span class="font-medium max-w-[120px] truncate">{{ aiSettings.model || 'AI模型配置' }}</span>
+          <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+        </button>
+
         <div class="flex items-center space-x-1.5 text-xs text-slate-300">
           <span>排版风格:</span>
-          <select v-model="selectedTemplateId" class="bg-slate-800 text-slate-200 border border-slate-700 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
+          <select v-model="selectedTemplateId" class="bg-slate-800 text-slate-200 border border-slate-700 rounded px-2 py-1 text-xs focus:outline-none">
             <option v-for="tpl in templateList" :key="tpl.id" :value="tpl.id">{{ tpl.name }}</option>
           </select>
         </div>
 
-        <!-- 导出 Word 按钮 -->
         <button 
           @click="exportWord" 
           :disabled="isExporting"
           class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-1.5 rounded shadow flex items-center gap-1.5 transition disabled:opacity-50">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
           <span v-if="!isExporting">导出标书 Word</span>
-          <span v-else>正在生成排版...</span>
+          <span v-else>正在排版导出...</span>
         </button>
 
-        <!-- API 状态绿灯 -->
         <div class="flex items-center space-x-1 pl-2 border-l border-slate-700 text-xs text-slate-400">
           <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-          <span>API 在线</span>
+          <span>服务就绪</span>
         </div>
       </div>
     </header>
@@ -195,13 +225,22 @@
         <!-- 左侧: 大纲章节树 (280px) -->
         <aside class="w-72 bg-white border-r border-slate-200 flex flex-col shrink-0">
           <div class="p-3 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-1.5">
               <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"></path></svg>
-              <span class="font-semibold text-xs text-slate-700 uppercase tracking-wider">标书章节大纲树</span>
+              <span class="font-semibold text-xs text-slate-700 uppercase tracking-wider">标书章节大纲</span>
             </div>
-            <span class="text-xs bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-medium">
-              {{ completedSectionCount }}/{{ totalSectionCount }} 完成
-            </span>
+            <div class="flex items-center gap-1.5">
+              <button 
+                @click="generateAiCustomOutline" 
+                title="基于招标文件要求 AI 定制生成全新大纲树" 
+                class="text-[11px] text-blue-700 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-1.5 py-0.5 rounded border border-blue-200 transition flex items-center gap-0.5 font-medium">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                AI定制
+              </button>
+              <span class="text-xs bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded-full font-medium">
+                {{ completedSectionCount }}/{{ totalSectionCount }}
+              </span>
+            </div>
           </div>
 
           <!-- 目录列表滚动区 -->
@@ -220,7 +259,7 @@
                     'bg-emerald-100 text-emerald-700': node.status === 'reviewed'
                   }"
                   class="text-[10px] px-1.5 py-0.5 rounded ml-1 shrink-0">
-                  {{ node.status === 'reviewed' ? '已校审' : (node.status === 'completed' ? '已生成' : '待写') }}
+                  {{ node.status === 'reviewed' ? '已校审' : (node.status === 'completed' ? '已草拟' : '待写') }}
                 </span>
               </div>
 
@@ -247,10 +286,10 @@
             </template>
           </div>
 
-          <!-- 底部快速操作 -->
+          <!-- 底部状态指示 -->
           <div class="p-2 border-t border-slate-100 bg-slate-50 text-xs flex justify-between items-center text-slate-500">
-            <span>支持按大纲层级切片</span>
-            <button @click="autoGenerateAllSections" class="text-blue-600 hover:text-blue-700 font-medium">批量草拟全部</button>
+            <span>层级面包屑自动索引</span>
+            <span class="text-blue-600 font-medium">B/S 协同模式</span>
           </div>
         </aside>
 
@@ -268,7 +307,6 @@
 
             <!-- 操作按钮组 -->
             <div class="flex items-center space-x-2">
-              <!-- 切换源码/预览模式 -->
               <div class="bg-slate-100 p-0.5 rounded border border-slate-200 flex text-xs">
                 <button 
                   @click="viewMode = 'edit'" 
@@ -280,14 +318,31 @@
                   class="px-2.5 py-1 rounded transition">公文排版预览</button>
               </div>
 
-              <!-- AI 单章生成按钮 -->
+              <!-- AI 单章流式草拟按钮 (SSE 打字机) -->
               <button 
-                @click="generateCurrentSection"
+                v-if="!isGeneratingStream"
+                @click="generateCurrentSectionStream"
                 :disabled="isGenerating"
                 class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3.5 py-1.5 rounded shadow flex items-center gap-1.5 transition disabled:opacity-50">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                <span v-if="!isGenerating">分章基于知识库智能撰写</span>
-                <span v-else>正在深度生成中...</span>
+                <span>AI智能流式撰写</span>
+              </button>
+              <button 
+                v-else
+                @click="stopGeneratingStream"
+                class="bg-red-600 hover:bg-red-700 text-white text-xs font-medium px-3.5 py-1.5 rounded shadow flex items-center gap-1.5 transition animate-pulse">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                <span>停止流式生成</span>
+              </button>
+
+              <!-- 深度降AI味润色按钮 (YuduBid) -->
+              <button 
+                @click="polishCurrentSection"
+                :disabled="isPolishing"
+                class="bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium px-3.5 py-1.5 rounded shadow flex items-center gap-1.5 transition disabled:opacity-50">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                <span v-if="!isPolishing">一键降AI味润色</span>
+                <span v-else>润色中...</span>
               </button>
 
               <!-- 保存按钮 -->
@@ -300,18 +355,17 @@
             </div>
           </div>
 
-          <!-- 招标要点提示框 (若有) -->
+          <!-- 招标要点与对标提示 -->
           <div v-if="selectedSection?.requirements?.length" class="bg-amber-50/70 border-b border-amber-200/60 px-6 py-2 flex items-start gap-2 text-xs text-amber-900">
             <svg class="w-4 h-4 text-amber-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
             <div>
-              <span class="font-semibold">招标文件对标与评分要求：</span>
+              <span class="font-semibold">招标文件对标评分要点：</span>
               <span v-for="(req, idx) in selectedSection.requirements" :key="idx" class="ml-2 bg-amber-100/70 px-1.5 py-0.5 rounded text-amber-800">{{ req }}</span>
             </div>
           </div>
 
           <!-- 编辑区/预览区主容器 -->
           <div class="flex-1 overflow-y-auto p-6">
-            <!-- 源码编辑模式 -->
             <div v-show="viewMode === 'edit'" class="h-full flex flex-col">
               <textarea 
                 v-model="editorContent" 
@@ -323,7 +377,6 @@
               </div>
             </div>
 
-            <!-- 公文排版预览模式 -->
             <div v-show="viewMode === 'preview'" class="h-full max-w-4xl mx-auto bg-white p-8 shadow-sm border border-slate-200 rounded-lg">
               <div class="border-b-2 border-red-700 pb-2 mb-6 flex justify-between items-end">
                 <span class="text-sm font-bold text-red-800">技术投标方案</span>
@@ -336,37 +389,42 @@
 
         <!-- 右侧: 辅助与资产召回抽屉 (320px) -->
         <aside class="w-80 bg-slate-50 border-l border-slate-200 flex flex-col shrink-0">
-          <!-- 标签切换 -->
           <div class="flex border-b border-slate-200 bg-white text-xs font-semibold text-slate-600">
             <button 
               @click="sidebarTab = 'rag'" 
               :class="sidebarTab === 'rag' ? 'border-b-2 border-blue-600 text-blue-600 font-bold' : 'text-slate-500'"
               class="flex-1 py-2.5 text-center transition">
-              历史资产召回
+              历史标书
             </button>
             <button 
               @click="sidebarTab = 'facts'" 
               :class="sidebarTab === 'facts' ? 'border-b-2 border-blue-600 text-blue-600 font-bold' : 'text-slate-500'"
               class="flex-1 py-2.5 text-center transition">
-              全局事实约束
+              全局事实
+            </button>
+            <button 
+              @click="sidebarTab = 'assets'" 
+              :class="sidebarTab === 'assets' ? 'border-b-2 border-blue-600 text-blue-600 font-bold' : 'text-slate-500'"
+              class="flex-1 py-2.5 text-center transition">
+              中台资产
             </button>
             <button 
               @click="sidebarTab = 'prompt'" 
               :class="sidebarTab === 'prompt' ? 'border-b-2 border-blue-600 text-blue-600 font-bold' : 'text-slate-500'"
               class="flex-1 py-2.5 text-center transition">
-              专家调优意见
+              专家意见
             </button>
           </div>
 
-          <!-- Tab A: 召回参考资产 -->
+          <!-- Tab 1: 历史切片 -->
           <div v-show="sidebarTab === 'rag'" class="flex-1 overflow-y-auto p-3 space-y-3">
             <div class="text-xs text-slate-500 mb-1 flex items-center justify-between">
-              <span>命中的企业历史中标标书方案:</span>
+              <span>命中的企业历史标书方案:</span>
               <span class="text-slate-400">{{ currentReferences.length }} 篇切片</span>
             </div>
 
             <div v-if="!currentReferences.length" class="text-center py-10 text-slate-400 text-xs">
-              点击上方智能撰写后，此处将自动呈现本章节所参考与对标的历史真实标书切片。
+              点击智能撰写后，此处将自动呈现本章节所参考与对标的历史真实标书切片。
             </div>
 
             <div 
@@ -384,15 +442,15 @@
               <button 
                 @click="appendReferenceToEditor(refItem.content)" 
                 class="text-[11px] text-blue-600 hover:text-blue-700 font-medium">
-                + 将该成熟方案段落引用至正文
+                + 将该方案段落引用至正文
               </button>
             </div>
           </div>
 
-          <!-- Tab B: 全局事实约束 -->
+          <!-- Tab 2: 全局事实 -->
           <div v-show="sidebarTab === 'facts'" class="flex-1 overflow-y-auto p-3 space-y-3">
             <div class="text-xs text-slate-500 leading-relaxed">
-              以下事实作为本项目的只读硬约束，大模型在编写任何章节时均严格遵循，杜绝型号冲突与前后打架：
+              以下事实作为本项目的只读硬约束，大模型在编写任何章节时均严格遵循，杜绝型号冲突：
             </div>
 
             <div class="bg-white p-3 rounded-lg border border-slate-200 space-y-2 text-xs">
@@ -428,10 +486,38 @@
             </div>
           </div>
 
-          <!-- Tab C: 专家调优意见 -->
+          <!-- Tab 3: 企业中台资产快速引用 (Yibiao-Web) -->
+          <div v-show="sidebarTab === 'assets'" class="flex-1 overflow-y-auto p-3 space-y-3 text-xs">
+            <div class="text-slate-500 text-[11px]">可点击将中台标准资产段落直接追加至当前章节末尾：</div>
+            
+            <div class="space-y-2">
+              <div class="font-bold text-slate-700 text-xs border-b pb-1">标准方案组件块</div>
+              <div v-for="comp in componentList.slice(0, 3)" :key="comp.id" class="p-2.5 bg-white rounded border border-slate-200 shadow-sm space-y-1">
+                <div class="font-semibold text-slate-800">{{ comp.name }}</div>
+                <div class="text-[10px] text-slate-500 line-clamp-2">{{ comp.summary }}</div>
+                <button @click="insertAssetIntoEditor(comp.content)" class="text-[11px] text-blue-600 hover:text-blue-800 font-medium">
+                  + 插入本节正文
+                </button>
+              </div>
+
+              <div class="font-bold text-slate-700 text-xs border-b pb-1 pt-2">核心技术人员简历</div>
+              <div v-for="p in personnelList.slice(0, 2)" :key="p.id" class="p-2.5 bg-white rounded border border-slate-200 shadow-sm space-y-1">
+                <div class="flex justify-between font-semibold">
+                  <span>{{ p.name }} ({{ p.role }})</span>
+                  <span class="text-[10px] text-slate-500">{{ p.years_of_experience }}年经验</span>
+                </div>
+                <div class="text-[10px] text-slate-500 line-clamp-2">{{ p.intro }}</div>
+                <button @click="insertAssetIntoEditor('### 拟任骨干人员：' + p.name + '\n- **岗位**：' + p.role + '\n- **学历与职称**：' + p.education + ' / ' + p.professional_title + '\n- **个人履历述评**：\n' + p.intro)" class="text-[11px] text-blue-600 hover:text-blue-800 font-medium">
+                  + 插入人员履历
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab 4: 专家调优意见 -->
           <div v-show="sidebarTab === 'prompt'" class="flex-1 overflow-y-auto p-3 space-y-3">
             <div class="text-xs text-slate-500">
-              人工架构师可在下方输入本章节的特殊补充指导（如“突出在三级医院重症机房的高并发性能”）：
+              人工架构师可在下方输入本章节的特殊补充指导（如“突出高并发信创适配场景”）：
             </div>
             <textarea 
               v-model="customInstruction" 
@@ -445,18 +531,144 @@
         </aside>
       </div>
 
-      <!-- ================= 视口 2: 技术偏离表工作台 ================= -->
+      <!-- ================= 视口 2: 招标文件 18 项拆解台 (OpenBidKit) ================= -->
+      <div v-show="activeTab === 'tender'" class="h-full flex flex-col bg-slate-50 overflow-y-auto p-6">
+        <div class="max-w-6xl mx-auto w-full space-y-5">
+          <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div>
+              <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                招标文件 18 项核心要素结构化拆解工作台
+                <span class="text-xs px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-normal border border-blue-200">OpenBidKit 方法论</span>
+              </h2>
+              <p class="text-xs text-slate-500 mt-1">
+                将传统粗提大纲升级为 18 项精细化关键指标分析：最高限价、工期、评分占比、★号废标红线与资质门槛。
+              </p>
+            </div>
+
+            <div class="flex items-center space-x-2">
+              <button 
+                @click="syncTenderToProjectFacts" 
+                :disabled="!tenderAnalysis || isSyncingTender"
+                class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3.5 py-2 rounded shadow flex items-center gap-1.5 transition disabled:opacity-50">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
+                <span>一键同步至全局事实</span>
+              </button>
+
+              <button 
+                @click="syncTenderToDeviations" 
+                :disabled="!tenderAnalysis"
+                class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3.5 py-2 rounded shadow flex items-center gap-1.5 transition disabled:opacity-50">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                <span>一键同步至技术偏离表</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 输入或上传区域 -->
+          <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-3 text-xs">
+            <div class="flex justify-between items-center">
+              <span class="font-bold text-slate-800">粘贴招标文件核心商务与技术条款文本（或直接使用当前项目描述）：</span>
+              <button 
+                @click="analyzeTender" 
+                :disabled="isAnalyzingTender"
+                class="bg-slate-900 hover:bg-slate-800 text-white px-4 py-1.5 rounded font-medium shadow flex items-center gap-1 disabled:opacity-50">
+                <span v-if="!isAnalyzingTender">🚀 执行 18 项智能结构化拆解</span>
+                <span v-else>正在深度语义拆解中...</span>
+              </button>
+            </div>
+            <textarea 
+              v-model="tenderInputText" 
+              rows="4" 
+              placeholder="在此粘贴招标文件中的投标须知、评分办法、技术规范或★号条款段落（若留空则自动分析当前项目的项目概要）..."
+              class="w-full p-3 border border-slate-200 rounded text-xs bg-slate-50 focus:bg-white resize-none"></textarea>
+          </div>
+
+          <!-- 18 项结构化拆解结果四象限卡片 -->
+          <div v-if="tenderAnalysis" class="space-y-4">
+            <!-- 卡片 1: 核心商务与分值权重 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+              <h3 class="font-bold text-sm text-slate-800 border-b pb-2 mb-3 flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
+                1. 商务要素与综合评分权重（1~8项）
+              </h3>
+              <div class="grid grid-cols-4 gap-4 text-xs">
+                <div class="bg-slate-50 p-3 rounded border"><span class="text-slate-400 block">项目名称</span><span class="font-semibold text-slate-800">{{ tenderAnalysis.project_name }}</span></div>
+                <div class="bg-slate-50 p-3 rounded border"><span class="text-slate-400 block">招标编号</span><span class="font-semibold text-slate-800">{{ tenderAnalysis.tender_number || 'SW-2026-ZB-088' }}</span></div>
+                <div class="bg-slate-50 p-3 rounded border"><span class="text-slate-400 block">采购单位</span><span class="font-semibold text-slate-800">{{ tenderAnalysis.purchaser_name }}</span></div>
+                <div class="bg-blue-50/60 p-3 rounded border border-blue-200"><span class="text-blue-600 block font-semibold">最高投标限价</span><span class="font-bold text-blue-900 text-sm">{{ tenderAnalysis.budget_limit }}</span></div>
+                
+                <div class="bg-slate-50 p-3 rounded border"><span class="text-slate-400 block">评标方法</span><span class="font-semibold text-slate-800">{{ tenderAnalysis.scoring_method }}</span></div>
+                <div class="bg-slate-50 p-3 rounded border"><span class="text-slate-400 block">技术分值权重</span><span class="font-semibold text-emerald-700">{{ tenderAnalysis.tech_score_weight }}</span></div>
+                <div class="bg-slate-50 p-3 rounded border"><span class="text-slate-400 block">价格分值权重</span><span class="font-semibold text-blue-700">{{ tenderAnalysis.price_score_weight }}</span></div>
+                <div class="bg-slate-50 p-3 rounded border"><span class="text-slate-400 block">商务资信权重</span><span class="font-semibold text-amber-700">{{ tenderAnalysis.business_score_weight }}</span></div>
+              </div>
+            </div>
+
+            <!-- 卡片 2: 工期、质保与交付约束 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+              <h3 class="font-bold text-sm text-slate-800 border-b pb-2 mb-3 flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
+                2. 工期进度、质保与付款节点（9~14项）
+              </h3>
+              <div class="grid grid-cols-3 gap-4 text-xs">
+                <div class="bg-slate-50 p-3 rounded border"><span class="text-slate-400 block">工期/交付要求</span><span class="font-semibold text-slate-800">{{ tenderAnalysis.duration_requirement }}</span></div>
+                <div class="bg-slate-50 p-3 rounded border"><span class="text-slate-400 block">质保与售后服务期</span><span class="font-semibold text-slate-800">{{ tenderAnalysis.warranty_period }}</span></div>
+                <div class="bg-slate-50 p-3 rounded border"><span class="text-slate-400 block">投标保证金</span><span class="font-semibold text-slate-800">{{ tenderAnalysis.bid_security }}</span></div>
+                
+                <div class="bg-slate-50 p-3 rounded border"><span class="text-slate-400 block">投标有效期</span><span class="font-semibold text-slate-800">{{ tenderAnalysis.bid_validity_period }}</span></div>
+                <div class="bg-slate-50 p-3 rounded border"><span class="text-slate-400 block">项目实施地点</span><span class="font-semibold text-slate-800">{{ tenderAnalysis.project_location }}</span></div>
+                <div class="bg-slate-50 p-3 rounded border"><span class="text-slate-400 block">现场踏勘规则</span><span class="font-semibold text-slate-800">{{ tenderAnalysis.site_survey_rules }}</span></div>
+              </div>
+              <div class="mt-3 bg-slate-50 p-3 rounded border text-xs">
+                <span class="text-slate-400 block mb-1">付款方式与节点比例:</span>
+                <span class="font-mono text-slate-700">{{ tenderAnalysis.payment_milestones }}</span>
+              </div>
+            </div>
+
+            <!-- 卡片 3: ★号不可偏离重大条款与废标红线清单 -->
+            <div class="bg-white p-5 rounded-xl border border-red-200 shadow-sm">
+              <h3 class="font-bold text-sm text-red-800 border-b border-red-100 pb-2 mb-3 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <span class="w-2.5 h-2.5 rounded-full bg-red-600"></span>
+                  3. ★号不可偏离重大条款与废标红线清单 (共 {{ tenderAnalysis.star_disqualification_items?.length || 0 }} 项)
+                </div>
+                <span class="text-xs text-red-600 font-normal">任何一条不满足将导致全盘废标</span>
+              </h3>
+              <div class="space-y-2 text-xs">
+                <div v-for="(star, idx) in tenderAnalysis.star_disqualification_items || []" :key="idx" class="p-3 bg-red-50/70 rounded border border-red-100 flex items-start gap-2">
+                  <span class="text-red-600 font-bold">★{{ idx+1 }}.</span>
+                  <span class="font-medium text-red-950 flex-1 leading-relaxed">{{ star }}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 卡片 4: 强制资质门槛要求 -->
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+              <h3 class="font-bold text-sm text-slate-800 border-b pb-2 mb-3 flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                4. 投标人强制资格与门槛准入要求 (共 {{ tenderAnalysis.qualification_thresholds?.length || 0 }} 项)
+              </h3>
+              <div class="flex flex-wrap gap-2 text-xs">
+                <span v-for="(qual, idx) in tenderAnalysis.qualification_thresholds || []" :key="idx" class="bg-amber-50 text-amber-900 border border-amber-200 px-3 py-1.5 rounded font-medium">
+                  {{ qual }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 视口 3: 技术偏离表工作台 ================= -->
       <div v-show="activeTab === 'deviation'" class="h-full flex flex-col bg-slate-50 overflow-y-auto p-6">
         <div class="max-w-6xl mx-auto w-full space-y-4">
-          <!-- 标题与操作栏 -->
           <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
             <div>
               <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
-                技术规格偏离与响应工作台
-                <span class="text-xs font-normal text-slate-500">（支持点对点应答论述与原生双线表导出）</span>
+                技术规格偏离与点对点响应工作台
+                <span class="text-xs font-normal text-slate-500">（逐条对标、完全满足与原生双线表导出）</span>
               </h2>
               <p class="text-xs text-slate-500 mt-1">
-                针对招标文件中列出的全部技术指标，逐条生成点对点承接论述，确保无实质性负偏离。
+                针对招标文件中列出的全部技术指标，结合全局事实批量生成具备技术佐证的点对点应答论述。
               </p>
             </div>
 
@@ -466,7 +678,7 @@
                 :disabled="isExtractingDeviations"
                 class="bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium px-3.5 py-2 rounded shadow transition flex items-center gap-1.5 disabled:opacity-50">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
-                <span>从招标文件重新提取条款</span>
+                <span>重新提取指标</span>
               </button>
 
               <button 
@@ -474,7 +686,7 @@
                 :disabled="isGeneratingDeviations"
                 class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3.5 py-2 rounded shadow transition flex items-center gap-1.5 disabled:opacity-50">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                <span>AI 批量生成点对点响应说明</span>
+                <span>AI 批量点对点生成响应</span>
               </button>
 
               <button 
@@ -549,82 +761,249 @@
         </div>
       </div>
 
-      <!-- ================= 视口 3: 废标红线体检 ================= -->
+      <!-- ================= 视口 4: 八维质量与合规体检 (YuduBid / OpenBidKit) ================= -->
       <div v-show="activeTab === 'compliance'" class="h-full flex flex-col bg-slate-50 overflow-y-auto p-6">
-        <div class="max-w-4xl mx-auto w-full space-y-5">
+        <div class="max-w-5xl mx-auto w-full space-y-5">
           <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
             <div>
-              <h2 class="text-lg font-bold text-slate-900">标书废标项与负偏离全盘体检</h2>
-              <p class="text-xs text-slate-500 mt-1">自动对照招标文件的★号条款、资质红线及负偏离词汇，逐条核验整本标书合规性。</p>
+              <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                标书八维全盘质量与废标红线体检
+                <span class="text-xs px-2 py-0.5 rounded bg-amber-50 text-amber-700 font-normal border border-amber-200">YuduBid 八维体系</span>
+              </h2>
+              <p class="text-xs text-slate-500 mt-1">
+                对照合规红线、事实一致性、AI套话密度、工程参数深度及公文规范，输出权威自检体检报告。
+              </p>
             </div>
-            <button 
-              @click="runComplianceAudit" 
-              :disabled="isAuditing"
-              class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded shadow transition flex items-center gap-1.5 disabled:opacity-50">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-              <span v-if="!isAuditing">一键执行合规体检</span>
-              <span v-else>正在全盘扫描中...</span>
-            </button>
+            
+            <div class="flex items-center space-x-2">
+              <button 
+                @click="runEightDimensionAudit" 
+                :disabled="isQualityAuditing"
+                class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded shadow transition flex items-center gap-1.5 disabled:opacity-50">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                <span v-if="!isQualityAuditing">执行八维质量全盘体检</span>
+                <span v-else>正在深度体检中...</span>
+              </button>
+
+              <button 
+                @click="runComplianceAudit" 
+                :disabled="isAuditing"
+                class="bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold px-4 py-2 rounded shadow transition flex items-center gap-1.5 disabled:opacity-50">
+                <span>★号废标红线核查</span>
+              </button>
+            </div>
           </div>
 
-          <!-- 体检结果看板 -->
-          <div v-if="complianceReport" class="space-y-4">
-            <!-- 综合结论卡片 -->
+          <!-- 八维体检报告呈现 -->
+          <div v-if="qualityReport" class="space-y-4">
+            <!-- 综合评分看板 -->
             <div 
-              :class="complianceReport.passed ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-red-50 border-red-200 text-red-900'"
-              class="p-5 rounded-xl border flex items-start gap-4">
-              <div 
-                :class="complianceReport.passed ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'"
-                class="w-10 h-10 rounded-full flex items-center justify-center shrink-0 font-bold text-lg">
-                {{ complianceReport.passed ? '✓' : '!' }}
-              </div>
-              <div class="space-y-1 flex-1">
-                <h3 class="font-bold text-base">{{ complianceReport.passed ? '合规自检通过：未发现废标红线' : '体检预警：检测到废标红线或未满足项' }}</h3>
-                <p class="text-xs leading-relaxed">{{ complianceReport.summary }}</p>
-                <div class="text-xs font-mono pt-1">
-                  ★号条款响应进度: <span class="font-bold">{{ complianceReport.satisfied_star_items }}</span> / {{ complianceReport.total_star_items }} 项已达标
+              :class="qualityReport.passed ? 'bg-emerald-50 border-emerald-200 text-emerald-950' : 'bg-red-50 border-red-200 text-red-950'"
+              class="p-6 rounded-xl border flex items-center justify-between">
+              <div class="space-y-1">
+                <div class="flex items-center gap-3">
+                  <span class="text-2xl font-bold font-mono">{{ qualityReport.overall_score }} 分</span>
+                  <span 
+                    :class="qualityReport.passed ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'"
+                    class="px-2.5 py-0.5 rounded-full text-xs font-bold">{{ qualityReport.rating_level }}</span>
                 </div>
+                <p class="text-xs text-slate-700 leading-relaxed max-w-2xl">{{ qualityReport.summary }}</p>
               </div>
             </div>
 
-            <!-- 风险排查清单 -->
-            <div v-if="complianceReport.risk_items?.length" class="bg-white p-5 rounded-xl border border-red-200 shadow-sm space-y-3">
-              <h4 class="font-bold text-sm text-red-800 flex items-center gap-1.5">
-                <span class="w-2 h-2 rounded-full bg-red-600"></span>
-                必须整改的高危风险项清单 ({{ complianceReport.risk_items.length }})
-              </h4>
-              <div class="space-y-2">
-                <div 
-                  v-for="(risk, idx) in complianceReport.risk_items" 
-                  :key="idx"
-                  class="p-3 rounded bg-red-50/60 border border-red-100 text-xs text-red-900 space-y-1">
-                  <div class="font-semibold">{{ risk.item }}</div>
-                  <div class="text-red-700 text-[11px]">{{ risk.reason }}</div>
-                </div>
+            <!-- 检测到的 AI 套话词汇提醒 -->
+            <div v-if="qualityReport.de_ai_detected_phrases?.length" class="bg-amber-50 p-4 rounded-xl border border-amber-200 text-xs text-amber-900 space-y-2">
+              <div class="font-bold flex items-center gap-1.5">
+                <span>⚠️ 检测到 {{ qualityReport.de_ai_detected_phrases.length }} 处大模型常见空话套话（建议使用【一键降AI味润色】剔除）：</span>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <span v-for="(phrase, idx) in qualityReport.de_ai_detected_phrases" :key="idx" class="bg-white text-amber-800 border border-amber-300 px-2 py-0.5 rounded font-mono">
+                  "{{ phrase }}"
+                </span>
               </div>
             </div>
 
-            <!-- 轻度优化建议 -->
-            <div v-if="complianceReport.warnings?.length" class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-3">
-              <h4 class="font-bold text-sm text-amber-800 flex items-center gap-1.5">
-                <span class="w-2 h-2 rounded-full bg-amber-500"></span>
-                优化建议提醒 ({{ complianceReport.warnings.length }})
-              </h4>
-              <ul class="list-disc list-inside space-y-1 text-xs text-slate-700">
-                <li v-for="(warn, idx) in complianceReport.warnings" :key="idx">{{ warn }}</li>
-              </ul>
+            <!-- 八维细分卡片列表 -->
+            <div class="grid grid-cols-2 gap-4 text-xs">
+              <div v-for="(dim, idx) in qualityReport.dimensions" :key="idx" class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-2">
+                <div class="flex justify-between items-center">
+                  <span class="font-bold text-slate-800 text-sm">{{ dim.dimension_name }}</span>
+                  <span 
+                    :class="{
+                      'text-emerald-600 bg-emerald-50': dim.status === '优秀',
+                      'text-blue-600 bg-blue-50': dim.status === '良好',
+                      'text-amber-600 bg-amber-50': dim.status === '需整改',
+                      'text-red-600 bg-red-50': dim.status === '高危'
+                    }"
+                    class="font-mono font-bold px-2 py-0.5 rounded text-xs">
+                    {{ dim.score }} 分 ({{ dim.status }})
+                  </span>
+                </div>
+
+                <!-- 进度条 -->
+                <div class="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                  <div 
+                    class="h-full rounded-full transition-all"
+                    :class="dim.score >= 90 ? 'bg-emerald-500' : (dim.score >= 75 ? 'bg-blue-500' : 'bg-amber-500')"
+                    :style="{ width: dim.score + '%' }"></div>
+                </div>
+
+                <div class="text-[11px] text-slate-600 space-y-1">
+                  <div v-for="(find, f_idx) in dim.findings" :key="f_idx" class="flex items-start gap-1">
+                    <span class="text-slate-400">•</span>
+                    <span>{{ find }}</span>
+                  </div>
+                </div>
+
+                <div v-if="dim.suggestions?.length" class="text-[11px] text-blue-700 bg-blue-50/50 p-2 rounded border border-blue-100">
+                  <span class="font-semibold">整改建议: </span>{{ dim.suggestions[0] }}
+                </div>
+              </div>
             </div>
           </div>
           <div v-else class="text-center py-16 text-slate-400 text-xs bg-white rounded-xl border border-slate-200">
-            点击上方按钮，对当前已编写的标书执行全自动废标项与负偏离体检扫描。
+            点击上方按钮，对当前项目的大纲和已编纂正文执行全盘八维质量与废标红线体检。
           </div>
         </div>
       </div>
 
-      <!-- ================= 视口 4: 企业知识资产库 ================= -->
+      <!-- ================= 视口 5: 企业中台资产库 (Yibiao-Web) ================= -->
+      <div v-show="activeTab === 'assets'" class="h-full flex flex-col bg-slate-50 overflow-y-auto p-6">
+        <div class="max-w-6xl mx-auto w-full space-y-5">
+          <!-- 头部看板 -->
+          <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div>
+              <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                企业级统一资产中台
+                <span class="text-xs px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-normal border border-emerald-200">Yibiao-Web 资产中台</span>
+              </h2>
+              <p class="text-xs text-slate-500 mt-1">
+                解决资质、专家简历、历史业绩、标准技术组件分散痛点，在标书撰写时实现秒级精准匹配与自动注入。
+              </p>
+            </div>
+
+            <button @click="showAddAssetModal = true" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded shadow flex items-center gap-1.5">
+              + 录入新资产
+            </button>
+          </div>
+
+          <!-- 四分类标签导航 -->
+          <div class="flex border-b border-slate-200 bg-white rounded-t-xl px-4 text-xs font-semibold">
+            <button 
+              @click="activeAssetSubTab = 'qualifications'"
+              :class="activeAssetSubTab === 'qualifications' ? 'border-b-2 border-blue-600 text-blue-600 font-bold' : 'text-slate-500'"
+              class="py-3 px-4 transition flex items-center gap-1.5">
+              <span>🏢 公司资质认证库</span>
+              <span class="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full text-[10px]">{{ qualificationList.length }}</span>
+            </button>
+            <button 
+              @click="activeAssetSubTab = 'personnel'"
+              :class="activeAssetSubTab === 'personnel' ? 'border-b-2 border-blue-600 text-blue-600 font-bold' : 'text-slate-500'"
+              class="py-3 px-4 transition flex items-center gap-1.5">
+              <span>👨‍💼 技术骨干与人员证书履历</span>
+              <span class="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full text-[10px]">{{ personnelList.length }}</span>
+            </button>
+            <button 
+              @click="activeAssetSubTab = 'cases'"
+              :class="activeAssetSubTab === 'cases' ? 'border-b-2 border-blue-600 text-blue-600 font-bold' : 'text-slate-500'"
+              class="py-3 px-4 transition flex items-center gap-1.5">
+              <span>📑 同类重大中标业绩案例库</span>
+              <span class="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full text-[10px]">{{ caseList.length }}</span>
+            </button>
+            <button 
+              @click="activeAssetSubTab = 'components'"
+              :class="activeAssetSubTab === 'components' ? 'border-b-2 border-blue-600 text-blue-600 font-bold' : 'text-slate-500'"
+              class="py-3 px-4 transition flex items-center gap-1.5">
+              <span>🧩 标准方案组件复用库</span>
+              <span class="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full text-[10px]">{{ componentList.length }}</span>
+            </button>
+          </div>
+
+          <!-- 子视口 A: 资质认证库 -->
+          <div v-show="activeAssetSubTab === 'qualifications'" class="grid grid-cols-2 gap-4 text-xs">
+            <div v-for="q in qualificationList" :key="q.id" class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between space-y-3">
+              <div>
+                <div class="flex justify-between items-start mb-1">
+                  <span class="font-bold text-sm text-slate-900">{{ q.name }}</span>
+                  <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-mono text-[10px]">{{ q.level || '有效' }}</span>
+                </div>
+                <div class="text-slate-500 text-[11px] font-mono">证书编号: {{ q.cert_no }} | 发证机构: {{ q.issue_org }}</div>
+                <p class="text-slate-600 mt-2 leading-relaxed">{{ q.summary }}</p>
+                <div class="mt-2 text-slate-400 text-[10px]">有效截止: {{ q.expiry_date }} | 佐证: {{ q.proof_doc }}</div>
+              </div>
+              <div class="pt-2 border-t flex justify-end gap-2">
+                <button @click="deleteAssetItem('qualifications', q.id)" class="text-red-600 hover:text-red-700 text-[11px]">删除</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 子视口 B: 人员专家履历 -->
+          <div v-show="activeAssetSubTab === 'personnel'" class="grid grid-cols-2 gap-4 text-xs">
+            <div v-for="p in personnelList" :key="p.id" class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between space-y-3">
+              <div>
+                <div class="flex justify-between items-start mb-1">
+                  <span class="font-bold text-sm text-slate-900">{{ p.name }}</span>
+                  <span class="bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded font-medium text-[11px]">{{ p.role }}</span>
+                </div>
+                <div class="text-slate-500 text-[11px]">{{ p.education }} | 从业 {{ p.years_of_experience }} 年 | {{ p.professional_title }}</div>
+                <div class="mt-2 flex flex-wrap gap-1">
+                  <span v-for="(cert, c_idx) in p.certificates" :key="c_idx" class="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[10px]">
+                    {{ cert }}
+                  </span>
+                </div>
+                <p class="text-slate-600 mt-2 leading-relaxed line-clamp-3">{{ p.intro }}</p>
+              </div>
+              <div class="pt-2 border-t flex justify-end gap-2">
+                <button @click="deleteAssetItem('personnel', p.id)" class="text-red-600 hover:text-red-700 text-[11px]">删除</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 子视口 C: 业绩案例 -->
+          <div v-show="activeAssetSubTab === 'cases'" class="grid grid-cols-2 gap-4 text-xs">
+            <div v-for="c in caseList" :key="c.id" class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between space-y-3">
+              <div>
+                <div class="flex justify-between items-start mb-1">
+                  <span class="font-bold text-sm text-slate-900">{{ c.project_name }}</span>
+                  <span class="font-bold text-blue-700 font-mono text-sm">{{ c.contract_amount }}</span>
+                </div>
+                <div class="text-slate-500 text-[11px]">采购客户: {{ c.client_name }} | 签约时间: {{ c.sign_date }}</div>
+                <p class="text-slate-600 mt-2 leading-relaxed">{{ c.summary }}</p>
+                <div class="mt-2 bg-slate-50 p-2 rounded border text-[11px] text-slate-700">
+                  <span class="font-semibold text-emerald-800">验收结论: </span>{{ c.acceptance_status }}
+                </div>
+              </div>
+              <div class="pt-2 border-t flex justify-end gap-2">
+                <button @click="deleteAssetItem('cases', c.id)" class="text-red-600 hover:text-red-700 text-[11px]">删除</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 子视口 D: 方案组件 -->
+          <div v-show="activeAssetSubTab === 'components'" class="grid grid-cols-2 gap-4 text-xs">
+            <div v-for="comp in componentList" :key="comp.id" class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between space-y-3">
+              <div>
+                <div class="flex justify-between items-start mb-1">
+                  <span class="font-bold text-sm text-slate-900">{{ comp.name }}</span>
+                  <span class="bg-purple-50 text-purple-700 px-2 py-0.5 rounded text-[11px] font-medium">{{ comp.category }}</span>
+                </div>
+                <div class="flex flex-wrap gap-1 my-1.5">
+                  <span v-for="(t, idx) in comp.tags" :key="idx" class="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded text-[10px]">#{{ t }}</span>
+                </div>
+                <p class="text-slate-600 leading-relaxed line-clamp-3">{{ comp.summary }}</p>
+              </div>
+              <div class="pt-2 border-t flex justify-end gap-2">
+                <button @click="deleteAssetItem('components', comp.id)" class="text-red-600 hover:text-red-700 text-[11px]">删除</button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ================= 视口 6: 历史标书库 ================= -->
       <div v-show="activeTab === 'knowledge'" class="h-full flex flex-col bg-slate-50 overflow-y-auto p-6">
         <div class="max-w-5xl mx-auto w-full space-y-5">
-          <!-- 统计看板 -->
           <div class="grid grid-cols-3 gap-4">
             <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
               <div class="text-xs text-slate-500">已沉淀历史标书文档</div>
@@ -640,7 +1019,6 @@
             </div>
           </div>
 
-          <!-- 上传历史中标标书卡片 -->
           <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-3">
             <h3 class="font-bold text-sm text-slate-900">导入历史中标技术标书 / 方案白皮书</h3>
             <p class="text-xs text-slate-500">上传 .docx 文档，系统将自动读取 Word 大纲树（三级标题与技术表格），生成带面包屑上下文的知识切片。</p>
@@ -653,7 +1031,6 @@
             </div>
           </div>
 
-          <!-- 检索测试工具 -->
           <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-3">
             <h3 class="font-bold text-sm text-slate-900">知识库混合检索测试</h3>
             <div class="flex gap-2">
@@ -667,7 +1044,6 @@
               </button>
             </div>
 
-            <!-- 检索结果呈现 -->
             <div v-if="searchResults.length" class="space-y-2 mt-4">
               <div v-for="(item, idx) in searchResults" :key="idx" class="p-3 bg-slate-50 border rounded text-xs space-y-1">
                 <div class="flex justify-between font-semibold text-slate-800">
@@ -681,7 +1057,7 @@
         </div>
       </div>
 
-      <!-- ================= 视口 5: Word 模板中心 ================= -->
+      <!-- ================= 视口 7: Word 模板中心 ================= -->
       <div v-show="activeTab === 'templates'" class="h-full flex flex-col bg-slate-50 overflow-y-auto p-6">
         <div class="max-w-5xl mx-auto w-full space-y-5">
           <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex justify-between items-center">
@@ -694,7 +1070,6 @@
             </button>
           </div>
 
-          <!-- 模板卡片列表 -->
           <div class="grid grid-cols-3 gap-5">
             <div 
               v-for="tpl in templateList" 
@@ -722,15 +1097,37 @@
 
     </main>
 
-    <!-- 弹窗: 新建标书项目 Modal -->
+    <!-- 弹窗 1: 标书项目管理与切换 Modal -->
     <div v-if="showNewProjectModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div class="bg-white rounded-xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+      <div class="bg-white rounded-xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 space-y-4">
         <div class="flex justify-between items-center border-b pb-3">
-          <h3 class="font-bold text-base text-slate-900">新建招投标技术标项目</h3>
+          <h3 class="font-bold text-base text-slate-900">标书项目切换与生命周期管理</h3>
           <button @click="showNewProjectModal = false" class="text-slate-400 hover:text-slate-600">✕</button>
         </div>
 
-        <div class="space-y-3 text-xs">
+        <!-- 现有项目列表 -->
+        <div class="space-y-2">
+          <div class="text-xs font-semibold text-slate-700">已保存的标书项目 (点击可直接无缝切换)：</div>
+          <div class="max-h-44 overflow-y-auto space-y-1.5 border rounded-lg p-2 bg-slate-50">
+            <div 
+              v-for="p in projectList" 
+              :key="p.id"
+              class="p-2.5 bg-white rounded border border-slate-200 flex items-center justify-between hover:border-blue-300 transition">
+              <div class="cursor-pointer flex-1" @click="switchProject(p.id)">
+                <div class="font-semibold text-xs text-slate-800 flex items-center gap-2">
+                  <span>{{ p.name }}</span>
+                  <span v-if="currentProject?.id === p.id" class="bg-blue-100 text-blue-700 text-[10px] px-1.5 py-0.2 rounded font-bold">当前</span>
+                </div>
+                <div class="text-[11px] text-slate-400 mt-0.5">客户: {{ p.client_name }} | 进度: {{ p.completion_rate }}% ({{ p.completed_sections }}/{{ p.section_count }})</div>
+              </div>
+              <button @click="deleteProject(p.id)" class="text-red-500 hover:text-red-700 text-xs ml-3 px-2 py-1">删除</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 新建项目表单 -->
+        <div class="border-t pt-3 space-y-3 text-xs">
+          <div class="font-semibold text-slate-800">+ 新建标书项目：</div>
           <div>
             <label class="font-semibold text-slate-700 block mb-1">项目全称 *</label>
             <input v-model="newProjectForm.name" placeholder="例如：2026年某市政务大数据协同调度平台项目" class="w-full p-2 border rounded text-xs">
@@ -741,7 +1138,7 @@
           </div>
           <div>
             <label class="font-semibold text-slate-700 block mb-1">招标文件概要 / 关键技术要求（用于自动生成大纲与拆标）</label>
-            <textarea v-model="newProjectForm.description" rows="4" placeholder="粘贴招标文件中的建设目标、技术要求或★号条款..." class="w-full p-2 border rounded text-xs resize-none"></textarea>
+            <textarea v-model="newProjectForm.description" rows="2" placeholder="粘贴招标文件中的建设目标、技术要求或★号条款..." class="w-full p-2 border rounded text-xs resize-none"></textarea>
           </div>
         </div>
 
@@ -750,6 +1147,331 @@
           <button @click="createNewProject" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold shadow">
             立即创建标书项目
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗 2: 新增企业中台资产 Modal -->
+    <div v-if="showAddAssetModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+        <div class="flex justify-between items-center border-b pb-3">
+          <h3 class="font-bold text-base text-slate-900">录入企业统一中台资产</h3>
+          <button @click="showAddAssetModal = false" class="text-slate-400 hover:text-slate-600">✕</button>
+        </div>
+
+        <div class="space-y-3 text-xs">
+          <div>
+            <label class="font-semibold text-slate-700 block mb-1">资产类型 *</label>
+            <select v-model="newAssetForm.type" class="w-full p-2 border rounded text-xs bg-slate-50">
+              <option value="qualifications">公司资质认证 (CMMI/涉密/高新/ISO)</option>
+              <option value="personnel">技术骨干与专家简历 (PMP/高项/架构师)</option>
+              <option value="cases">历史重大中标业绩合同</option>
+              <option value="components">标准方案可复用组件模块</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="font-semibold text-slate-700 block mb-1">资产名称 / 姓名 / 项目全称 *</label>
+            <input v-model="newAssetForm.name" placeholder="输入名称..." class="w-full p-2 border rounded text-xs">
+          </div>
+
+          <div v-if="newAssetForm.type === 'qualifications'" class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="font-semibold text-slate-700 block mb-1">证书编号</label>
+              <input v-model="newAssetForm.cert_no" placeholder="如 CERT-2024-001" class="w-full p-2 border rounded text-xs">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-700 block mb-1">发证机构</label>
+              <input v-model="newAssetForm.issue_org" placeholder="如 国家版权局/CQC" class="w-full p-2 border rounded text-xs">
+            </div>
+          </div>
+
+          <div v-if="newAssetForm.type === 'personnel'" class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="font-semibold text-slate-700 block mb-1">拟任岗位</label>
+              <input v-model="newAssetForm.role" placeholder="如 项目总监 / 架构师" class="w-full p-2 border rounded text-xs">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-700 block mb-1">专业证书</label>
+              <input v-model="newAssetForm.certificates_str" placeholder="如 PMP、CISP、软考高级" class="w-full p-2 border rounded text-xs">
+            </div>
+          </div>
+
+          <div v-if="newAssetForm.type === 'cases'" class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="font-semibold text-slate-700 block mb-1">采购客户单位</label>
+              <input v-model="newAssetForm.client_name" placeholder="如 某市政务局" class="w-full p-2 border rounded text-xs">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-700 block mb-1">合同金额</label>
+              <input v-model="newAssetForm.contract_amount" placeholder="如 1,500.00 万元" class="w-full p-2 border rounded text-xs">
+            </div>
+          </div>
+
+          <div>
+            <label class="font-semibold text-slate-700 block mb-1">概述描述 / 亮点成效</label>
+            <textarea v-model="newAssetForm.summary" rows="2" placeholder="简要说明适用场景与亮点..." class="w-full p-2 border rounded text-xs resize-none"></textarea>
+          </div>
+
+          <div v-if="newAssetForm.type === 'components'">
+            <label class="font-semibold text-slate-700 block mb-1">标准方案正文 (Markdown)</label>
+            <textarea v-model="newAssetForm.content" rows="4" placeholder="在此输入标准方案章节正文..." class="w-full p-2 border rounded text-xs font-mono resize-none"></textarea>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2 border-t">
+          <button @click="showAddAssetModal = false" class="px-3 py-1.5 border rounded text-xs text-slate-600 hover:bg-slate-50">取消</button>
+          <button @click="saveNewAsset" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold shadow">
+            确认保存入库
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗 3: 新增 Word 模板 Modal -->
+    <div v-if="showNewTemplateModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 text-xs">
+        <div class="flex justify-between items-center border-b pb-3">
+          <h3 class="font-bold text-base text-slate-900">新建自定义 Word 标书模板</h3>
+          <button @click="showNewTemplateModal = false" class="text-slate-400 hover:text-slate-600">✕</button>
+        </div>
+
+        <div class="space-y-3">
+          <div>
+            <label class="font-semibold text-slate-700 block mb-1">模板名称 *</label>
+            <input v-model="newTemplateForm.name" placeholder="例如：水利电力工程蓝色专属模板" class="w-full p-2 border rounded text-xs">
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="font-semibold text-slate-700 block mb-1">正文字体</label>
+              <select v-model="newTemplateForm.primary_font" class="w-full p-2 border rounded text-xs bg-slate-50">
+                <option value="宋体">宋体</option>
+                <option value="仿宋">仿宋</option>
+                <option value="楷体">楷体</option>
+              </select>
+            </div>
+            <div>
+              <label class="font-semibold text-slate-700 block mb-1">大纲标题字体</label>
+              <select v-model="newTemplateForm.heading_font" class="w-full p-2 border rounded text-xs bg-slate-50">
+                <option value="黑体">黑体</option>
+                <option value="宋体">宋体</option>
+                <option value="微软雅黑">微软雅黑</option>
+              </select>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="font-semibold text-slate-700 block mb-1">主题主色 HEX</label>
+              <input v-model="newTemplateForm.theme_color" placeholder="#003366" class="w-full p-2 border rounded text-xs font-mono">
+            </div>
+            <div>
+              <label class="font-semibold text-slate-700 block mb-1">页眉文字</label>
+              <input v-model="newTemplateForm.header_text" placeholder="技术投标文件" class="w-full p-2 border rounded text-xs">
+            </div>
+          </div>
+          <div>
+            <label class="font-semibold text-slate-700 block mb-1">模板适用场景描述</label>
+            <input v-model="newTemplateForm.description" placeholder="说明适用的招标行业或业主类型..." class="w-full p-2 border rounded text-xs">
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2 border-t">
+          <button @click="showNewTemplateModal = false" class="px-3 py-1.5 border rounded text-xs text-slate-600 hover:bg-slate-50">取消</button>
+          <button @click="createCustomTemplate" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold shadow">
+            确认创建模板
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗 4: AI 模型与算力配置中心 Modal -->
+    <div v-if="showAiSettingsModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 space-y-4 text-xs">
+        <div class="flex justify-between items-start border-b pb-3">
+          <div>
+            <h3 class="font-bold text-base text-slate-900 flex items-center gap-2">
+              <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path></svg>
+              AI 模型与算力配置中心
+            </h3>
+            <p class="text-slate-500 text-[11px] mt-0.5">支持 DeepSeek、通义千问、硅基流动与私有化 Ollama，无需重启即时热生效</p>
+          </div>
+          <button @click="showAiSettingsModal = false" class="text-slate-400 hover:text-slate-600 text-sm font-bold">✕</button>
+        </div>
+
+        <div class="space-y-3.5">
+          <!-- 预设选择 -->
+          <div>
+            <label class="font-semibold text-slate-700 block mb-1">选择模型供应商预设</label>
+            <select v-model="aiSettingsForm.provider" @change="onProviderChange" class="w-full p-2 border rounded text-xs bg-slate-50 font-medium text-slate-800">
+              <option value="deepseek">DeepSeek 深度求索</option>
+              <option value="qwen">阿里通义千问 DashScope</option>
+              <option value="siliconflow">硅基流动 SiliconFlow</option>
+              <option value="doubao">字节跳动 豆包</option>
+              <option value="zhipu">智谱清言 BigModel</option>
+              <option value="moonshot">月之暗面 Kimi</option>
+              <option value="ollama">本地私有化 Ollama</option>
+              <option value="openai">OpenAI 官方协议</option>
+              <option value="claude_proxy">Anthropic Claude 代理</option>
+              <option value="custom">自定义 OpenAI 兼容接口</option>
+            </select>
+          </div>
+
+          <!-- Base URL -->
+          <div>
+            <label class="font-semibold text-slate-700 block mb-1">API Base URL (端点基地址) *</label>
+            <input v-model="aiSettingsForm.base_url" placeholder="例如：https://api.deepseek.com/v1" class="w-full p-2 border rounded text-xs font-mono bg-white">
+          </div>
+
+          <!-- API Key -->
+          <div>
+            <div class="flex justify-between items-center mb-1">
+              <label class="font-semibold text-slate-700">API Key (密钥凭证) *</label>
+              <span v-if="aiSettings.has_api_key" class="text-[11px] text-emerald-600 font-medium">
+                当前状态: 已配置 ({{ aiSettings.api_key_masked }})
+              </span>
+              <span v-else class="text-[11px] text-amber-600 font-medium">
+                当前状态: 未配置 (系统处于离线回退模式)
+              </span>
+            </div>
+            <div class="relative flex items-center">
+              <input 
+                :type="showApiKey ? 'text' : 'password'" 
+                v-model="aiSettingsForm.api_key" 
+                :placeholder="aiSettings.has_api_key ? '留空则保持现有密钥不变；输入新密钥以覆盖' : '请输入以 sk- 开头的 API Key...'" 
+                class="w-full p-2 pr-16 border rounded text-xs font-mono bg-white">
+              <button 
+                type="button" 
+                @click="showApiKey = !showApiKey" 
+                class="absolute right-2 text-[11px] text-slate-500 hover:text-slate-700 px-1.5 py-0.5 rounded border border-slate-200">
+                {{ showApiKey ? '隐藏' : '显示' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- 模型选择与在线刷新区 -->
+          <div class="border border-slate-200 bg-slate-50/70 p-2.5 rounded-lg space-y-2">
+            <div class="flex justify-between items-center">
+              <label class="font-semibold text-slate-700 flex items-center gap-1.5">
+                <span>模型名称 (Model) *</span>
+                <span class="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.2 rounded font-mono font-normal">2025/2026 最新</span>
+              </label>
+              <button 
+                type="button" 
+                @click="fetchOnlineAiModels"
+                :disabled="isFetchingModels"
+                class="text-[11px] text-blue-600 hover:text-blue-800 flex items-center gap-1 font-medium disabled:opacity-50 cursor-pointer bg-white px-2 py-0.5 rounded border border-blue-200 shadow-2xs transition">
+                <span v-if="isFetchingModels" class="w-2.5 h-2.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></span>
+                <span v-else>🌐</span>
+                {{ isFetchingModels ? '正在联网拉取中...' : '联网更新最新模型清单' }}
+              </button>
+            </div>
+
+            <!-- 下拉选择推荐/在线模型 -->
+            <div>
+              <select 
+                v-model="aiSettingsForm.model" 
+                class="w-full p-2 border rounded text-xs font-mono bg-white font-semibold text-slate-800">
+                <option v-for="m in currentAvailableModels" :key="m" :value="m">{{ m }}</option>
+                <option value="__custom__">⚙️ 自定义输入其它模型名称...</option>
+              </select>
+            </div>
+
+            <!-- 自定义输入 -->
+            <div v-if="aiSettingsForm.model === '__custom__' || isCustomModelInput">
+              <input 
+                v-model="customModelInput" 
+                @input="aiSettingsForm.model = customModelInput"
+                placeholder="输入最新自定义模型名，如 deepseek-v4-pro, qwen-max-latest..." 
+                class="w-full p-2 border border-blue-400 rounded text-xs font-mono bg-blue-50/40">
+            </div>
+
+            <!-- 热门最新模型快捷推荐标签 -->
+            <div class="flex flex-wrap items-center gap-1.5 pt-0.5">
+              <span class="text-[10px] text-slate-400">快速选用:</span>
+              <button 
+                v-for="m in currentAvailableModels.slice(0, 5)" 
+                :key="m" 
+                type="button"
+                @click="aiSettingsForm.model = m; isCustomModelInput = false"
+                :class="aiSettingsForm.model === m ? 'bg-blue-600 text-white font-semibold' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'"
+                class="px-2 py-0.5 rounded text-[10px] transition cursor-pointer font-mono">
+                {{ m }}
+              </button>
+              <button 
+                type="button" 
+                @click="isCustomModelInput = !isCustomModelInput" 
+                class="text-[10px] text-slate-500 hover:text-blue-600 underline ml-auto cursor-pointer">
+                {{ isCustomModelInput ? '收起自定义' : '手动填写' }}
+              </button>
+            </div>
+
+            <!-- 联网模型拉取状态提示 -->
+            <div v-if="fetchModelsNotice" class="text-[11px] p-1.5 rounded flex items-center gap-1.5" :class="fetchModelsNotice.ok ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'">
+              <span>{{ fetchModelsNotice.ok ? '✅' : 'ℹ️' }}</span>
+              <span>{{ fetchModelsNotice.message }}</span>
+            </div>
+          </div>
+
+          <!-- 采样温度与单次 Token 限制 -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <div class="flex justify-between items-center mb-1">
+                <label class="font-semibold text-slate-700">采样温度 (Temperature)</label>
+                <span class="text-slate-500 text-[11px] font-mono">{{ aiSettingsForm.temperature }}</span>
+              </div>
+              <input type="range" min="0" max="1" step="0.05" v-model.number="aiSettingsForm.temperature" class="w-full mt-1">
+              <div class="flex justify-between text-[10px] text-slate-400">
+                <span>严谨(0.0)</span>
+                <span>工程标准(0.3)</span>
+                <span>创意(0.8)</span>
+              </div>
+            </div>
+            <div>
+              <label class="font-semibold text-slate-700 block mb-1">单次最大 Token 输出限制</label>
+              <select v-model="aiSettingsForm.max_tokens" class="w-full p-2 border rounded text-xs bg-white font-mono">
+                <option :value="4096">4,096 tokens (常规分章标准)</option>
+                <option :value="8192">8,192 tokens (万字详细长章)</option>
+                <option :value="16384">16,384 tokens (超长综合方案)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 连通性测试区 -->
+          <div class="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-slate-700 font-medium">端点连通性与响应延时探针</span>
+              <button 
+                @click="testAiProbe" 
+                :disabled="isProbing"
+                class="px-3 py-1 bg-white border border-slate-300 hover:bg-slate-100 rounded text-slate-700 font-medium text-xs shadow-sm flex items-center gap-1.5 transition disabled:opacity-50">
+                <span v-if="isProbing" class="w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></span>
+                <span v-if="!isProbing">发送探测请求</span>
+                <span v-else>探测中...</span>
+              </button>
+            </div>
+            
+            <div v-if="aiProbeStatus" class="text-xs p-2 rounded" :class="aiProbeStatus.ok ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-red-50 text-red-800 border border-red-200'">
+              <div v-if="aiProbeStatus.ok" class="flex items-center gap-1.5 font-medium">
+                <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                <span>连通成功！往返延迟: <strong>{{ aiProbeStatus.latency_ms }} ms</strong> (模型响应: {{ aiProbeStatus.model }})</span>
+              </div>
+              <div v-else class="flex items-start gap-1.5">
+                <svg class="w-4 h-4 text-red-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                <span>{{ aiProbeStatus.error }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex justify-between items-center pt-3 border-t">
+          <span class="text-[11px] text-slate-400">所有密钥均安全保存在本地服务器环境</span>
+          <div class="flex gap-2">
+            <button @click="showAiSettingsModal = false" class="px-3 py-1.5 border rounded text-xs text-slate-600 hover:bg-slate-50">取消</button>
+            <button @click="saveAiSettings" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-semibold shadow flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+              保存并热加载生效
+            </button>
+          </div>
         </div>
       </div>
     </div>

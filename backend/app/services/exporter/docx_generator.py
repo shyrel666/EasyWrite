@@ -12,6 +12,7 @@ from docx.oxml.ns import nsdecls, qn
 
 from app.core.config import settings
 from app.models.schemas import OutlineNode, GlobalFacts
+from app.services.exporter.diagram_renderer import diagram_renderer
 
 class DocxStyleConfig:
     """
@@ -141,7 +142,28 @@ class DocxBidExporter:
         doc.add_page_break()
 
     def _render_mermaid_block(self, doc: Document, mermaid_code: str):
-        """将 Mermaid 架构图渲染为带有规范框线和题注的高清插槽"""
+        """将 Mermaid 架构图渲染为高清矢量质感图片并插入 Word，附带规范公文题注"""
+        img_path = diagram_renderer.render_to_image(mermaid_code)
+        if img_path and img_path.exists():
+            p_img = doc.add_paragraph()
+            p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p_img.paragraph_format.first_line_indent = Pt(0)
+            p_img.paragraph_format.space_before = Pt(10)
+            p_img.paragraph_format.space_after = Pt(4)
+            run = p_img.add_run()
+            run.add_picture(str(img_path), width=Inches(5.8))
+
+            p_caption = doc.add_paragraph()
+            p_caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p_caption.paragraph_format.first_line_indent = Pt(0)
+            p_caption.paragraph_format.space_after = Pt(8)
+            r_cap = p_caption.add_run("图：系统逻辑架构与业务数据流向拓扑图")
+            r_cap.font.name = '楷体'
+            r_cap.font.size = Pt(10)
+            r_cap.font.color.rgb = RGBColor(100, 100, 100)
+            return
+
+        # 降级备用方案：生成带边框的高清格式插槽
         table = doc.add_table(rows=1, cols=1)
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
         cell = table.cell(0, 0)
@@ -156,14 +178,12 @@ class DocxBidExporter:
         r_title.bold = True
         r_title.font.color.rgb = RGBColor(0, 51, 102)
 
-        # 填入结构流代码预览
         clean_lines = [l.strip() for l in mermaid_code.strip().split("\n") if l.strip() and not l.startswith("```")]
         r_code = p.add_run("\n".join(clean_lines[:10]))
         r_code.font.name = 'Consolas'
         r_code.font.size = Pt(9.5)
         r_code.font.color.rgb = RGBColor(80, 80, 80)
 
-        # 题注
         p_caption = doc.add_paragraph()
         p_caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
         p_caption.paragraph_format.first_line_indent = Pt(0)
@@ -219,6 +239,8 @@ class DocxBidExporter:
         table_lines = []
         in_mermaid = False
         mermaid_lines = []
+        in_code = False
+        code_lines = []
 
         for line in lines:
             trimmed = line.strip()
@@ -239,6 +261,27 @@ class DocxBidExporter:
                     mermaid_lines.append(trimmed)
                 continue
 
+            # 处理通用代码块 (```json, ```python, etc.)
+            if trimmed.startswith("```") and not in_code:
+                in_code = True
+                code_lines = []
+                continue
+            elif in_code:
+                if trimmed.startswith("```"):
+                    in_code = False
+                    if code_lines:
+                        p_code = doc.add_paragraph()
+                        p_code.paragraph_format.left_indent = Pt(18)
+                        p_code.paragraph_format.first_line_indent = Pt(0)
+                        r = p_code.add_run("\n".join(code_lines))
+                        r.font.name = 'Consolas'
+                        r.font.size = Pt(9.5)
+                        r.font.color.rgb = RGBColor(60, 60, 60)
+                    code_lines = []
+                else:
+                    code_lines.append(trimmed)
+                continue
+
             # 处理 Markdown 表格
             if trimmed.startswith("|") and trimmed.endswith("|"):
                 in_table = True
@@ -250,7 +293,16 @@ class DocxBidExporter:
                 in_table = False
 
             # 处理 Markdown 标题
-            if trimmed.startswith("### "):
+            if trimmed.startswith("#### "):
+                p = doc.add_paragraph()
+                p.paragraph_format.space_before = Pt(5)
+                p.paragraph_format.space_after = Pt(2)
+                p.paragraph_format.first_line_indent = Pt(0)
+                run = p.add_run(trimmed[5:].strip())
+                run.font.name = '黑体'
+                run.font.size = Pt(11)
+                run.bold = True
+            elif trimmed.startswith("### "):
                 p = doc.add_paragraph()
                 p.paragraph_format.space_before = Pt(6)
                 p.paragraph_format.space_after = Pt(3)
@@ -268,6 +320,15 @@ class DocxBidExporter:
                 run.font.name = '黑体'
                 run.font.size = Pt(14)
                 run.bold = True
+            elif trimmed.startswith("# "):
+                p = doc.add_paragraph()
+                p.paragraph_format.space_before = Pt(10)
+                p.paragraph_format.space_after = Pt(6)
+                p.paragraph_format.first_line_indent = Pt(0)
+                run = p.add_run(trimmed[2:].strip())
+                run.font.name = '黑体'
+                run.font.size = Pt(16)
+                run.bold = True
             elif trimmed.startswith("- ") or trimmed.startswith("* "):
                 p = doc.add_paragraph()
                 p.paragraph_format.left_indent = Pt(24)
@@ -275,9 +336,19 @@ class DocxBidExporter:
                 p.paragraph_format.line_spacing = 1.3
                 run_bullet = p.add_run("●  ")
                 run_bullet.font.size = Pt(8)
-                run_text = p.add_run(trimmed[2:].strip())
-                run_text.font.name = '宋体'
-                run_text.font.size = Pt(12)
+                
+                body_str = trimmed[2:].strip()
+                parts = re.split(r'(\*\*.*?\*\*)', body_str)
+                for part in parts:
+                    if part.startswith('**') and part.endswith('**'):
+                        r = p.add_run(part[2:-2])
+                        r.font.name = '宋体'
+                        r.font.size = Pt(12)
+                        r.bold = True
+                    else:
+                        r = p.add_run(part)
+                        r.font.name = '宋体'
+                        r.font.size = Pt(12)
             else:
                 p = doc.add_paragraph()
                 p.paragraph_format.first_line_indent = Pt(24)

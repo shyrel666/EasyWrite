@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -30,9 +30,7 @@ class Settings(BaseSettings):
     OUTPUT_DIR: Path = DATA_DIR / "exports"
     TEMPLATE_DIR: Path = BASE_DIR / "templates"
     
-    class Config:
-        env_file = ".env"
-        extra = "allow"
+    model_config = SettingsConfigDict(env_file=".env", extra="allow")
 
 settings = Settings()
 

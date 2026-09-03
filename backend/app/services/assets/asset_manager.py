@@ -1,0 +1,473 @@
+import json
+import uuid
+from pathlib import Path
+from typing import List, Dict, Any, Optional
+from app.core.config import settings
+from app.models.schemas import (
+    CompanyQualification, PersonnelAsset, CaseContract, SolutionComponent
+)
+
+class EnterpriseAssetManager:
+    """
+    企业统一中台资产管理服务（借鉴 Yibiao-Web 企业集中资产中台）：
+    1. 集中沉淀企业四大核心资产库：
+       - ① 公司资质认证库 (Company Qualifications)
+       - ② 技术骨干与人员证书履历库 (Personnel & Certifications)
+       - ③ 历史同类中标业绩案例库 (Historical Cases & Contracts)
+       - ④ 标准方案可复用组件库 (Reusable Solution Components)
+    2. 支持标签、分类检索与全文匹配
+    3. 支持在标书智能草拟时（如项目团队、资质要求、业绩案例、技术模块）自动命中与注入
+    4. 本地持久化至 data/enterprise_assets.json
+    """
+
+    DEFAULT_QUALIFICATIONS = [
+        {
+            "id": "qual_cmmi5",
+            "name": "CMMI 5级 软件成熟度能力最高级别认证",
+            "cert_no": "CMMI-V2.0-5-2023-0988",
+            "category": "研发能力",
+            "level": "5级",
+            "issue_org": "CMMI Institute",
+            "issue_date": "2023-11-15",
+            "expiry_date": "2026-11-14",
+            "summary": "全球公认的软件工程开发与过程管理最高级别认证，在技术标评分中通常占满分4~5分",
+            "proof_doc": "附录A-01_CMMI5认证证书扫描件及官网公示截屏.pdf"
+        },
+        {
+            "id": "qual_cs4",
+            "name": "国家信息系统建设和服务能力评估 CS4 级 (优秀级)",
+            "cert_no": "CS-2024-4-00129",
+            "category": "综合资质",
+            "level": "CS4级",
+            "issue_org": "中国电子信息行业联合会",
+            "issue_date": "2024-03-20",
+            "expiry_date": "2028-03-19",
+            "summary": "国内信息化与系统集成领域权威能力认证，证明具备承担国家级重大数字化工程总集成能力",
+            "proof_doc": "附录A-02_CS4证书及能力评估报告.pdf"
+        },
+        {
+            "id": "qual_secret",
+            "name": "涉密信息系统集成资质（系统集成 / 软件开发 双甲级）",
+            "cert_no": "JC-2022-A-0056",
+            "category": "安全保密",
+            "level": "甲级",
+            "issue_org": "国家保密局 / 国家保密资质认证中心",
+            "issue_date": "2022-08-10",
+            "expiry_date": "2027-08-09",
+            "summary": "承接国家级政务内网、涉密专网及高安全涉密数字化项目的强制法定准入资质",
+            "proof_doc": "附录A-03_涉密信息系统集成双甲级证书.pdf"
+        },
+        {
+            "id": "qual_iso_triple",
+            "name": "ISO三体系认证（ISO9001质量 / ISO27001信息安全 / ISO20000IT服务管理）",
+            "cert_no": "ISO-ALL-2023-8812",
+            "category": "质量体系",
+            "level": "标准级",
+            "issue_org": "中国质量认证中心 (CQC) / UKAS",
+            "issue_date": "2023-05-12",
+            "expiry_date": "2026-05-11",
+            "summary": "标准化三体系认证，覆盖软件研发、运维管理、网络安全合规全生命周期",
+            "proof_doc": "附录A-04_ISO三体系认证证书合集.pdf"
+        },
+        {
+            "id": "qual_itss1",
+            "name": "ITSS 信息技术服务标准运行维护服务能力成熟度一级 (最高级)",
+            "cert_no": "ITSS-2023-YW-108",
+            "category": "服务运维",
+            "level": "一级",
+            "issue_org": "中国电子工业标准化技术协会",
+            "issue_date": "2023-09-01",
+            "expiry_date": "2027-08-31",
+            "summary": "国内 IT 运维最高级别证书，在运维保障体系评分项中直接获得满分",
+            "proof_doc": "附录A-05_ITSS一级证书.pdf"
+        }
+    ]
+
+    DEFAULT_PERSONNEL = [
+        {
+            "id": "person_01",
+            "name": "张文远",
+            "role": "项目经理 / 项目总监",
+            "years_of_experience": 16,
+            "education": "北京航空航天大学 计算机软件与理论 硕士",
+            "professional_title": "教授级高级工程师、信息系统项目管理师 (软考高项)",
+            "certificates": ["PMP (项目管理专业人士)", "信息系统项目管理师 (高级)", "ITIL Expert", "Scrum Master (CSM)"],
+            "representative_projects": [
+                "某直辖市数字政府一体化调度总指挥平台项目 (合同额 2,800 万元)",
+                "国家某部委核心业务协同监管云工程 (合同额 1,650 万元)"
+            ],
+            "intro": "拥有16年政企特大型信息化工程管理经验，主持过4项国家级及省级重点数字化系统建设，擅长敏捷研发、风险管控与多方团队协同，多次荣获省部级优秀项目经理表彰。"
+        },
+        {
+            "id": "person_02",
+            "name": "陈若曦",
+            "role": "技术总监 / 首席系统架构师",
+            "years_of_experience": 14,
+            "education": "清华大学 计算机科学与技术 硕士",
+            "professional_title": "系统分析师 (高级)、系统架构设计师 (高级)",
+            "certificates": ["系统架构设计师 (高级)", "TOGAF 9.2 鉴定企业架构师", "AWS Certified Solutions Architect", "达梦数据库认证专家 (DMCA)"],
+            "representative_projects": [
+                "某省级智慧水务与水旱灾害综合调度平台 (分布式微服务架构，支撑日均亿级数据)",
+                "某国有商业银行信创业务中台重构工程"
+            ],
+            "intro": "资深云原生与分布式微服务架构技术权威，深谙信创生态适配与高可用容灾设计，具有达梦/人大金仓及麒麟/统信OS全栈兼容实战经验，主导编写过数十万行核心基础中台代码。"
+        },
+        {
+            "id": "person_03",
+            "name": "刘德铭",
+            "role": "信息安全与网络安全总监",
+            "years_of_experience": 12,
+            "education": "中国科学技术大学 信息安全 本科",
+            "professional_title": "高级工程师",
+            "certificates": ["CISP (注册信息安全专业人员)", "CISSP (国际注册信息系统安全认证)", "CISP-PTE (渗透测试专家)", "国密密码应用测评师"],
+            "representative_projects": [
+                "某省政务专网等保三级测评与密评升级项目",
+                "市级智慧政务云平台安全态势感知与纵深防御系统"
+            ],
+            "intro": "12年网络空间安全与数据合规经验，精通国家网络安全等级保护（三级）标准及国密 SM2/SM3/SM4 算法改造，多次带领团队零失误通过国家重大活动护网与专项安全攻防演习。"
+        },
+        {
+            "id": "person_04",
+            "name": "赵晓宇",
+            "role": "售后运维与交付保障总监",
+            "years_of_experience": 10,
+            "education": "华中科技大学 软件工程 本科",
+            "professional_title": "高级工程师",
+            "certificates": ["ITSS 服务项目经理", "CCIE (思科认证互联网专家)", "RHCA (红帽认证架构师)"],
+            "representative_projects": [
+                "某市级数字化城市运行管理中心 5 年长效驻场运维保障",
+                "全省教育综合服务平台 7×24 小时应急保障工程"
+            ],
+            "intro": "具备完备的 ITIL / ITSS 运维服务体系沉淀，擅长搭建 7×24 小时监控预警联动平台，实现 5 分钟响应、30 分钟远程排错、2 小时驻场极速处置的高标准 SLA 承诺。"
+        }
+    ]
+
+    DEFAULT_CASES = [
+        {
+            "id": "case_01",
+            "project_name": "某省智慧政务一体化综合大数据调度中台建设项目",
+            "client_name": "某省政务服务和数字化建设管理局",
+            "contract_amount": "2,480.00 万元",
+            "sign_date": "2024-03",
+            "contract_category": "政务大数据",
+            "key_deliverables": [
+                "全省统一政务数据资产目录系统",
+                "秒级跨部门数据共享交换总线 (ESB)",
+                "亿级实时数据湖与信创达梦数据库集群",
+                "可视化领导决策大屏驾驶舱"
+            ],
+            "acceptance_status": "已于 2024 年 12 月以“优秀”等次通过省厅专家联合终验，连续平稳运行超 200 天",
+            "summary": "该项目为国内省级政务中台标杆工程，承接全省 42 个委办局业务数据汇聚，入选省级数字化转型十大示范工程，业主出具了高度满意的官方表扬信。"
+        },
+        {
+            "id": "case_02",
+            "project_name": "市级智慧水务一体化综合调度与管网数字孪生工程",
+            "client_name": "某市水务环境集团有限公司",
+            "contract_amount": "1,520.00 万元",
+            "sign_date": "2023-08",
+            "contract_category": "智慧水务",
+            "key_deliverables": [
+                "全域水质、水压、水文实时 IoT 采集平台",
+                "管网水力模型与漏损 AI 预警引擎",
+                "防汛排涝防灾应急多跨协同调度指挥中心",
+                "国产信创双活数据容灾中心"
+            ],
+            "acceptance_status": "已终验交付，管网漏损率降低 3.2%，综合能耗降低 8.5%",
+            "summary": "构建了全市统一水务“一网统管”新格局，成功应对多次极端暴雨汛情考验，多次接待住建部与水利部专家考察调研。"
+        },
+        {
+            "id": "case_03",
+            "project_name": "某国有大型商业银行信创协同办公与业务安全网关系统",
+            "client_name": "某国有商业银行总行软件开发中心",
+            "contract_amount": "1,850.00 万元",
+            "sign_date": "2023-11",
+            "contract_category": "金融信创",
+            "key_deliverables": [
+                "全栈信创架构微服务网关 (Spring Cloud + Istio)",
+                "国产密码算法 (SM2/SM3/SM4) 全链路加密",
+                "达梦数据库双活容灾与异地灾备集群",
+                "高并发金融级 API 鉴权中心 (万级 TPS)"
+            ],
+            "acceptance_status": "已终验并上线投产，保障全行超 8 万名员工及分支机构高并发访问",
+            "summary": "国内金融行业信创替换重点标杆案例，通过中国信息通信研究院信创全面兼容性认证，实现零缺陷、零故障平滑过渡。"
+        }
+    ]
+
+    DEFAULT_COMPONENTS = [
+        {
+            "id": "comp_01",
+            "name": "高可用双活与容灾架构方案组件",
+            "category": "容灾高可用",
+            "tags": ["高可用", "双活", "RPO=0", "容灾备份", "达梦"],
+            "summary": "针对政企核心业务数据零丢失、业务不中断的高标准容灾技术体系设计方案",
+            "content": (
+                "### 1. 容灾架构目标与设计原则\n"
+                "本方案严格遵循国家信息安全等级保护三级数据备份要求，设计“同城双活 + 异地灾备”的三中心容灾拓扑：\n"
+                "- **RPO（恢复点目标）= 0**：核心数据库采用强半同步机制与物理日志实时同步，确保在单数据中心突发断电或灾难时零数据丢失；\n"
+                "- **RTO（恢复时间目标）< 30 秒**：采用集群智能心跳探测与虚拟 IP 漂移技术，实现秒级故障自动隔离与应用流量无缝倒换；\n"
+                "- **多副本与离线冷备**：关键业务数据每日实行全量冷备并进行国密加密后分片存储至隔离存储卷，定期执行自动化数据可恢复性演练。"
+            )
+        },
+        {
+            "id": "comp_02",
+            "name": "国家网络安全等级保护（三级）与国密合规纵深防御组件",
+            "category": "安全等保",
+            "tags": ["等保三级", "国密SM4", "安全合规", "纵深防御", "审计"],
+            "summary": "覆盖物理安全、网络边界、主机环境、应用系统与数据安全的等保三级全栈合规论述",
+            "content": (
+                "### 1. 纵深防御体系与等保三级对标\n"
+                "针对项目安全需求，系统严格按照 GB/T 22239-2019《信息安全技术 网络安全等级保护基本要求》第三级标准设计：\n"
+                "- **通信安全与传输加密**：全面采用国产商用密码算法（SM2 非对称公钥加密、SM3 完整性杂凑校验、SM4 对称分组加密），全站实行国密 SSL/TLS 双向鉴权通信；\n"
+                "- **访问控制与最小权限**：采用基于 RBAC 的精细化权限模型，实现用户、角色、资源的严格隔离；关键管理操作支持双人复核审批；\n"
+                "- **全生命周期安全审计**：独立部署不可篡改的日志审计子系统，对所有数据修改、系统登录、配置变更实行秒级日志留痕，日志安全留存期不少于 180 天。"
+            )
+        },
+        {
+            "id": "comp_03",
+            "name": "国产信创生态全栈适配与兼容互认方案组件",
+            "category": "信创适配",
+            "tags": ["信创", "国产化", "达梦", "统信UOS", "银河麒麟", "鲲鹏/飞腾"],
+            "summary": "涵盖国产CPU架构、操作系统、中间件与数据库的原厂兼容与调优方案",
+            "content": (
+                "### 1. 信创全生态适配蓝图\n"
+                "我司自研核心平台已实现与国内主流信创基础软硬件的深度适配与双向兼容互认证：\n"
+                "- **芯片与服务器底座**：原生支持 ARM64 (鲲鹏、飞腾) 及 LoongArch (龙芯)、x86 (海光、兆芯) 等全技术路线服务器架构；\n"
+                "- **操作系统层**：完全适配银河麒麟 (Kylin Linux Advanced Server V10) 与统信桌面及服务器系统 (UnionTech OS Server 20)；\n"
+                "- **国产信创数据库**：已获得达梦数据库 (DM8)、人大金仓 (KingbaseES V8) 的原厂技术互认证书，具备专用连接池优化器与高并发方言适配包。"
+            )
+        },
+        {
+            "id": "comp_04",
+            "name": "7×24 小时高可用服务运维保障体系与 SLA 承诺组件",
+            "category": "运维交付",
+            "tags": ["SLA", "7x24", "运维保障", "应急预案", "巡检"],
+            "summary": "标准化 ITSS 运维服务流程、分级故障应急响应与专属驻场服务方案",
+            "content": (
+                "### 1. 售后运维组织架构与 SLA 服务承诺\n"
+                "我方针对本项目设立专属“两级技术支持与现场常驻专家组”，提供如下顶级 SLA 服务保障：\n"
+                "- **响应时限指标**：设立 7×24 小时全国统一服务专线与专属企微/钉钉应急群，故障发生后 **5 分钟内**响应接单并由高级工程师接入诊断；\n"
+                "- **远程处置与驻场到达**：一般咨询与配置故障在 **30 分钟内**远程闭环处置；如遇重大级别故障，本地专职工程师在 **2 小时内**赶赴现场支持；\n"
+                "- **主动预防性健康巡检**：提供每月一次远程系统深度巡检、每季度一次原厂驻场健康体检，出具专业性能诊断与系统容量调优报告；重大节假日与保障期实行全天候专家驻场护航。"
+            )
+        }
+    ]
+
+    def __init__(self):
+        self.storage_file = settings.DATA_DIR / "enterprise_assets.json"
+        self.qualifications: List[Dict[str, Any]] = []
+        self.personnel: List[Dict[str, Any]] = []
+        self.cases: List[Dict[str, Any]] = []
+        self.components: List[Dict[str, Any]] = []
+        self._load_or_init()
+
+    def _load_or_init(self):
+        if self.storage_file.exists():
+            try:
+                with open(self.storage_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.qualifications = data.get("qualifications", [])
+                    self.personnel = data.get("personnel", [])
+                    self.cases = data.get("cases", [])
+                    self.components = data.get("components", [])
+                    if self.qualifications:
+                        return
+            except Exception as e:
+                print(f"[AssetManager] 加载资产失败: {e}，使用初始预设资产")
+
+        # 初始化预设资产
+        self.qualifications = list(self.DEFAULT_QUALIFICATIONS)
+        self.personnel = list(self.DEFAULT_PERSONNEL)
+        self.cases = list(self.DEFAULT_CASES)
+        self.components = list(self.DEFAULT_COMPONENTS)
+        self._save()
+
+    def _save(self):
+        try:
+            payload = {
+                "qualifications": self.qualifications,
+                "personnel": self.personnel,
+                "cases": self.cases,
+                "components": self.components
+            }
+            with open(self.storage_file, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[AssetManager] 保存资产持久化文件失败: {e}")
+
+    # ==================== 1. 资质库 CRUD ====================
+
+    def list_qualifications(self, category: Optional[str] = None, search: Optional[str] = None) -> List[CompanyQualification]:
+        results = [CompanyQualification(**q) for q in self.qualifications]
+        if category:
+            results = [q for q in results if q.category == category]
+        if search:
+            s = search.lower()
+            results = [q for q in results if s in q.name.lower() or s in q.cert_no.lower() or s in q.summary.lower()]
+        return results
+
+    def add_qualification(self, qual: CompanyQualification) -> CompanyQualification:
+        if not qual.id:
+            qual.id = f"qual_{uuid.uuid4().hex[:8]}"
+        self.qualifications.append(qual.model_dump())
+        self._save()
+        return qual
+
+    def delete_qualification(self, qual_id: str) -> bool:
+        init_len = len(self.qualifications)
+        self.qualifications = [q for q in self.qualifications if q.get("id") != qual_id]
+        if len(self.qualifications) != init_len:
+            self._save()
+            return True
+        return False
+
+    # ==================== 2. 人员证书库 CRUD ====================
+
+    def list_personnel(self, role: Optional[str] = None, search: Optional[str] = None) -> List[PersonnelAsset]:
+        results = [PersonnelAsset(**p) for p in self.personnel]
+        if role:
+            results = [p for p in results if role in p.role]
+        if search:
+            s = search.lower()
+            results = [p for p in results if s in p.name.lower() or s in p.role.lower() or any(s in c.lower() for c in p.certificates)]
+        return results
+
+    def add_personnel(self, person: PersonnelAsset) -> PersonnelAsset:
+        if not person.id:
+            person.id = f"person_{uuid.uuid4().hex[:8]}"
+        self.personnel.append(person.model_dump())
+        self._save()
+        return person
+
+    def delete_personnel(self, person_id: str) -> bool:
+        init_len = len(self.personnel)
+        self.personnel = [p for p in self.personnel if p.get("id") != person_id]
+        if len(self.personnel) != init_len:
+            self._save()
+            return True
+        return False
+
+    # ==================== 3. 历史同类业绩库 CRUD ====================
+
+    def list_cases(self, category: Optional[str] = None, search: Optional[str] = None) -> List[CaseContract]:
+        results = [CaseContract(**c) for c in self.cases]
+        if category:
+            results = [c for c in results if c.contract_category == category]
+        if search:
+            s = search.lower()
+            results = [c for c in results if s in c.project_name.lower() or s in c.client_name.lower() or s in c.summary.lower()]
+        return results
+
+    def add_case(self, case_item: CaseContract) -> CaseContract:
+        if not case_item.id:
+            case_item.id = f"case_{uuid.uuid4().hex[:8]}"
+        self.cases.append(case_item.model_dump())
+        self._save()
+        return case_item
+
+    def delete_case(self, case_id: str) -> bool:
+        init_len = len(self.cases)
+        self.cases = [c for c in self.cases if c.get("id") != case_id]
+        if len(self.cases) != init_len:
+            self._save()
+            return True
+        return False
+
+    # ==================== 4. 方案组件库 CRUD ====================
+
+    def list_components(self, category: Optional[str] = None, search: Optional[str] = None) -> List[SolutionComponent]:
+        results = [SolutionComponent(**comp) for comp in self.components]
+        if category:
+            results = [comp for comp in results if comp.category == category]
+        if search:
+            s = search.lower()
+            results = [comp for comp in results if s in comp.name.lower() or s in comp.summary.lower() or any(s in t.lower() for t in comp.tags)]
+        return results
+
+    def add_component(self, comp: SolutionComponent) -> SolutionComponent:
+        if not comp.id:
+            comp.id = f"comp_{uuid.uuid4().hex[:8]}"
+        self.components.append(comp.model_dump())
+        self._save()
+        return comp
+
+    def delete_component(self, comp_id: str) -> bool:
+        init_len = len(self.components)
+        self.components = [c for c in self.components if c.get("id") != comp_id]
+        if len(self.components) != init_len:
+            self._save()
+            return True
+        return False
+
+    # ==================== 5. 智能撰写资产关联匹配 ====================
+
+    def match_assets_for_section(self, section_title: str, requirements: List[str]) -> Dict[str, Any]:
+        """
+        根据当前撰写章节的主题，智能匹配企业中台最相关的资产
+        """
+        text = f"{section_title} {' '.join(requirements)}"
+        matched = {
+            "type": "none",
+            "title": "",
+            "context_text": "",
+            "items": []
+        }
+
+        # 1. 团队人员/组织架构章节
+        if any(kw in text for kw in ["实施团队", "人员配置", "项目团队", "项目经理", "架构师", "技术人员"]):
+            personnel = self.list_personnel()
+            lines = ["【企业中台推荐拟任核心团队配置】："]
+            for p in personnel:
+                certs = "、".join(p.certificates) if p.certificates else "相关专业技术认证"
+                lines.append(f"- **{p.role}**：{p.name}（{p.education}，从业{p.years_of_experience}年，技术职称：{p.professional_title}，持有证书：{certs}）\n  述评：{p.intro}")
+            matched["type"] = "personnel"
+            matched["title"] = "企业核心技术团队资产"
+            matched["context_text"] = "\n".join(lines)
+            matched["items"] = [p.model_dump() for p in personnel]
+            return matched
+
+        # 2. 资质资信/合规准入章节
+        if any(kw in text for kw in ["资质", "准入", "CMMI", "ISO", "高新", "涉密", "信用"]):
+            quals = self.list_qualifications()
+            lines = ["【企业中台已认证核心资质清单】："]
+            for q in quals:
+                lines.append(f"- **{q.name}**（级别：{q.level or '合格'}，证书号：{q.cert_no}，发证机关：{q.issue_org}，有效期至：{q.expiry_date}）\n  响应说明：{q.summary}")
+            matched["type"] = "qualification"
+            matched["title"] = "企业合规资质资产"
+            matched["context_text"] = "\n".join(lines)
+            matched["items"] = [q.model_dump() for q in quals]
+            return matched
+
+        # 3. 类似业绩/成功案例章节
+        if any(kw in text for kw in ["业绩", "案例", "项目经历", "类似项目", "成功案例"]):
+            cases = self.list_cases()
+            lines = ["【企业中台同类标杆中标案例清单】："]
+            for c in cases:
+                lines.append(f"- **{c.project_name}**（客户：{c.client_name}，合同额：{c.contract_amount}，签约时间：{c.sign_date}，结论：{c.acceptance_status}）\n  亮点总结：{c.summary}")
+            matched["type"] = "case"
+            matched["title"] = "同类重大中标业绩案例"
+            matched["context_text"] = "\n".join(lines)
+            matched["items"] = [c.model_dump() for c in cases]
+            return matched
+
+        # 4. 技术方案组件匹配 (双活/安全等保/信创/运维SLA)
+        for comp in self.components:
+            tags = comp.get("tags", [])
+            cat = comp.get("category", "")
+            if cat in text or any(t in text for t in tags):
+                matched["type"] = "component"
+                matched["title"] = f"企业标准方案组件：{comp['name']}"
+                matched["context_text"] = f"【企业标准方案组件参考 - {comp['name']}】：\n{comp['content']}"
+                matched["items"] = [comp]
+                return matched
+
+        return matched
+
+    def get_stats(self) -> Dict[str, int]:
+        return {
+            "total_qualifications": len(self.qualifications),
+            "total_personnel": len(self.personnel),
+            "total_cases": len(self.cases),
+            "total_components": len(self.components)
+        }
+
+asset_manager = EnterpriseAssetManager()

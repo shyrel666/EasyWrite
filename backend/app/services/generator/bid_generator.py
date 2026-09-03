@@ -1,6 +1,7 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from app.core.llm_client import llm_client
 from app.services.rag.vector_store import knowledge_store
+from app.services.assets.asset_manager import asset_manager
 from app.models.schemas import KnowledgeChunk, OutlineNode, GlobalFacts
 
 SYSTEM_BID_WRITER_PROMPT = """你是一名拥有15年政企信息化与软件工程经验的资深技术标书总架构师。
@@ -14,10 +15,56 @@ SYSTEM_BID_WRITER_PROMPT = """你是一名拥有15年政企信息化与软件工
 5. 【公文排版规范】：结构清晰，逻辑严密，多采用“1.1.1”、“1.1.2”或“（1）”、“（2）”的条目化论述。
 """
 
+OUTLINE_GEN_PROMPT = """你是一名从业20年的国家级招投标规划专家兼资深总架构师。
+请根据以下招标项目的背景需求与技术评分要求，为该投标项目量身定制一套符合《政府采购和招标投标管理办法》、评分点全覆盖的技术标书结构化大纲树。
+
+【设计原则】：
+1. 涵盖项目理解、总体技术路线（含微服务/信创/高可用）、各业务子系统详细设计、项目实施团队管理、售后培训SLA等核心篇章。
+2. 必须在技术架构章节明确包含 Mermaid 总体拓扑图要求。
+3. 请以严格的单个 JSON 对象输出，不得包含额外寒暄。
+
+【输出 JSON 模式】：
+{
+  "outline": [
+    {
+      "id": "sec_1",
+      "title": "第一章 项目理解与建设目标",
+      "level": 1,
+      "requirements": ["深刻理解业务痛点与技术现状"],
+      "children": [
+        { "id": "sec_1_1", "title": "1.1 项目建设背景与业务现状分析", "level": 2, "requirements": [] },
+        { "id": "sec_1_2", "title": "1.2 建设原则与总体建设目标", "level": 2, "requirements": [] }
+      ]
+    },
+    {
+      "id": "sec_2",
+      "title": "第二章 总体技术架构与方案设计",
+      "level": 1,
+      "requirements": ["微服务技术路线、信创国产化适配、Mermaid总体架构拓扑图、数据安全等保"],
+      "children": [
+        { "id": "sec_2_1", "title": "2.1 总体逻辑架构设计与拓扑流转", "level": 2, "requirements": [] },
+        { "id": "sec_2_2", "title": "2.2 核心微服务选型与高并发保障", "level": 2, "requirements": [] },
+        { "id": "sec_2_3", "title": "2.3 信创环境适配与达梦数据库集成", "level": 2, "requirements": [] },
+        { "id": "sec_2_4", "title": "2.4 系统高可用容灾与等保三级设计", "level": 2, "requirements": [] }
+      ]
+    }
+  ]
+}
+"""
+
+CHAPTER_SPECIALIZED_PROMPTS = {
+    "arch": """你是一名资深云原生与信创分布式架构师。请针对架构设计章节，侧重微服务治理、容器弹性调度、高可用双活容灾、国产信创适配（统信/麒麟/达梦）、数据加密等指标，必须在第二小节输出规范的 ```mermaid 架构拓扑图。语言必须严密、权威、杜绝AI空话。""",
+    "team": """你是一名资深国家注册 PMP 高级项目经理与人社部高级工程师。请针对团队配置章节，侧重项目经理执业资质、核心团队驻场保障、知识转移与人员考核制度，以专业规范的表格和严谨公文体裁论述。""",
+    "maintenance": """你是一名资深 ITIL/ITSS 运维保障专家。请针对售后运维保障章节，明确承诺 7×24 小时极速响应、现场驻场工程师排期、例行安全巡检频率、重大活动保活保障方案及量化 SLA 指标。"""
+}
+
 class BidGenerator:
     """
-    标书智能生成引擎（融合 OpenBidKit 全局事实约束与 Mermaid 图文编排）：
-    负责招标文件大纲规划、分章节检索历史资产、提示词装配与 Agent 式草案撰写
+    标书智能生成引擎（深度融合真实大模型驱动、全局事实硬约束与中台资产）：
+    1. 大模型个性化 WBS 大纲提炼（根据实际项目要求）
+    2. 基于大模型的高质量分章撰写与 SSE 流式输出
+    3. 专业细分领域 System Prompt 自动装配
+    4. 离线/无 Key 时高保真安全降级
     """
 
     def __init__(self):
@@ -26,9 +73,47 @@ class BidGenerator:
 
     def generate_outline_from_rfp(self, rfp_content_summary: str) -> List[OutlineNode]:
         """
-        根据招标文件摘要/要求，智能生成符合规范的技术标书大纲树
+        根据招标文件摘要/要求，调用大模型智能生成高度对标的定制技术标大纲树
         """
-        # 内置标准化软件技术标大纲
+        if self.llm.is_configured:
+            try:
+                data = self.llm.chat_completion_structured(
+                    system_prompt=OUTLINE_GEN_PROMPT,
+                    user_prompt=f"【待投标项目招标需求概要】：\n{rfp_content_summary}"
+                )
+                if data and "outline" in data and isinstance(data["outline"], list):
+                    nodes = []
+                    for c_idx, ch in enumerate(data["outline"], 1):
+                        ch_id = ch.get("id") or f"sec_{c_idx}"
+                        ch_title = ch.get("title") or f"第{c_idx}章"
+                        ch_reqs = ch.get("requirements", [])
+                        
+                        children_nodes = []
+                        for sub_idx, sub in enumerate(ch.get("children", []), 1):
+                            sub_id = sub.get("id") or f"{ch_id}_{sub_idx}"
+                            sub_title = sub.get("title") or f"{c_idx}.{sub_idx}"
+                            children_nodes.append(OutlineNode(
+                                id=sub_id,
+                                title=sub_title,
+                                level=2,
+                                path=f"{ch_title} > {sub_title}",
+                                requirements=sub.get("requirements", [])
+                            ))
+                        
+                        nodes.append(OutlineNode(
+                            id=ch_id,
+                            title=ch_title,
+                            level=1,
+                            path=ch_title,
+                            requirements=ch_reqs,
+                            children=children_nodes
+                        ))
+                    if nodes:
+                        return nodes
+            except Exception as e:
+                print(f"[BidGenerator] AI 大纲定制生成失败: {e}，切入内置标准大纲")
+
+        # 内置标准化软件技术标大纲兜底
         default_outline = [
             OutlineNode(
                 id="sec_1",
@@ -105,11 +190,26 @@ class BidGenerator:
         3. 调用大模型生成高质量草稿
         4. 附带引用溯源资产
         """
-        # 1. 召回相关历史标书切片
+    def _select_system_prompt(self, section_title: str) -> str:
+        if any(kw in section_title for kw in ["架构", "拓扑", "技术路线", "信创", "高可用"]):
+            return CHAPTER_SPECIALIZED_PROMPTS["arch"]
+        elif any(kw in section_title for kw in ["团队", "人员", "组织架构", "资质", "配置"]):
+            return CHAPTER_SPECIALIZED_PROMPTS["team"]
+        elif any(kw in section_title for kw in ["售后", "运维", "SLA", "巡检", "维保", "培训"]):
+            return CHAPTER_SPECIALIZED_PROMPTS["maintenance"]
+        return SYSTEM_BID_WRITER_PROMPT
+
+    def _build_prompts(
+        self,
+        section_title: str,
+        section_path: str,
+        requirements: List[str],
+        custom_instruction: str = "",
+        facts: Optional[GlobalFacts] = None
+    ) -> Tuple[str, str, List[Dict[str, Any]], Dict[str, Any], GlobalFacts]:
         query_terms = f"{section_title} {' '.join(requirements)} {custom_instruction}"
         matched_chunks = self.kb.search(query=query_terms, top_k=3)
         
-        # 2. 组装参考资产文本
         ref_text_blocks = []
         for i, c in enumerate(matched_chunks, start=1):
             ref_text_blocks.append(
@@ -119,11 +219,12 @@ class BidGenerator:
             )
         reference_context = "\n---\n".join(ref_text_blocks) if ref_text_blocks else "（无完全匹配的历史章节，请基于业界顶级规范自主设计）"
 
-        # 3. 构造全局事实文本
+        matched_asset = asset_manager.match_assets_for_section(section_title, requirements)
+        asset_context = f"\n\n【企业中台权威资产库匹配（优先复用与论述）】：\n{matched_asset['context_text']}" if matched_asset.get("context_text") else ""
+
         facts_obj = facts or GlobalFacts()
         facts_constraint_text = facts_obj.to_constraint_text()
 
-        # 4. 构造任务提示词
         user_prompt = f"""【当前待撰写章节】：{section_title}
 【完整大纲路径】：{section_path or section_title}
 
@@ -135,27 +236,44 @@ class BidGenerator:
 
 【人工补充指导意见】：
 {custom_instruction if custom_instruction else "无特殊补充，按业内顶级政企技术标标准编写"}
+{asset_context}
 
 【企业历史中标标书参考资料】：
 {reference_context}
 
 【编写任务】：
-请针对上述章节，融合参考资料中的成熟经验与本次招标的具体要求，输出详尽、专业的技术标书正文。
+请针对上述章节，融合参考资料与企业中台资产中的成熟经验与本次招标的具体要求，输出详尽、专业的技术标书正文。
 要求：
 1. 方案行文中必须体现【{facts_obj.company_name}】与核心产品【{facts_obj.core_product_name}】的具体应用与保障；
 2. 如涉及架构设计或流转机制，请附带一段规范的 ```mermaid 架构图；
 3. 严格遵守政企标书语言风格，分层、分点阐述；
 4. 直接输出正文内容，无需输出寒暄废话。"""
 
-        # 5. 执行生成
+        system_prompt = self._select_system_prompt(section_title)
+        return system_prompt, user_prompt, matched_chunks, matched_asset, facts_obj
+
+    def draft_section(
+        self,
+        section_title: str,
+        section_path: str,
+        requirements: List[str],
+        custom_instruction: str = "",
+        facts: Optional[GlobalFacts] = None
+    ) -> Dict[str, Any]:
+        """
+        执行单章节的核心撰写流水线（同步完整返回）
+        """
+        system_prompt, user_prompt, matched_chunks, matched_asset, facts_obj = self._build_prompts(
+            section_title, section_path, requirements, custom_instruction, facts
+        )
+
         if self.llm.is_configured:
             generated_content = self.llm.chat_completion(
-                system_prompt=SYSTEM_BID_WRITER_PROMPT,
+                system_prompt=system_prompt,
                 user_prompt=user_prompt
             )
         else:
-            # 回退模拟生成（包含全局事实引用与 Mermaid 架构图样本）
-            generated_content = self._generate_rich_mock_content(section_title, facts_obj)
+            generated_content = self._generate_rich_mock_content(section_title, facts_obj, matched_asset)
 
         formatted_refs = [
             KnowledgeChunk(
@@ -175,8 +293,74 @@ class BidGenerator:
             "references": formatted_refs
         }
 
-    def _generate_rich_mock_content(self, section_title: str, facts: GlobalFacts) -> str:
-        """为测试提供融合全局事实与 Mermaid 图表的高质量技术标内容"""
+    def draft_section_stream(
+        self,
+        section_title: str,
+        section_path: str,
+        requirements: List[str],
+        custom_instruction: str = "",
+        facts: Optional[GlobalFacts] = None
+    ):
+        """
+        执行单章节流式打字机生成（逐步 yield token 字符串）
+        """
+        system_prompt, user_prompt, _, _, _ = self._build_prompts(
+            section_title, section_path, requirements, custom_instruction, facts
+        )
+        return self.llm.chat_completion_stream(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt
+        )
+
+    def _generate_rich_mock_content(self, section_title: str, facts: GlobalFacts, matched_asset: Optional[Dict[str, Any]] = None) -> str:
+        """为测试提供融合全局事实、中台资产与 Mermaid 图表的高质量技术标内容"""
+        # 针对人员团队章节生成专业团队表格
+        if any(kw in section_title for kw in ["实施团队", "人员配置", "项目团队", "组织架构"]):
+            personnel = asset_manager.list_personnel()
+            lines = [
+                f"### 1. 项目组织管理架构\n"
+                f"投标人【{facts.company_name}】高度重视本项目的实施交付，设立由高级管理层挂帅的专项项目部，"
+                f"指派具备国家注册资格的高级项目经理与资深系统架构师驻场把关。\n\n"
+                f"### 2. 拟任核心技术骨干人员配置表\n\n"
+                f"| 拟任岗位 | 姓名 | 学历与院校 | 从业年限 | 执业资格证书与职称 | 代表性中标业绩 |\n"
+                f"| :---: | :---: | :---: | :---: | :--- | :--- |"
+            ]
+            for p in personnel:
+                certs = "、".join(p.certificates[:3])
+                proj = p.representative_projects[0] if p.representative_projects else "国家级政企重点工程"
+                lines.append(f"| {p.role} | **{p.name}** | {p.education} | {p.years_of_experience}年 | {p.professional_title}<br/>({certs}) | {proj} |")
+            lines.append(f"\n### 3. 项目人员稳定性与考核机制\n我方承诺：本项目核心骨干在实施与试运行期间保证 100% 专职驻场，未经采购方书面同意绝不擅自更换。")
+            return "\n".join(lines)
+
+        # 针对资质合规章节生成资质一览表
+        if any(kw in section_title for kw in ["资质", "准入", "企业资信"]):
+            quals = asset_manager.list_qualifications()
+            lines = [
+                f"### 1. 投标人法定资质与行业认证承诺\n"
+                f"投标人【{facts.company_name}】（统一代码：{facts.credit_code}）具备完全独立合法的投标资格，已获得多项权威认证：\n\n"
+                f"| 序号 | 资质认证名称 | 资质等级 | 证书编号 | 发证机构 | 有效期截止 |\n"
+                f"| :---: | :--- | :---: | :---: | :--- | :---: |"
+            ]
+            for idx, q in enumerate(quals, 1):
+                lines.append(f"| {idx} | **{q.name}** | {q.level or '合格'} | {q.cert_no} | {q.issue_org} | {q.expiry_date} |")
+            lines.append(f"\n### 2. 合规核查结论\n经核查，我方资质证书全部在有效期内，完全满足并优于招标资质门槛要求，已备齐所有原件备查。")
+            return "\n".join(lines)
+
+        # 针对历史业绩章节生成案例表
+        if any(kw in section_title for kw in ["业绩", "案例", "项目经历"]):
+            cases = asset_manager.list_cases()
+            lines = [
+                f"### 1. 近三年同类重大成功业绩清单\n"
+                f"投标人【{facts.company_name}】在类似信息化工程领域拥有深厚的建设底蕴，以下为近三年代表性标杆案例：\n\n"
+                f"| 序号 | 业绩项目全称 | 采购客户单位 | 合同金额 | 签约时间 | 验收与运行成效 |\n"
+                f"| :---: | :--- | :--- | :---: | :---: | :--- |"
+            ]
+            for idx, c in enumerate(cases, 1):
+                lines.append(f"| {idx} | **{c.project_name}** | {c.client_name} | {c.contract_amount} | {c.sign_date} | {c.acceptance_status} |")
+            lines.append(f"\n### 2. 标杆项目成效佐证\n上述项目合同复印件及第三方终验报告已作为标书附件全量装订，技术成熟可靠。")
+            return "\n".join(lines)
+
+        # 默认：技术方案与 Mermaid 架构图
         return (
             f"### 1. 方案设计思路与技术路线\n"
             f"针对本项目建设要求，投标人【{facts.company_name}】依托成熟的企业级产品【{facts.core_product_name}】，"

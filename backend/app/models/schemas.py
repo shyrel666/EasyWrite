@@ -136,3 +136,99 @@ class GenerateSectionResponse(BaseModel):
 class UpdateSectionRequest(BaseModel):
     section_id: str
     content: str
+
+# ==================== 企业集中中台资产模型 (借鉴 Yibiao-Web) ====================
+
+class CompanyQualification(BaseModel):
+    """企业法定与行业资质资产（如涉密、CMMI、ISO、高新等）"""
+    id: str
+    name: str = Field(..., description="资质证书全称")
+    cert_no: str = Field(..., description="证书编号")
+    category: str = Field(default="综合资质", description="资质分类: 研发能力/安全保密/服务运维/质量体系/综合资质")
+    level: str = Field(default="", description="资质等级: 如 5级/甲级/一级/A级")
+    issue_org: str = Field(..., description="发证主管机构")
+    issue_date: str = Field(default="2024-01-01", description="生效/发证日期")
+    expiry_date: str = Field(default="2027-12-31", description="有效期截止日期")
+    summary: str = Field(default="", description="资质适用投标场景与得分说明")
+    proof_doc: str = Field(default="", description="证明附件文件或索引编号")
+
+class PersonnelAsset(BaseModel):
+    """企业核心技术骨干、项目经理与专家证书履历"""
+    id: str
+    name: str = Field(..., description="人员姓名")
+    role: str = Field(..., description="标书拟任岗位: 项目经理/技术总监/架构师/安全专家/实施工程师")
+    years_of_experience: int = Field(default=8, description="相关行业从业年限")
+    education: str = Field(default="大学本科", description="最高学历与毕业院校专业")
+    professional_title: str = Field(default="高级工程师", description="技术职称与执业资格")
+    certificates: List[str] = Field(default_factory=list, description="持证清单: 如 PMP/CISP/软考高项/ITIL等")
+    representative_projects: List[str] = Field(default_factory=list, description="曾担任核心负责人的代表性中标业绩")
+    intro: str = Field(default="", description="个人专业能力综合述评（直接用于标书人员简历章节）")
+
+class CaseContract(BaseModel):
+    """企业历史同类中标业绩与合同案例资产"""
+    id: str
+    project_name: str = Field(..., description="业绩项目全称")
+    client_name: str = Field(..., description="采购客户单位")
+    contract_amount: str = Field(..., description="合同金额 (如 1,280.00 万元)")
+    sign_date: str = Field(default="2024-06", description="合同签约时间")
+    contract_category: str = Field(default="政企软件", description="业务领域分类")
+    key_deliverables: List[str] = Field(default_factory=list, description="核心交付模块与技术亮点")
+    acceptance_status: str = Field(default="已完成终验并平稳运行", description="履约验收结论")
+    summary: str = Field(default="", description="项目背景与成效总结（可直接插入标书业绩章节）")
+
+class SolutionComponent(BaseModel):
+    """企业标准方案可复用技术组件块"""
+    id: str
+    name: str = Field(..., description="方案组件名称")
+    category: str = Field(default="总体架构", description="组件分类: 总体架构/数据治理/信创适配/容灾高可用/安全等保/运维交付")
+    tags: List[str] = Field(default_factory=list, description="技术标签")
+    summary: str = Field(default="", description="方案组件架构设计概述")
+    content: str = Field(..., description="经过实战检验的标准技术方案正文（含架构描述与表格）")
+
+# ==================== 八维质检与降AI味模型 (借鉴 YuduBid) ====================
+
+class QualityDimensionScore(BaseModel):
+    """单个维度的质检打分与问题反馈"""
+    dimension_name: str = Field(..., description="维度名称")
+    score: int = Field(default=90, description="得分 0~100")
+    status: str = Field(default="良好", description="状态: 优秀/良好/需整改/高危")
+    findings: List[str] = Field(default_factory=list, description="发现的优点或问题")
+    suggestions: List[str] = Field(default_factory=list, description="整改建议")
+
+class EightDimensionQualityReport(BaseModel):
+    """标书八维全盘质量体检报告"""
+    overall_score: int = Field(default=85, description="八维综合评分 0~100")
+    passed: bool = Field(default=True, description="是否满足投标推荐标准")
+    rating_level: str = Field(default="甲级推荐", description="评级: 甲级推荐/乙级可投/丙级需整改/高危废标风险")
+    dimensions: List[QualityDimensionScore] = Field(default_factory=list, description="八维细分评分与分析")
+    de_ai_detected_phrases: List[str] = Field(default_factory=list, description="检测到的 AI 廉价空话套话")
+    high_risk_defects: List[str] = Field(default_factory=list, description="一票否决废标缺陷")
+    summary: str = Field(default="", description="质检总评结论")
+
+class PolishSectionRequest(BaseModel):
+    """章节降AI味与公文润色请求"""
+    project_id: str
+    section_id: str
+    content: str
+    polish_mode: str = Field(default="de_ai", description="润色模式: de_ai(去空话强化参数), official_formal(公文严肃化), expand_specs(补充技术细节)")
+
+class PolishSectionResponse(BaseModel):
+    """润色结果响应"""
+    section_id: str
+    original_content: str
+    polished_content: str
+    improvements: List[str] = Field(default_factory=list, description="所做的改进清单")
+
+# ==================== 项目列表模型 ====================
+
+class ProjectListItem(BaseModel):
+    id: str
+    name: str
+    client_name: str
+    description: str
+    completion_rate: float
+    section_count: int
+    completed_sections: int
+    created_at: str
+    updated_at: str
+

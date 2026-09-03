@@ -11,8 +11,10 @@ venv/
 # EasyWrite Runtime Data
 backend/data/uploads/*
 backend/data/exports/*
+backend/data/rendered_diagrams/*
 !backend/data/uploads/.gitkeep
 !backend/data/exports/.gitkeep
+!backend/data/rendered_diagrams/.gitkeep
 
 # Node / Frontend
 node_modules/
