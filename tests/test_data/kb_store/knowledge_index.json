@@ -1,0 +1,75 @@
+{
+  "chunks": [
+    {
+      "id": "sample_bid.docx_sec_1",
+      "doc_name": "sample_bid.docx",
+      "section_title": "第一章 某市政务大数据平台建设方案",
+      "breadcrumb": "第一章 某市政务大数据平台建设方案",
+      "content": "本项目旨在打造全市统一政务数据中台，消除信息孤岛，实现跨部门业务协同。",
+      "level": 1,
+      "tags": []
+    },
+    {
+      "id": "sample_bid.docx_sec_2",
+      "doc_name": "sample_bid.docx",
+      "section_title": "1.1 建设背景与痛点分析",
+      "breadcrumb": "第一章 某市政务大数据平台建设方案 > 1.1 建设背景与痛点分析",
+      "content": "当前各委办局业务系统分散，数据标准不一，缺乏统一的数据资产目录与共享交换通道。",
+      "level": 2,
+      "tags": []
+    },
+    {
+      "id": "sample_bid.docx_sec_3",
+      "doc_name": "sample_bid.docx",
+      "section_title": "第二章 系统总体技术架构设计",
+      "breadcrumb": "第二章 系统总体技术架构设计",
+      "content": "系统遵循分层解耦、松耦合与高可用设计原则，采用微服务架构与云原生部署模式。",
+      "level": 1,
+      "tags": [
+        "技术路线",
+        "容器化",
+        "系统架构",
+        "Kubernetes",
+        "微服务"
+      ]
+    },
+    {
+      "id": "sample_bid.docx_sec_4",
+      "doc_name": "sample_bid.docx",
+      "section_title": "2.1 微服务架构与容器化部署",
+      "breadcrumb": "第二章 系统总体技术架构设计 > 2.1 微服务架构与容器化部署",
+      "content": "服务层采用 Spring Cloud 与 Kubernetes 容器集群，集成 Istio 服务网格，支持灰度发布与秒级自动弹性伸缩。\n\n| 模块名称 | 选型技术 | 技术规格与特性 |\n| --- | --- | --- |\n| API 网关 | Spring Cloud Gateway | 支持双向 SSL、动态路由、分布式限流 |\n| 服务治理 | Kubernetes + Istio | 容器编排、全链路追踪与无感知热升级 |",
+      "level": 2,
+      "tags": [
+        "技术路线",
+        "容器化",
+        "系统架构",
+        "Kubernetes",
+        "微服务"
+      ]
+    },
+    {
+      "id": "sample_bid.docx_sec_5",
+      "doc_name": "sample_bid.docx",
+      "section_title": "2.2 数据库容灾备份与高可用方案",
+      "breadcrumb": "第二章 系统总体技术架构设计 > 2.2 数据库容灾备份与高可用方案",
+      "content": "数据库采用主从复制 + 半同步机制，支持同城双活与异地灾备，RPO=0，RTO<30秒，满足等保三级核心数据备份要求。",
+      "level": 2,
+      "tags": [
+        "技术路线",
+        "容灾备份",
+        "数据库设计",
+        "系统架构"
+      ]
+    },
+    {
+      "id": "sample_bid.docx_sec_6",
+      "doc_name": "sample_bid.docx",
+      "section_title": "第三章 售后服务保障体系",
+      "breadcrumb": "第三章 售后服务保障体系",
+      "content": "我司设立 7×24 小时现场与远程响应中心，重大故障 15 分钟内响应，1 小时内到达现场。",
+      "level": 1,
+      "tags": []
+    }
+  ]
+}

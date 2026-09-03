@@ -1,0 +1,73 @@
+{
+  "gov_standard": {
+    "id": "gov_standard",
+    "name": "政企标准科技蓝模板",
+    "primary_font": "宋体",
+    "heading_font": "黑体",
+    "theme_color": "#003366",
+    "theme_rgb": [
+      0,
+      51,
+      102
+    ],
+    "margin_top": 2.54,
+    "margin_bottom": 2.54,
+    "margin_left": 3.0,
+    "margin_right": 2.54,
+    "header_text": "技术投标文件",
+    "description": "国内政企与信息化招标最常用的标准商务科技蓝格式"
+  },
+  "gov_red": {
+    "id": "gov_red",
+    "name": "国家部委党政红模板",
+    "primary_font": "仿宋",
+    "heading_font": "黑体",
+    "theme_color": "#C00000",
+    "theme_rgb": [
+      192,
+      0,
+      0
+    ],
+    "margin_top": 2.54,
+    "margin_bottom": 2.54,
+    "margin_left": 3.0,
+    "margin_right": 2.54,
+    "header_text": "投标文件 - 技术方案",
+    "description": "适合党政机关、公检法司、事业单位及国有特大型企业招标"
+  },
+  "minimalist": {
+    "id": "minimalist",
+    "name": "商务简约黑白经典模板",
+    "primary_font": "宋体",
+    "heading_font": "黑体",
+    "theme_color": "#1F2328",
+    "theme_rgb": [
+      31,
+      35,
+      40
+    ],
+    "margin_top": 2.54,
+    "margin_bottom": 2.54,
+    "margin_left": 2.8,
+    "margin_right": 2.54,
+    "header_text": "TECHNICAL PROPOSAL",
+    "description": "简约清爽，适合外资、互联网企业及咨询采购项目"
+  },
+  "tpl_fin_gold": {
+    "id": "tpl_fin_gold",
+    "name": "银行金融机构黄金典雅模板",
+    "primary_font": "仿宋",
+    "heading_font": "黑体",
+    "theme_color": "#B8860B",
+    "margin_top": 2.8,
+    "margin_bottom": 2.8,
+    "margin_left": 3.2,
+    "margin_right": 2.6,
+    "header_text": "商业银行核心系统投标专版",
+    "theme_rgb": [
+      184,
+      134,
+      11
+    ]
+  }
+}
