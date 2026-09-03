@@ -1,6 +1,9 @@
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
-from datetime import datetime
+
+# 哨兵值：字段未在招标文件中出现时的显式占位（绝不静默编造默认值）
+NOT_MENTIONED = "未提及"
+
 
 class OutlineNode(BaseModel):
     id: str = Field(..., description="章节唯一ID，如 sec_1_2")
@@ -10,46 +13,85 @@ class OutlineNode(BaseModel):
     content: str = Field(default="", description="该章节已生成的正文内容（支持Markdown/多段落）")
     requirements: List[str] = Field(default_factory=list, description="本章节需要响应的招标文件要求/评分点")
     status: str = Field(default="pending", description="状态: pending, generating, completed, reviewed")
+    # 字数预算（评分项对齐时按评分比重分配）
+    word_budget: Optional[int] = Field(default=None, description="目标正文字数")
+    # 内容模式：ai_generate=AI撰写 / point_to_point=点对点应答表 / template_fill=模板填充
+    content_mode: str = Field(default="ai_generate")
+    # 引用溯源（人工在环）：锁定的知识库块在重新生成时必注入；排除的永不注入
+    pinned_refs: List[str] = Field(default_factory=list, description="锁定引用的 chunk_id 列表")
+    excluded_refs: List[str] = Field(default_factory=list, description="排除引用的 chunk_id 列表")
+    # 最近一次生成使用的引用（溯源展示）
+    last_refs: List[Dict[str, Any]] = Field(default_factory=list)
     children: List['OutlineNode'] = Field(default_factory=list, description="子章节节点")
+
 
 OutlineNode.model_rebuild()
 
+
 class GlobalFacts(BaseModel):
     """
-    全局事实设定（借鉴自 OpenBidKit / YuduBid）：
+    全局事实设定（借鉴 OpenBidKit / YuduBid）：
     在整本长文标书编撰中作为强制上下文只读约束，彻底防止前后公司名、产品线、技术指标不一致。
     """
-    company_name: str = Field(default="标书联合体（默认供应商）", description="投标企业法定全称")
-    credit_code: str = Field(default="91110108MA00000000", description="统一社会信用代码")
-    legal_rep: str = Field(default="张三", description="法定代表人姓名")
-    registered_capital: str = Field(default="5000万元人民币", description="注册资本")
-    core_product_name: str = Field(default="EasyPlatform 企业数智化底座", description="本次投标主打核心产品/平台")
-    architecture_stack: str = Field(default="云原生微服务 (Spring Cloud + Vue 3) 容器化架构", description="标准技术路线栈")
-    database_selection: str = Field(default="国产信创达梦数据库 / PostgreSQL 混合部署", description="指定数据库选型")
-    sla_commitment: str = Field(default="7×24小时技术支持，5分钟内响应，30分钟内远程支持，2小时内到达现场", description="服务响应承诺标准")
-    delivery_guarantee: str = Field(default="承诺在合同签署后 90 个日历日内保质完成整体系统交付与试运行", description="工期承诺")
+    company_name: str = Field(default="", description="投标企业法定全称")
+    credit_code: str = Field(default="", description="统一社会信用代码")
+    legal_rep: str = Field(default="", description="法定代表人姓名")
+    registered_capital: str = Field(default="", description="注册资本")
+    core_product_name: str = Field(default="", description="本次投标主打核心产品/平台")
+    architecture_stack: str = Field(default="", description="标准技术路线栈")
+    database_selection: str = Field(default="", description="指定数据库选型")
+    sla_commitment: str = Field(default="", description="服务响应承诺标准")
+    delivery_guarantee: str = Field(default="", description="工期承诺")
+    # 事实完备模式：omit=未提供的事实保持模糊不编造 / placeholder=正文输出【待填写】占位
+    fact_completeness_mode: str = Field(default="placeholder", description="omit | placeholder")
     custom_facts: Dict[str, str] = Field(default_factory=dict, description="其他用户自定义的特定只读事实")
 
     def to_constraint_text(self) -> str:
         """将全局事实转换为大模型 System Prompt 约束文本"""
-        lines = [
-            f"- 投标人官方全称：{self.company_name}",
-            f"- 统一社会信用代码：{self.credit_code}",
-            f"- 法定代表人：{self.legal_rep}",
-            f"- 注册资本：{self.registered_capital}",
-            f"- 投标核心产品平台：{self.core_product_name}",
-            f"- 统一技术架构路线：{self.architecture_stack}",
-            f"- 统一数据库底座：{self.database_selection}",
-            f"- 统一SLA售后承诺：{self.sla_commitment}",
-            f"- 统一工期承诺：{self.delivery_guarantee}",
+        filled, omitted = [], []
+        fields = [
+            ("投标人官方全称", self.company_name),
+            ("统一社会信用代码", self.credit_code),
+            ("法定代表人", self.legal_rep),
+            ("注册资本", self.registered_capital),
+            ("投标核心产品平台", self.core_product_name),
+            ("统一技术架构路线", self.architecture_stack),
+            ("统一数据库底座", self.database_selection),
+            ("统一SLA售后承诺", self.sla_commitment),
+            ("统一工期承诺", self.delivery_guarantee),
         ]
+        for label, value in fields:
+            if value and value.strip() and value.strip() != NOT_MENTIONED:
+                filled.append(f"- {label}：{value.strip()}")
         for k, v in self.custom_facts.items():
-            lines.append(f"- {k}：{v}")
+            if v and v.strip():
+                filled.append(f"- {k}：{v.strip()}")
+
+        lines = ["【全局事实硬约束（全文必须严格一致，禁止前后矛盾）】"]
+        if filled:
+            lines.extend(filled)
+        if self.fact_completeness_mode == "placeholder":
+            lines.append(
+                "【事实完备纪律】以上未列出的事实（如具体金额、日期、人员数量）不得编造，"
+                "如确需提及，一律以【待填写】占位，由人工后续核实填充。"
+            )
+        else:
+            lines.append(
+                "【事实完备纪律】以上未列出的事实一律保持模糊表述（如\"按合同约定\"），严禁编造具体数值。"
+            )
         return "\n".join(lines)
+
+    def filled_count(self) -> int:
+        core = [self.company_name, self.credit_code, self.legal_rep, self.registered_capital,
+                self.core_product_name, self.architecture_stack, self.database_selection,
+                self.sla_commitment, self.delivery_guarantee]
+        return sum(1 for v in core if v and v.strip() and v.strip() != NOT_MENTIONED)
+
 
 class TenderAnalysis18(BaseModel):
     """
-    招标文件 18 项结构化拆解模型（借鉴 OpenBidKit 18 项要素）
+    招标文件 18 项结构化拆解模型（借鉴 OpenBidKit 18 项要素）。
+    未提取到的字段为空串或哨兵值 NOT_MENTIONED，绝无编造默认值。
     """
     project_name: str = Field(default="", description="1. 招标项目名称")
     tender_number: str = Field(default="", description="2. 招标项目编号/标段号")
@@ -59,39 +101,49 @@ class TenderAnalysis18(BaseModel):
     warranty_period: str = Field(default="", description="6. 免费质保与售后服务期要求")
     bid_security: str = Field(default="", description="7. 投标保证金金额与递交方式")
     bid_validity_period: str = Field(default="", description="8. 投标有效期天数")
-    scoring_method: str = Field(default="综合评分法", description="9. 评标方法 (综合评分法/最低评标价法)")
-    price_score_weight: str = Field(default="30分", description="10. 价格分权重与评分公式")
-    tech_score_weight: str = Field(default="50分", description="11. 技术方案分值与各章节评分明细")
-    business_score_weight: str = Field(default="20分", description="12. 商务资信分值与资质要求")
-    star_disqualification_items: List[str] = Field(default_factory=list, description="13. ★号不可偏离重大条款与废标红线清单")
-    qualification_thresholds: List[str] = Field(default_factory=list, description="14. 投标人强制资质门槛（如涉密、CMMI、ISO等）")
+    scoring_method: str = Field(default="", description="9. 评标方法 (综合评分法/最低评标价法)")
+    price_score_weight: str = Field(default="", description="10. 价格分权重与评分公式")
+    tech_score_weight: str = Field(default="", description="11. 技术方案分值与各章节评分明细")
+    business_score_weight: str = Field(default="", description="12. 商务资信分值与资质要求")
+    star_disqualification_items: List[str] = Field(default_factory=list, description="13. ★号不可偏离重大条款与废标红线清单（原文摘录）")
+    qualification_thresholds: List[str] = Field(default_factory=list, description="14. 投标人强制资质门槛")
     project_location: str = Field(default="", description="15. 项目实施与交付地点")
-    payment_milestones: str = Field(default="", description="16. 付款节点比例 (如 3:3:3:1)")
+    payment_milestones: str = Field(default="", description="16. 付款节点比例")
     site_survey_rules: str = Field(default="", description="17. 是否组织现场踏勘及答疑规则")
     submission_deadline: str = Field(default="", description="18. 投标截止时间与递交形式")
+    # 诚实信号：llm=大模型抽取 / rules=正则规则抽取（覆盖度有限）
+    extraction_mode: str = Field(default="llm")
+    extraction_note: str = Field(default="")
+
 
 class DeviationItem(BaseModel):
     """技术规格与条款点对点偏离表项"""
     index: int
-    clause_title: str = Field(..., description="招标文件条款要求")
+    clause_title: str = Field(..., description="招标文件条款要求（原文摘录）")
     is_star: bool = Field(default=False, description="是否为★号不可偏离条款")
     response_status: str = Field(default="完全满足", description="响应结果：完全满足/正偏离/负偏离")
     response_detail: str = Field(default="", description="点对点具体实现技术论述与佐证")
+    source_fingerprint: str = Field(default="", description="条款来源指纹（确定性抽取溯源）")
+
 
 class ComplianceCheckReport(BaseModel):
-    """标书废标项与合规体检报告"""
+    """标书废标项与合规体检报告（LLM 多轮证据核查制）"""
     passed: bool = Field(..., description="是否通过合规检查")
     total_star_items: int = Field(default=0, description="★号废标条款总数")
     satisfied_star_items: int = Field(default=0, description="已满足★号条款数")
-    risk_items: List[Dict[str, str]] = Field(default_factory=list, description="高危/未满足/负偏离风险项")
+    risk_items: List[Dict[str, str]] = Field(default_factory=list, description="高危/未满足/负偏离风险项（含证据定位与整改建议）")
     warnings: List[str] = Field(default_factory=list, description="建议优化的轻度风险提醒")
     summary: str = Field(default="", description="合规审查总体结论")
+    mode: str = Field(default="rules", description="检查模式：llm=多轮证据核查 / rules=关键词快扫")
+    checked_sections: int = Field(default=0, description="实际纳入核查的章节数")
+
 
 class ProjectCreate(BaseModel):
     name: str = Field(..., description="项目/标书名称")
     client_name: Optional[str] = Field(default="", description="客户/招标方名称")
     description: Optional[str] = Field(default="", description="项目简要背景描述")
     facts: Optional[GlobalFacts] = Field(default_factory=GlobalFacts, description="该项目的全局事实约束")
+
 
 class Project(BaseModel):
     id: str
@@ -102,22 +154,17 @@ class Project(BaseModel):
     tender_analysis: Optional[TenderAnalysis18] = None
     deviation_matrix: List[DeviationItem] = Field(default_factory=list)
     outline: List[OutlineNode]
+    stage: str = Field(default="created", description="向导阶段：created/tender_analyzed/outline_confirmed/writing")
     created_at: str
     updated_at: str
 
-class KnowledgeChunk(BaseModel):
-    id: str
-    doc_name: str = Field(..., description="来源文件名")
-    section_title: str = Field(..., description="所属章节标题")
-    breadcrumb: str = Field(..., description="大纲完整面包屑路径")
-    content: str = Field(..., description="切片正文")
-    tags: List[str] = Field(default_factory=list, description="自动提取的技术或业务标签")
-    score: Optional[float] = Field(default=0.0, description="相似度分数")
 
 class KnowledgeQueryRequest(BaseModel):
     query: str = Field(..., description="检索问题或章节需求")
     top_k: int = Field(default=5, description="召回数量")
-    tag_filter: Optional[List[str]] = Field(default=None, description="标签过滤")
+    rerank: bool = Field(default=True, description="是否启用 LLM 重排")
+    doc_filter: Optional[List[str]] = Field(default=None, description="限定检索的文档 id 列表")
+
 
 class GenerateSectionRequest(BaseModel):
     project_id: str
@@ -126,16 +173,30 @@ class GenerateSectionRequest(BaseModel):
     section_path: str = ""
     requirements: List[str] = Field(default_factory=list)
     custom_instruction: Optional[str] = Field(default="", description="人工补充的特殊要求或提示词")
+    # 引用人工在环：锁定/排除知识块
+    pinned_refs: List[str] = Field(default_factory=list)
+    excluded_refs: List[str] = Field(default_factory=list)
+
 
 class GenerateSectionResponse(BaseModel):
     section_id: str
     generated_content: str
-    reference_sources: List[KnowledgeChunk]
+    reference_sources: List[Dict[str, Any]] = Field(default_factory=list)
+    retrieval_message: str = Field(default="", description="检索状态说明（无匹配/未重排等）")
+    mode: str = Field(default="llm", description="生成模式：llm=真实模型 / mock=离线演示")
     tokens_used: int = 0
+
 
 class UpdateSectionRequest(BaseModel):
     section_id: str
     content: str
+    status: Optional[str] = Field(default=None, description="目标状态，默认 reviewed")
+
+
+class OutlineUpdateRequest(BaseModel):
+    """人工编辑大纲（增删改节点、设置要求与字数预算）"""
+    outline: List[OutlineNode]
+
 
 # ==================== 企业集中中台资产模型 (借鉴 Yibiao-Web) ====================
 
@@ -147,10 +208,11 @@ class CompanyQualification(BaseModel):
     category: str = Field(default="综合资质", description="资质分类: 研发能力/安全保密/服务运维/质量体系/综合资质")
     level: str = Field(default="", description="资质等级: 如 5级/甲级/一级/A级")
     issue_org: str = Field(..., description="发证主管机构")
-    issue_date: str = Field(default="2024-01-01", description="生效/发证日期")
-    expiry_date: str = Field(default="2027-12-31", description="有效期截止日期")
+    issue_date: str = Field(default="", description="生效/发证日期")
+    expiry_date: str = Field(default="", description="有效期截止日期")
     summary: str = Field(default="", description="资质适用投标场景与得分说明")
     proof_doc: str = Field(default="", description="证明附件文件或索引编号")
+
 
 class PersonnelAsset(BaseModel):
     """企业核心技术骨干、项目经理与专家证书履历"""
@@ -164,17 +226,19 @@ class PersonnelAsset(BaseModel):
     representative_projects: List[str] = Field(default_factory=list, description="曾担任核心负责人的代表性中标业绩")
     intro: str = Field(default="", description="个人专业能力综合述评（直接用于标书人员简历章节）")
 
+
 class CaseContract(BaseModel):
     """企业历史同类中标业绩与合同案例资产"""
     id: str
     project_name: str = Field(..., description="业绩项目全称")
     client_name: str = Field(..., description="采购客户单位")
     contract_amount: str = Field(..., description="合同金额 (如 1,280.00 万元)")
-    sign_date: str = Field(default="2024-06", description="合同签约时间")
+    sign_date: str = Field(default="", description="合同签约时间")
     contract_category: str = Field(default="政企软件", description="业务领域分类")
     key_deliverables: List[str] = Field(default_factory=list, description="核心交付模块与技术亮点")
     acceptance_status: str = Field(default="已完成终验并平稳运行", description="履约验收结论")
     summary: str = Field(default="", description="项目背景与成效总结（可直接插入标书业绩章节）")
+
 
 class SolutionComponent(BaseModel):
     """企业标准方案可复用技术组件块"""
@@ -184,6 +248,7 @@ class SolutionComponent(BaseModel):
     tags: List[str] = Field(default_factory=list, description="技术标签")
     summary: str = Field(default="", description="方案组件架构设计概述")
     content: str = Field(..., description="经过实战检验的标准技术方案正文（含架构描述与表格）")
+
 
 # ==================== 八维质检与降AI味模型 (借鉴 YuduBid) ====================
 
@@ -195,6 +260,7 @@ class QualityDimensionScore(BaseModel):
     findings: List[str] = Field(default_factory=list, description="发现的优点或问题")
     suggestions: List[str] = Field(default_factory=list, description="整改建议")
 
+
 class EightDimensionQualityReport(BaseModel):
     """标书八维全盘质量体检报告"""
     overall_score: int = Field(default=85, description="八维综合评分 0~100")
@@ -204,6 +270,8 @@ class EightDimensionQualityReport(BaseModel):
     de_ai_detected_phrases: List[str] = Field(default_factory=list, description="检测到的 AI 廉价空话套话")
     high_risk_defects: List[str] = Field(default_factory=list, description="一票否决废标缺陷")
     summary: str = Field(default="", description="质检总评结论")
+    mode: str = Field(default="rules", description="检查模式：rules=规则快扫 / llm=模型深度审查")
+
 
 class PolishSectionRequest(BaseModel):
     """章节降AI味与公文润色请求"""
@@ -212,12 +280,15 @@ class PolishSectionRequest(BaseModel):
     content: str
     polish_mode: str = Field(default="de_ai", description="润色模式: de_ai(去空话强化参数), official_formal(公文严肃化), expand_specs(补充技术细节)")
 
+
 class PolishSectionResponse(BaseModel):
     """润色结果响应"""
     section_id: str
     original_content: str
     polished_content: str
     improvements: List[str] = Field(default_factory=list, description="所做的改进清单")
+    mode: str = Field(default="llm", description="生成模式：llm=真实模型 / mock=离线演示")
+
 
 # ==================== 项目列表模型 ====================
 
@@ -229,6 +300,6 @@ class ProjectListItem(BaseModel):
     completion_rate: float
     section_count: int
     completed_sections: int
+    stage: str = "created"
     created_at: str
     updated_at: str
-

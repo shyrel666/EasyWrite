@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* 标书正文渲染预览区：标准公文排版 */
+.bid-doc-preview {
+  font-family: 'SimSun', '宋体', serif;
+  line-height: 1.9;
+  color: #1e293b;
+}
+.bid-doc-preview h1,
+.bid-doc-preview h2,
+.bid-doc-preview h3 {
+  font-family: 'SimHei', '黑体', sans-serif;
+  font-weight: bold;
+  color: #0f172a;
+  margin: 1.1em 0 0.5em;
+}
+.bid-doc-preview h1 { font-size: 1.35em; }
+.bid-doc-preview h2 { font-size: 1.2em; }
+.bid-doc-preview h3 { font-size: 1.08em; }
+.bid-doc-preview p {
+  text-indent: 2em;
+  margin: 0.45em 0;
+}
+.bid-doc-preview ul,
+.bid-doc-preview ol {
+  padding-left: 2.2em;
+  margin: 0.4em 0;
+}
+.bid-doc-preview li {
+  margin: 0.2em 0;
+}
+.bid-doc-preview table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.8em 0;
+  font-family: 'SimSun', '宋体', serif;
+}
+.bid-doc-preview th,
+.bid-doc-preview td {
+  border: 1px solid #64748b;
+  padding: 5px 8px;
+  font-size: 0.92em;
+  text-align: left;
+  text-indent: 0;
+}
+.bid-doc-preview th {
+  background: #e2e8f0;
+  font-family: 'SimHei', '黑体', sans-serif;
+}
+.bid-doc-preview pre {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 0.85em;
+  text-indent: 0;
+}
+.bid-doc-preview code {
+  font-family: Consolas, Monaco, monospace;
+}
+.bid-doc-preview strong {
+  color: #0f172a;
+}
+.bid-doc-preview figure.mermaid-figure {
+  margin: 1em 0;
+  padding: 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  text-align: center;
+  text-indent: 0;
+}
+.bid-doc-preview figure.mermaid-figure figcaption {
+  font-family: 'SimHei', '黑体', sans-serif;
+  font-size: 0.85em;
+  color: #64748b;
+  margin-top: 8px;
+}
+
+/* markdown 渲染容器基础 */
+.md-render img {
+  max-width: 100%;
+}

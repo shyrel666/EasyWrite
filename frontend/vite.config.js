@@ -17,5 +17,10 @@ export default defineConfig({
         changeOrigin: true
       }
     }
+  },
+  build: {
+    // 生产构建产物直接输出到后端静态目录，uvicorn 单进程全托管
+    outDir: path.resolve(__dirname, '../backend/app/static'),
+    emptyOutDir: true
   }
 })

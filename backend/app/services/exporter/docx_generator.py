@@ -1,5 +1,6 @@
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import docx
@@ -58,6 +59,79 @@ class DocxBidExporter:
         shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{fill_hex}"/>')
         cell._tc.get_or_add_tcPr().append(shading)
 
+    @staticmethod
+    def _set_run_font(run, name: str, size: float, bold: bool = False, color=None):
+        """统一设置字体（含中文 eastAsia 字体，否则中文字符不生效）"""
+        run.font.name = name
+        run.font.size = Pt(size)
+        run.bold = bold
+        if color is not None:
+            run.font.color.rgb = color
+        rPr = run._element.get_or_add_rPr()
+        rFonts = rPr.find(qn("w:rFonts"))
+        if rFonts is None:
+            rFonts = OxmlElement("w:rFonts")
+            rPr.append(rFonts)
+        rFonts.set(qn("w:eastAsia"), name)
+
+    def _add_toc(self, doc: Document):
+        """插入 Word 原生目录域（打开文档后 F9 或右键更新域即可刷新页码）"""
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run("目    录")
+        self._set_run_font(run, "黑体", 16, bold=True)
+
+        p_field = doc.add_paragraph()
+        fldChar_begin = OxmlElement("w:fldChar")
+        fldChar_begin.set(qn("w:fldCharType"), "begin")
+        instr = OxmlElement("w:instrText")
+        instr.set(qn("xml:space"), "preserve")
+        instr.text = r'TOC \o "1-3" \h \z \u'
+        fldChar_sep = OxmlElement("w:fldChar")
+        fldChar_sep.set(qn("w:fldCharType"), "separate")
+        placeholder = OxmlElement("w:t")
+        placeholder.text = "（目录将在 Word 中打开后自动更新：右键目录 → 更新域 → 更新整个目录）"
+        fldChar_end = OxmlElement("w:fldChar")
+        fldChar_end.set(qn("w:fldCharType"), "end")
+
+        run_field = p_field.add_run()
+        run_field._element.append(fldChar_begin)
+        run_field._element.append(instr)
+        run_field._element.append(fldChar_sep)
+        run_field._element.append(placeholder)
+        run_field._element.append(fldChar_end)
+
+        doc.add_page_break()
+
+    def _add_page_number_footer(self, section):
+        """页脚插入"第 X 页 共 Y 页"页码域"""
+        footer_p = section.footer.paragraphs[0]
+        footer_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        footer_p.text = ""
+
+        def _append_field(paragraph, instr_text: str):
+            run = paragraph.add_run()
+            fld_begin = OxmlElement("w:fldChar")
+            fld_begin.set(qn("w:fldCharType"), "begin")
+            instr = OxmlElement("w:instrText")
+            instr.set(qn("xml:space"), "preserve")
+            instr.text = instr_text
+            fld_end = OxmlElement("w:fldChar")
+            fld_end.set(qn("w:fldCharType"), "end")
+            run._element.append(fld_begin)
+            run._element.append(instr)
+            run._element.append(fld_end)
+            self._set_run_font(run, "宋体", 9, color=RGBColor(128, 128, 128))
+
+        r1 = footer_p.add_run("第 ")
+        self._set_run_font(r1, "宋体", 9, color=RGBColor(128, 128, 128))
+        _append_field(footer_p, "PAGE")
+        r2 = footer_p.add_run(" 页  共 ")
+        self._set_run_font(r2, "宋体", 9, color=RGBColor(128, 128, 128))
+        _append_field(footer_p, "NUMPAGES")
+        r3 = footer_p.add_run(" 页")
+        self._set_run_font(r3, "宋体", 9, color=RGBColor(128, 128, 128))
+
     def _set_table_borders(self, table):
         """设置标准的工程标书细边框"""
         tblPr = table._tbl.tblPr
@@ -80,7 +154,7 @@ class DocxBidExporter:
             section.bottom_margin = Cm(style_cfg.margin_bottom)
             section.left_margin = Cm(style_cfg.margin_left)
             section.right_margin = Cm(style_cfg.margin_right)
-            
+
             # 页眉设置
             header = section.header
             header_p = header.paragraphs[0]
@@ -91,10 +165,20 @@ class DocxBidExporter:
                 header_p.runs[0].font.size = Pt(9)
                 header_p.runs[0].font.color.rgb = RGBColor(128, 128, 128)
 
+            # 页脚页码（第 X 页 共 Y 页）
+            self._add_page_number_footer(section)
+
         normal_style = doc.styles['Normal']
         normal_style.font.name = style_cfg.primary_font
         normal_style.font.size = Pt(12)  # 小四号
         normal_style.font.color.rgb = RGBColor(30, 30, 30)
+        # Normal 样式的 eastAsia 字体
+        rPr = normal_style.element.get_or_add_rPr()
+        rFonts = rPr.find(qn("w:rFonts"))
+        if rFonts is None:
+            rFonts = OxmlElement("w:rFonts")
+            rPr.append(rFonts)
+        rFonts.set(qn("w:eastAsia"), style_cfg.primary_font)
 
     def _add_cover_page(self, doc: Document, project_name: str, client_name: str, facts: GlobalFacts):
         """添加标准标书封面（融合全局事实）"""
@@ -119,13 +203,13 @@ class DocxBidExporter:
         for _ in range(5):
             doc.add_paragraph()
 
-        # 底部信息栏（从 GlobalFacts 自动填充）
+        # 底部信息栏（从 GlobalFacts 自动填充；未配置的字段留待填写，不编造）
         info_items = [
-            ("招 标 单 位 ：", client_name or "招标单位"),
-            ("投 标 单 位 ：", facts.company_name or "投标供应商"),
-            ("法定代表人  ：", facts.legal_rep or "法人"),
-            ("统一信用代码：", facts.credit_code or "91110108MA00000000"),
-            ("编 制 日 期 ：", "2026 年 09 月"),
+            ("招 标 单 位 ：", client_name or "（待填写）"),
+            ("投 标 单 位 ：", facts.company_name or "（待填写）"),
+            ("法定代表人  ：", facts.legal_rep or "（待填写）"),
+            ("统一信用代码：", facts.credit_code or "（待填写）"),
+            ("编 制 日 期 ：", datetime.now().strftime("%Y 年 %m 月")),
         ]
         for label, val in info_items:
             p_info = doc.add_paragraph()
@@ -388,33 +472,32 @@ class DocxBidExporter:
 
         self._apply_styles(doc, cfg)
         self._add_cover_page(doc, project_name, client_name, facts_obj)
+        self._add_toc(doc)
 
         def render_node(node: OutlineNode):
-            p_head = doc.add_paragraph()
+            # 使用真实 Word Heading 样式（目录域 TOC 依赖 Heading 1-3 才能抓取）
+            style_name = {1: "Heading 1", 2: "Heading 2", 3: "Heading 3"}.get(node.level, "Heading 3")
+            try:
+                p_head = doc.add_paragraph(style=style_name)
+            except KeyError:
+                p_head = doc.add_paragraph()
             p_head.paragraph_format.first_line_indent = Pt(0)
 
             if node.level == 1:
                 p_head.paragraph_format.space_before = Pt(14)
                 p_head.paragraph_format.space_after = Pt(8)
                 run = p_head.add_run(node.title)
-                run.font.name = cfg.heading_font
-                run.font.size = Pt(16)
-                run.bold = True
-                run.font.color.rgb = RGBColor(*cfg.theme_rgb)
+                self._set_run_font(run, cfg.heading_font, 16, bold=True, color=RGBColor(*cfg.theme_rgb))
             elif node.level == 2:
                 p_head.paragraph_format.space_before = Pt(10)
                 p_head.paragraph_format.space_after = Pt(5)
                 run = p_head.add_run(node.title)
-                run.font.name = cfg.heading_font
-                run.font.size = Pt(14)
-                run.bold = True
+                self._set_run_font(run, cfg.heading_font, 14, bold=True, color=RGBColor(*cfg.theme_rgb))
             else:
                 p_head.paragraph_format.space_before = Pt(6)
                 p_head.paragraph_format.space_after = Pt(3)
                 run = p_head.add_run(node.title)
-                run.font.name = cfg.heading_font
-                run.font.size = Pt(12)
-                run.bold = True
+                self._set_run_font(run, cfg.heading_font, 12, bold=True)
 
             if node.content:
                 self._render_content(doc, node.content)

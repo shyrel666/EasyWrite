@@ -1,76 +1,98 @@
+"""
+项目持久化（SQLite）与拆标联动测试。
+"""
 import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent / "backend"
 sys.path.insert(0, str(BASE_DIR))
 
-from fastapi.testclient import TestClient
-from app.main import app
-from app.models.schemas import TenderAnalysis18
+from fastapi.testclient import TestClient  # noqa: E402
+from app.main import app  # noqa: E402
+from app.services.project_store import project_store  # noqa: E402
+from conftest import TENDER_SAMPLE  # noqa: E402
 
 client = TestClient(app)
 
+
 def test_project_crud_and_persistence():
-    print("[1] 测试项目生命周期管理与本地持久化...")
-    # 1. 创建新项目
-    proj_name = "持久化测试_智能物联水利工程"
     res = client.post("/api/v1/project/create", json={
-        "name": proj_name,
-        "client_name": "省水利勘测设计院",
-        "description": "物联监测调度系统"
+        "name": "持久化测试项目", "client_name": "省水利勘测设计院",
+        "description": "物联监测调度系统",
     })
     assert res.status_code == 200
-    proj = res.json()
-    proj_id = proj["id"]
-    print(f"    成功创建项目: {proj_id}")
+    pid = res.json()["id"]
 
-    # 2. 查询项目列表
-    list_res = client.get("/api/v1/projects")
-    assert list_res.status_code == 200
-    projects = list_res.json()
-    assert any(p["id"] == proj_id for p in projects)
-    matched_p = next(p for p in projects if p["id"] == proj_id)
-    assert matched_p["name"] == proj_name
-    print(f"    项目列表查询验证成功，共 {len(projects)} 个项目")
+    # 列表可见
+    res = client.get("/api/v1/projects")
+    assert any(p["id"] == pid for p in res.json())
 
-    # 3. 18项拆标数据一键同步至项目全局事实
-    sample_analysis = {
-        "project_name": proj_name,
-        "tender_number": "SL-2026-001",
-        "purchaser_name": "省水利勘测设计院",
-        "budget_limit": "1200.00万元",
-        "duration_requirement": "合同生效后 150 个日历日",
-        "warranty_period": "终验合格后 5 年原厂免费维保",
-        "star_disqualification_items": [
-            "★ 投标人必须具备水利水文信息化甲级资质或高新技术企业认证。",
-            "★ 核心数据传输必须支持国密SM4加密。"
-        ]
-    }
-    sync_facts_res = client.post(f"/api/v1/project/{proj_id}/tender/sync-to-facts", json=sample_analysis)
-    assert sync_facts_res.status_code == 200
-    synced_facts = sync_facts_res.json()["facts"]
-    assert "150 个日历日" in synced_facts["delivery_guarantee"]
-    assert "5 年原厂免费维保" in synced_facts["sla_commitment"]
-    print("    18项拆标一键同步至全局事实验证成功！")
+    # 详情读取
+    res = client.get(f"/api/v1/project/{pid}")
+    assert res.status_code == 200
+    assert res.json()["client_name"] == "省水利勘测设计院"
 
-    # 4. ★号条款一键同步至技术偏离表
-    sync_dev_res = client.post(f"/api/v1/project/{proj_id}/tender/sync-to-deviations")
-    assert sync_dev_res.status_code == 200
-    sync_dev_data = sync_dev_res.json()
-    assert sync_dev_data["added_count"] == 2
-    
-    dev_list_res = client.get(f"/api/v1/project/{proj_id}/deviation")
-    assert dev_list_res.status_code == 200
-    assert len(dev_list_res.json()["items"]) >= 2
-    print("    18项拆标★号项一键同步至偏离表验证成功！")
+    # 事实更新持久化（SQLite 而非内存态）
+    facts = res.json()["facts"]
+    facts["company_name"] = "持久化测试科技有限公司"
+    res = client.put(f"/api/v1/project/{pid}/facts", json=facts)
+    assert res.status_code == 200
+    # 重新从 DB 读取验证
+    stored = project_store.get(pid)
+    assert stored.facts.company_name == "持久化测试科技有限公司"
 
-    # 5. 删除项目
-    del_res = client.delete(f"/api/v1/project/{proj_id}")
-    assert del_res.status_code == 200
-    print("    项目删除接口验证成功！")
+    # 删除
+    res = client.delete(f"/api/v1/project/{pid}")
+    assert res.status_code == 200
+    assert project_store.get(pid) is None
 
-if __name__ == "__main__":
-    if sys.platform == "win32":
-        import io
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    test_project_crud_and_persistence()
+
+def test_tender_apply_and_facts_linkage():
+    res = client.post("/api/v1/project/create", json={
+        "name": "拆标联动测试项目", "description": "智慧水务项目",
+    })
+    pid = res.json()["id"]
+
+    analysis = client.post("/api/v1/tender/analyze/text", json={"text": TENDER_SAMPLE}).json()
+    res = client.post(f"/api/v1/project/{pid}/tender/apply",
+                      json={"analysis": analysis, "tender_text": TENDER_SAMPLE})
+    assert res.status_code == 200
+    assert res.json()["stage"] == "tender_analyzed"
+    assert res.json()["star_count"] >= 3
+
+    # 联动：采购人回填 client_name、工期/质保联动全局事实（只补空字段）
+    stored = project_store.get(pid)
+    assert "水务环境集团" in stored.client_name
+    assert "120个日历日" in stored.facts.delivery_guarantee
+    assert "5年驻场质保" in stored.facts.sla_commitment
+
+    # 招标正文存档（偏离表抽取数据源）
+    tender_text = project_store.get_tender_text(pid)
+    assert "SW-2026-ZB-088" in tender_text
+
+    # 用户已填的事实不被覆盖
+    stored.facts.delivery_guarantee = "用户自定义工期承诺"
+    project_store.save(stored)
+    client.post(f"/api/v1/project/{pid}/tender/apply",
+                json={"analysis": analysis, "tender_text": TENDER_SAMPLE})
+    assert project_store.get(pid).facts.delivery_guarantee == "用户自定义工期承诺"
+
+    client.delete(f"/api/v1/project/{pid}")
+
+
+def test_wizard_stage_machine():
+    res = client.post("/api/v1/project/create", json={"name": "阶段机测试项目"})
+    pid = res.json()["id"]
+
+    # 非法阶段拒绝
+    res = client.put(f"/api/v1/project/{pid}/stage", json={"stage": "not_a_stage"})
+    assert res.status_code == 400
+
+    # 合法流转
+    for stage in ("tender_analyzed", "outline_confirmed", "writing"):
+        res = client.put(f"/api/v1/project/{pid}/stage", json={"stage": stage})
+        assert res.status_code == 200
+        assert res.json()["stage"] == stage
+        assert project_store.get(pid).stage == stage
+
+    client.delete(f"/api/v1/project/{pid}")

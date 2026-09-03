@@ -101,6 +101,18 @@ def test_quality_and_polish_api():
     assert proj_res.status_code == 200
     proj_id = proj_res.json()["id"]
 
+    # 1.5 新架构：项目创建后大纲为空，需先建立章节（向导流程）
+    outline = [{
+        "id": "sec_1", "title": "第一章 总体方案", "level": 1, "path": "第一章 总体方案",
+        "status": "completed", "requirements": [],
+        "children": [{
+            "id": "sec_1_1", "title": "1.1 架构设计", "level": 2, "path": "第一章 总体方案 > 1.1 架构设计",
+            "status": "pending", "requirements": [], "children": [],
+        }],
+    }]
+    outline_res = client.put(f"/api/v1/project/{proj_id}/outline", json={"outline": outline})
+    assert outline_res.status_code == 200
+
     # 2. 单章润色
     polish_res = client.post(f"/api/v1/project/{proj_id}/section/polish", json={
         "project_id": proj_id,

@@ -12,14 +12,8 @@ PROVIDER_PRESETS = {
     "deepseek": {
         "name": "DeepSeek 深度求索",
         "base_url": "https://api.deepseek.com/v1",
-        "default_model": "deepseek-v4-pro",
-        "available_models": [
-            "deepseek-v4-pro",
-            "deepseek-v4-flash",
-            "deepseek-v4-flash-vision-exp",
-            "deepseek-reasoner",
-            "deepseek-chat"
-        ],
+        "default_model": "deepseek-chat",
+        "available_models": ["deepseek-chat", "deepseek-reasoner"],
         "supports_embedding": False
     },
     "qwen": {
@@ -30,11 +24,7 @@ PROVIDER_PRESETS = {
             "qwen-max-latest",
             "qwen-plus-latest",
             "qwen-turbo-latest",
-            "qwen2.5-72b-instruct",
-            "qwen2.5-32b-instruct",
-            "qwen2.5-14b-instruct",
-            "qwen-long",
-            "text-embedding-v3"
+            "qwen-long"
         ],
         "supports_embedding": True,
         "default_embedding_model": "text-embedding-v3"
@@ -46,16 +36,12 @@ PROVIDER_PRESETS = {
         "available_models": [
             "deepseek-ai/DeepSeek-V3",
             "deepseek-ai/DeepSeek-R1",
-            "Pro/deepseek-ai/DeepSeek-V3",
-            "Pro/deepseek-ai/DeepSeek-R1",
             "Qwen/Qwen2.5-72B-Instruct",
             "Qwen/Qwen2.5-32B-Instruct",
-            "THUDM/glm-4-9b-chat",
-            "BAAI/bge-large-zh-v1.5",
-            "BAAI/bge-m3"
+            "THUDM/glm-4-9b-chat"
         ],
         "supports_embedding": True,
-        "default_embedding_model": "BAAI/bge-large-zh-v1.5"
+        "default_embedding_model": "BAAI/bge-m3"
     },
     "doubao": {
         "name": "字节跳动 豆包",
@@ -164,15 +150,15 @@ class AISettingsManager:
     def _get_default_settings(self) -> Dict[str, Any]:
         return {
             "provider": "deepseek",
-            "api_key": settings.LLM_API_KEY if settings.LLM_API_KEY != "sk-placeholder" else "",
+            "api_key": settings.LLM_API_KEY,
             "base_url": settings.LLM_BASE_URL,
             "model": settings.LLM_MODEL,
             "temperature": settings.LLM_TEMPERATURE,
             "max_tokens": 4096,
-            "embedding_provider": "local",  # local / cloud
-            "embedding_api_key": settings.EMBEDDING_API_KEY or "",
-            "embedding_base_url": settings.EMBEDDING_BASE_URL or "",
-            "embedding_model": settings.EMBEDDING_MODEL or "BAAI/bge-small-zh-v1.5"
+            "embedding_provider": "none",
+            "embedding_api_key": settings.EMBEDDING_API_KEY,
+            "embedding_base_url": settings.EMBEDDING_BASE_URL,
+            "embedding_model": settings.EMBEDDING_MODEL
         }
 
     def _load(self):
@@ -195,19 +181,18 @@ class AISettingsManager:
             print(f"[AISettings] 保存配置文件异常: {e}")
 
     def get_settings(self, mask_key: bool = True) -> Dict[str, Any]:
-        """获取设置信息，可选择是否对 API Key 进行脱敏"""
+        """获取设置信息，可选择是否对 API Key 进行脱敏（明文 Key 绝不回传前端）"""
         cfg = dict(self.data)
         if mask_key and cfg.get("api_key"):
             key = cfg["api_key"]
-            if len(key) > 8:
-                cfg["api_key_masked"] = f"{key[:4]}****{key[-4:]}"
-            else:
-                cfg["api_key_masked"] = "********"
-            # 保持原始 key 字段在前端不直接明文泄露
+            cfg["api_key_masked"] = f"{key[:4]}****{key[-4:]}" if len(key) > 8 else "********"
             cfg["has_api_key"] = True
+            # 安全：回传的配置中移除明文 Key（前端留空=保持现有 Key，输入新值=替换）
+            cfg["api_key"] = ""
         else:
             cfg["api_key_masked"] = ""
             cfg["has_api_key"] = bool(cfg.get("api_key"))
+            cfg["api_key"] = ""
 
         cfg["presets"] = PROVIDER_PRESETS
         return cfg

@@ -356,7 +356,8 @@ class EightDimensionQualityInspector:
                 section_id=req.section_id,
                 original_content="",
                 polished_content="*(该章节尚无内容，请先执行智能撰写或补充正文)*",
-                improvements=[]
+                improvements=[],
+                mode="rules",
             )
 
         # ---------------- 两阶段降AI味与公文严肃化润色 ----------------
@@ -390,7 +391,8 @@ class EightDimensionQualityInspector:
                         section_id=req.section_id,
                         original_content=original,
                         polished_content=polished,
-                        improvements=improvements
+                        improvements=improvements,
+                        mode=self.llm.get_mode(),
                     )
             except Exception as e:
                 print(f"[QualityInspector] 远端润色失败: {e}，切入本地规则润色兜底")
@@ -409,7 +411,8 @@ class EightDimensionQualityInspector:
             section_id=req.section_id,
             original_content=original,
             polished_content=polished.strip(),
-            improvements=improvements
+            improvements=improvements,
+            mode="rules",
         )
 
 quality_inspector = EightDimensionQualityInspector()
