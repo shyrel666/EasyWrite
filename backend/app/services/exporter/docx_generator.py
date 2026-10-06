@@ -204,12 +204,13 @@ class DocxBidExporter:
             doc.add_paragraph()
 
         # 底部信息栏（从 GlobalFacts 自动填充；未配置的字段留待填写，不编造）
+        now = datetime.now()
         info_items = [
             ("招 标 单 位 ：", client_name or "（待填写）"),
             ("投 标 单 位 ：", facts.company_name or "（待填写）"),
             ("法定代表人  ：", facts.legal_rep or "（待填写）"),
             ("统一信用代码：", facts.credit_code or "（待填写）"),
-            ("编 制 日 期 ：", datetime.now().strftime("%Y 年 %m 月")),
+            ("编 制 日 期 ：", f"{now.year} 年 {now.month:02d} 月"),
         ]
         for label, val in info_items:
             p_info = doc.add_paragraph()

@@ -114,6 +114,8 @@ python -m uvicorn app.main:app --port 8000
 - 嵌入模型（RAG 语义通道）：推荐硅基流动 `BAAI/bge-m3`；不配置也能用（BM25+LLM 重排兜底）；
 - 未配置时系统为**离线演示模式**，所有界面均有明确横幅标识。
 
+AI 设置会自动保存到本地 `backend/data/ai_settings.json`，该文件与 `.env` 均由 Git 忽略，避免 API 密钥进入提交。首次启动时无需预先创建 AI 设置文件。
+
 ### 5. 前端开发模式（可选）
 ```bash
 cd frontend
@@ -125,8 +127,10 @@ npm run dev         # 5173 端口，/api 自动代理到 8000
 ## 🧪 自动化测试验证
 
 ```bash
-pytest tests/ -v    # 48 项测试全部通过
+python -m pytest tests/ -v
 ```
+
+请在仓库根目录执行。测试在导入应用前配置独立临时目录，数据库、AI 设置、模板、企业资产、上传文件及导出文件均与实际运行数据隔离；测试默认使用空密钥，不使用本地配置或环境中的真实 API 密钥。各用例结束后恢复临时配置，测试结束后释放数据库连接并清理临时目录。
 
 | 测试文件 | 覆盖内容 |
 | :--- | :--- |
@@ -138,6 +142,7 @@ pytest tests/ -v    # 48 项测试全部通过
 | `test_deviation_and_templates.py` | 偏离表确定性抽取与“不伪造响应”、模板管理 |
 | `test_ai_settings_and_client.py` | 真实模型预设矩阵、Key 掩码不泄露、mode 诚实信号 |
 | `test_project_persistence_and_tender_sync.py` | SQLite 持久化、拆标联动、向导阶段机 |
+| `test_runtime_isolation.py` | 临时数据库实际写入位置、运行时文件路径与真实密钥隔离 |
 | `test_eight_dimension_quality.py` / `test_enterprise_assets.py` / `test_diagram_rendering.py` / `test_web_server.py` | 八维质检、资产 CRUD、图表渲染、SPA 托管 |
 
 ---
@@ -181,7 +186,7 @@ EasyWrite/
 │   │   │   └── project_store.py    # 项目仓储（SQLite 读写）
 │   │   ├── static/                 # 前端构建产物（生产托管）
 │   │   └── main.py
-│   ├── data/                       # easywrite.db + 运行时数据（git 忽略）
+│   ├── data/                       # SQLite / AI 配置（git 忽略）与模板 / 资产数据
 │   ├── .env.example
 │   └── requirements.txt
 ├── frontend/                       # Vue 3 SPA（唯一前端源码）
@@ -191,7 +196,7 @@ EasyWrite/
 │       ├── router/
 │       ├── components/             # layout(AppShell响应式) / common / workspace(三栏)
 │       └── views/                  # Dashboard / Wizard / Workspace / Deviation / Quality / Knowledge / Assets / Templates / Settings
-└── tests/                          # 48 项自动化测试
+└── tests/                          # 自动化测试与运行时数据隔离验证
 ```
 
 ---

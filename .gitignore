@@ -9,6 +9,7 @@ venv/
 .venv/
 
 # EasyWrite Runtime Data（SQLite 数据库与用户配置为运行时产物）
+backend/data/ai_settings.json
 backend/data/*.db
 backend/data/*.db-wal
 backend/data/*.db-shm
@@ -23,6 +24,7 @@ backend/data/rendered_diagrams/*
 # Node / Frontend
 node_modules/
 dist/
+.env
 .env.local
 .env.*.local
 npm-debug.log*

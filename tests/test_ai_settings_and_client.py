@@ -1,6 +1,6 @@
 """
 AI 设置与 LLM/嵌入客户端测试（新预设矩阵 + 诚实模式信号）。
-测试隔离由 conftest 的 isolate_runtime_config 保证，本文件可安全修改运行时配置。
+conftest 在导入应用前切换到临时数据目录，并逐用例恢复配置。
 """
 import sys
 from pathlib import Path

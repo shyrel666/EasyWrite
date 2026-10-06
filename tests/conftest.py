@@ -1,13 +1,33 @@
 """
-测试公共设施：路径注入、样例文档构造、TestClient 与项目创建辅助。
+测试公共设施：临时运行时数据、路径注入、样例文档构造与项目创建辅助。
 """
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pytest
 
 BASE_DIR = Path(__file__).resolve().parent.parent / "backend"
 sys.path.insert(0, str(BASE_DIR))
+
+# 必须在导入应用之前隔离：数据库和配置管理器会在模块导入时初始化。
+_runtime_dir = TemporaryDirectory(prefix="easywrite-tests-")
+TEST_DATA_DIR = Path(_runtime_dir.name).resolve()
+_test_env = pytest.MonkeyPatch()
+for name, relative_path in {
+    "DATA_DIR": "",
+    "DB_PATH": "easywrite.db",
+    "UPLOAD_DIR": "uploads",
+    "KNOWLEDGE_DIR": "knowledge_store",
+    "OUTPUT_DIR": "exports",
+    "RENDERED_DIR": "rendered_diagrams",
+    "TEMPLATE_DIR": "templates",
+}.items():
+    _test_env.setenv(name, str(TEST_DATA_DIR / relative_path))
+
+# 不读取用户密钥；环境变量的空值也会覆盖本地 .env 中的配置。
+_test_env.setenv("LLM_API_KEY", "")
+_test_env.setenv("EMBEDDING_API_KEY", "")
 
 from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
@@ -31,13 +51,26 @@ TENDER_SAMPLE = """项目名称：智慧水务一体化综合调度系统建设�
 """
 
 
-@pytest.fixture(scope="session", autouse=True)
+def pytest_unconfigure():
+    """收集测试或执行测试后，先释放 SQLite 连接，再清理临时目录。"""
+    from app.db.database import engine
+
+    engine.dispose()
+    _test_env.undo()
+    _runtime_dir.cleanup()
+
+
+@pytest.fixture(scope="session")
+def runtime_data_dir():
+    return TEST_DATA_DIR
+
+
+@pytest.fixture(autouse=True)
 def isolate_runtime_config():
     """
-    测试隔离：快照并恢复运行时配置文件（ai_settings/templates/enterprise_assets）。
-    防止个别用例修改配置后污染后续用例（此前曾因旧测试残留假 Key 导致整批失败）。
+    在临时目录中逐用例快照并恢复配置，避免假 Key 或资产修改污染后续用例。
     """
-    data_dir = BASE_DIR / "data"
+    data_dir = TEST_DATA_DIR
     files = ["ai_settings.json", "templates.json", "enterprise_assets.json"]
     snapshots = {}
     for name in files:
@@ -54,9 +87,14 @@ def isolate_runtime_config():
     from app.core.ai_settings_manager import ai_settings_manager
     from app.core.llm_client import llm_client
     from app.core.embedding_client import embedding_client
+    from app.services.assets.asset_manager import asset_manager
+    from app.services.exporter.template_manager import template_manager
     ai_settings_manager._load()
     llm_client.reload_config()
     embedding_client.reload_config()
+    asset_manager._load_or_init()
+    template_manager.templates.clear()
+    template_manager._init_templates()
 
 
 @pytest.fixture(scope="session")

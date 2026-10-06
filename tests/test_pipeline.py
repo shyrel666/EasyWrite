@@ -3,6 +3,7 @@
 样例生成 → Word 解析 → 语义分块 → 混合索引 → 检索 → 章节草拟（引用注入）→ Word 导出。
 """
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -103,3 +104,26 @@ def test_export_with_toc(tmp_path):
         footer_xml = "\n".join(z.read(n).decode("utf-8") for n in footer_parts)
     assert "TOC" in document_xml, "导出文档缺少目录域"
     assert "PAGE" in footer_xml and "NUMPAGES" in footer_xml, "导出文档页脚缺少页码域"
+
+
+def test_export_cover_date_on_non_utf8_locale(monkeypatch):
+    """模拟 Windows 非 UTF-8 日期格式限制，仍能导出中文日期与补零月份。"""
+    import docx
+    from app.services.exporter import docx_generator
+
+    class AsciiFormatDateTime(datetime):
+        @classmethod
+        def now(cls):
+            return cls(2026, 1, 15)
+
+        def strftime(self, fmt):
+            fmt.encode("ascii")
+            return super().strftime(fmt)
+
+    monkeypatch.setattr(docx_generator, "datetime", AsciiFormatDateTime)
+    output = docx_exporter.export_project_to_docx(
+        project_name="中文封面日期测试", client_name="采购人", outline=[],
+        output_filename="cover_date_test.docx",
+    )
+    paragraphs = [p.text for p in docx.Document(output).paragraphs]
+    assert any("编 制 日 期 ：" in p and "2026 年 01 月" in p for p in paragraphs)
