@@ -234,7 +234,11 @@ def generate_sections_batch(
 
 @router.put("/project/{project_id}/section", summary="人工保存章节正文（自动保存/显式校审）")
 def update_section_content(project_id: str, req: UpdateSectionRequest):
-    status = req.status if req.status in ("pending", "completed", "reviewed") else "reviewed"
+    # "已校审"只能由用户显式设置；未传或无效的状态按正文是否为空取 completed / pending
+    if req.status in ("pending", "completed", "reviewed"):
+        status = req.status
+    else:
+        status = "completed" if req.content.strip() else "pending"
     _save_section_content(project_id, req.section_id, req.content, status)
     return {"status": "success", "section_id": req.section_id, "node_status": status}
 
@@ -244,8 +248,11 @@ def polish_section(project_id: str, req: PolishSectionRequest):
     project = _get_project(project_id)
     if not find_node(project.outline, req.section_id):
         raise HTTPException(status_code=404, detail="未找到对应章节")
+    if not req.content.strip():
+        raise HTTPException(status_code=400, detail="章节尚无内容，请先撰写后再润色")
     resp = quality_inspector.polish_section(req, project.facts)
-    _save_section_content(project_id, req.section_id, resp.polished_content, "reviewed", version_source="polish")
+    # 润色是 AI 改写，不等于人工校审：状态为 completed，"已校审"只能由用户标记
+    _save_section_content(project_id, req.section_id, resp.polished_content, "completed", version_source="polish")
     return resp
 
 

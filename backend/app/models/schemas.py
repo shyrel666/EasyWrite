@@ -236,7 +236,7 @@ class GenerateSectionResponse(BaseModel):
 class UpdateSectionRequest(BaseModel):
     section_id: str
     content: str
-    status: Optional[str] = Field(default=None, description="目标状态，默认 reviewed")
+    status: Optional[str] = Field(default=None, description="目标状态 pending/completed/reviewed；未传时按正文是否为空取 completed/pending")
 
 
 class OutlineUpdateRequest(BaseModel):

@@ -76,6 +76,25 @@ def test_versions_pruned_per_section(project_id, monkeypatch):
     assert [v["preview"] for v in version_store.list(project_id, "sec_x")] == ["v5", "v4", "v3"]
 
 
+def test_polish_and_implicit_saves_do_not_mark_reviewed(client, project_id):
+    """润色是 AI 改写：写回为 completed 并留版；"已校审"只能由用户显式设置"""
+    _setup(client, project_id)
+    url = f"/api/v1/project/{project_id}/section/polish"
+    res = client.post(url, json={"project_id": project_id, "section_id": "sec_1_2",
+                                 "content": "众所周知，已有人工稿需要润色。", "polish_mode": "de_ai"})
+    assert res.status_code == 200
+    assert find_node(project_store.get(project_id).outline, "sec_1_2").status == "completed"
+    assert [v["source"] for v in version_store.list(project_id, "sec_1_2")] == ["polish", "manual"]
+    # 空正文拒绝润色，不把提示文字写进章节
+    res = client.post(url, json={"project_id": project_id, "section_id": "sec_1_1", "content": "  ", "polish_mode": "de_ai"})
+    assert res.status_code == 400 and _content(project_id, "sec_1_1") == ""
+    # 未传状态的人工保存按正文取 completed / pending，不再默认已校审
+    put = f"/api/v1/project/{project_id}/section"
+    assert client.put(put, json={"section_id": "sec_1_1", "content": "人工稿"}).json()["node_status"] == "completed"
+    assert client.put(put, json={"section_id": "sec_1_1", "content": ""}).json()["node_status"] == "pending"
+    assert client.put(put, json={"section_id": "sec_1_1", "content": "定稿", "status": "reviewed"}).json()["node_status"] == "reviewed"
+
+
 def test_version_failure_rolls_back_content(client, project_id, monkeypatch):
     """历史版本写入失败：正文整体回滚、不产生新版本（被覆盖的人工稿不会无档可查）"""
     from app.api.sections import _save_section_content

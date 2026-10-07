@@ -167,7 +167,7 @@ async function polish() {
     })
     content.value = res.polished_content
     ai.noteMode(res.mode)
-    markSaved(props.node.id, res.polished_content, 'reviewed') // 后端已保存
+    markSaved(props.node.id, res.polished_content, 'completed') // 后端已保存；润色不等于校审，需用户自行标记
     ElMessage.success('降AI味润色完成' + (res.improvements?.length ? `：${res.improvements.slice(0, 2).join('；')}` : ''))
   } catch (e) {
     ElMessage.error('润色失败：' + e.message)

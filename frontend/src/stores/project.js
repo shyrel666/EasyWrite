@@ -36,7 +36,7 @@ export const useProjectStore = defineStore('project', {
       if (res.stage) this.project.stage = res.stage
       return res
     },
-    async saveSection(sectionId, content, status = 'reviewed') {
+    async saveSection(sectionId, content, status = 'completed') {
       const res = await api.saveSection(this.id, sectionId, content, status)
       this.setSectionStatus(sectionId, status)
       return res
