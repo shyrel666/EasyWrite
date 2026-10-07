@@ -231,6 +231,12 @@ export const api = {
   injectDeviations: (id, sectionId) =>
     request(`/project/${id}/deviation/inject`, { method: 'POST', body: { section_id: sectionId } }),
 
+  // 证明材料：评分项与企业资料的关联（建议须用户确认后才经 linkEvidence 保存）
+  evidence: (id) => request(`/project/${id}/evidence`),
+  evidenceSuggestions: (id) => request(`/project/${id}/evidence/suggestions`),
+  linkEvidence: (id, itemId, assetKeys) =>
+    request(`/project/${id}/evidence/${encodeURIComponent(itemId)}`, { method: 'PUT', body: { asset_keys: assetKeys } }),
+
   // 合规质检
   complianceCheck: (id) => request(`/project/${id}/compliance/check`, { method: 'POST' }),
   qualityInspect: (id) => request(`/project/${id}/quality/inspect`, { method: 'POST' }),

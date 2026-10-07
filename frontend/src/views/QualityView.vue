@@ -8,7 +8,9 @@ import AppShell from '@/components/layout/AppShell.vue'
 import TaskProgress from '@/components/common/TaskProgress.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import EvidenceLinkDialog from '@/components/evidence/EvidenceLinkDialog.vue'
 import { isActiveTask } from '@/utils/tasks'
+import { materialChip } from '@/utils/material'
 
 const route = useRoute()
 const store = useProjectStore()
@@ -22,16 +24,28 @@ const complianceInterrupted = ref(null)
 const checking = ref(false)
 const inspecting = ref(false)
 
-async function runQuality() {
+async function runQuality({ quiet = false } = {}) {
   inspecting.value = true
   try {
-    qualityReport.value = await api.qualityInspect(projectId)
-    ElMessage.success(`八维质检完成：${qualityReport.value.overall_score} 分`)
+    const [report, evidence] = await Promise.all([api.qualityInspect(projectId), api.evidence(projectId)])
+    qualityReport.value = report
+    evidenceItems.value = Object.fromEntries(evidence.items.map((it) => [it.item_id, it]))
+    if (!quiet) ElMessage.success(`八维质检完成：${report.overall_score} 分`)
   } catch (e) {
     ElMessage.error('质检失败：' + e.message)
   } finally {
     inspecting.value = false
   }
+}
+
+// ---- 证明材料：评分项关联企业资料（建议须确认），与文字覆盖分开统计 ----
+const evidenceItems = ref({})
+const linkOpen = ref(false)
+const linkItem = ref(null)
+
+function openLink(itemId) {
+  linkItem.value = evidenceItems.value[itemId] || null
+  if (linkItem.value) linkOpen.value = true
 }
 
 async function runCompliance() {
@@ -262,10 +276,15 @@ function scoreColor(score) {
                 <span class="text-xs text-ink-2">按分值加权覆盖率</span>
                 <div class="meter w-28"><span class="bg-ok" :style="{ width: `${Math.round(qualityReport.scoring_coverage_rate * 100)}%` }" /></div>
                 <span class="text-sm font-semibold num">{{ Math.round(qualityReport.scoring_coverage_rate * 100) }}%</span>
+                <template v-if="qualityReport.material_total">
+                  <span class="w-px h-4 bg-line mx-1" />
+                  <span class="text-xs text-ink-2">证明材料齐备</span>
+                  <span class="text-sm font-semibold num">{{ qualityReport.material_complete }}<span class="text-ink-3 font-normal">/{{ qualityReport.material_total }}</span></span>
+                </template>
               </div>
             </div>
             <div class="overflow-x-auto">
-              <table class="table-clean min-w-[640px]">
+              <table class="table-clean min-w-[760px]">
                 <thead>
                   <tr>
                     <th class="!pl-5 sm:!pl-6">评分项</th>
@@ -274,6 +293,7 @@ function scoreColor(score) {
                     <th>承接章节</th>
                     <th class="w-28">字数 / 预算</th>
                     <th>缺失要点</th>
+                    <th class="w-32">证明材料</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -284,6 +304,16 @@ function scoreColor(score) {
                     <td class="text-ink-2">{{ c.section_titles.join('、') || '—' }}</td>
                     <td class="text-ink-2 num">{{ c.word_count }}<template v-if="c.word_budget"> / {{ c.word_budget }}</template></td>
                     <td class="text-warn">{{ c.missing_points.join('、') }}</td>
+                    <td>
+                      <button
+                        v-if="c.material_status"
+                        class="chip hover:ring-1 hover:ring-current/30"
+                        :class="materialChip(c.material_status)"
+                        :title="[...(c.material_assets.length ? [`已关联：${c.material_assets.join('、')}`] : []), ...c.material_notes].join('\n') || '点击关联证明资料'"
+                        @click="openLink(c.item_id)"
+                      >{{ c.material_status }}<el-icon class="ml-0.5"><EditPen /></el-icon></button>
+                      <span v-else class="text-ink-3">—</span>
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -301,5 +331,6 @@ function scoreColor(score) {
         </template>
       </section>
     </div>
+    <EvidenceLinkDialog v-model="linkOpen" :project-id="projectId" :item="linkItem" @saved="runQuality({ quiet: true })" />
   </AppShell>
 </template>

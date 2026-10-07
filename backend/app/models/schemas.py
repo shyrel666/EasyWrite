@@ -200,6 +200,8 @@ class Project(BaseModel):
     tender_analysis: Optional[TenderAnalysis18] = None
     deviation_matrix: List[DeviationItem] = Field(default_factory=list)
     outline: List[OutlineNode]
+    evidence_links: Dict[str, List[str]] = Field(
+        default_factory=dict, description="评分项与证明资料的关联 {评分项ID: [kind:资料ID, …]}，只由用户确认保存")
     stage: str = Field(default="created", description="向导阶段：created/tender_analyzed/outline_confirmed/writing")
     created_at: str
     updated_at: str
@@ -373,6 +375,10 @@ class ScoringCoverage(BaseModel):
     missing_points: List[str] = Field(default_factory=list, description="未在正文中出现的评分要点")
     word_count: int = 0
     word_budget: Optional[int] = None
+    # 证明材料（与文字覆盖分开统计）：证明材料类或已关联资料的评分项才有值
+    material_status: Optional[str] = Field(default=None, description="齐备 / 缺附件 / 过期 / 主体不符 / 待核实 / 示例资料 / 未关联")
+    material_notes: List[str] = Field(default_factory=list, description="证明材料问题明细")
+    material_assets: List[str] = Field(default_factory=list, description="已关联的资料名称")
 
 
 class EightDimensionQualityReport(BaseModel):
@@ -382,6 +388,8 @@ class EightDimensionQualityReport(BaseModel):
     rating_level: str = Field(default="未撰写", description="评级: 甲级推荐/乙级可投/丙级需整改/高危废标风险/未撰写")
     scoring_coverage: List[ScoringCoverage] = Field(default_factory=list, description="评分点逐项覆盖核查")
     scoring_coverage_rate: Optional[float] = Field(default=None, description="按分值加权的评分点覆盖率 0~1")
+    material_total: int = Field(default=0, description="需要证明材料（或已关联资料）的评分项数")
+    material_complete: int = Field(default=0, description="其中证明材料齐备的评分项数（不计入覆盖率与综合分）")
     dimensions: List[QualityDimensionScore] = Field(default_factory=list, description="八维细分评分与分析")
     de_ai_detected_phrases: List[str] = Field(default_factory=list, description="检测到的 AI 廉价空话套话")
     high_risk_defects: List[str] = Field(default_factory=list, description="一票否决废标缺陷")

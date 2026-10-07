@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.core.task_manager import task_manager
 from app.models.schemas import EightDimensionQualityReport
+from app.services.assets.evidence import evidence_report, material_by_item
 from app.services.project_store import project_store
 from app.services.checker.compliance_checker import compliance_checker
 from app.services.checker.quality_inspector import quality_inspector
@@ -51,5 +52,7 @@ def run_compliance_check(project_id: str):
 def run_eight_dimension_quality_audit(project_id: str):
     project = _get_project(project_id)
     star_items = _collect_star_items(project)
-    report = quality_inspector.inspect_quality(project.outline, project.facts, star_items, project.tender_analysis)
-    return report
+    material = material_by_item(evidence_report(project))
+    return quality_inspector.inspect_quality(
+        project.outline, project.facts, star_items, project.tender_analysis, material=material,
+    )

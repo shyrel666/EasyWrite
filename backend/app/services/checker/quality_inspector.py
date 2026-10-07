@@ -1,5 +1,5 @@
 import re
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from app.models.schemas import (
     OutlineNode, GlobalFacts, QualityDimensionScore, EightDimensionQualityReport,
     PolishSectionRequest, PolishSectionResponse, TenderAnalysis18,
@@ -80,7 +80,9 @@ class EightDimensionQualityInspector:
         facts: GlobalFacts,
         star_clauses: Optional[List[str]] = None,
         tender_analysis: Optional[TenderAnalysis18] = None,
+        material: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> EightDimensionQualityReport:
+        """material：证明材料状态 {评分项ID: {status, notes, assets}}（evidence.material_by_item），与文字覆盖分开统计"""
         nodes = self._traverse_outline(outline)
         all_text = "\n\n".join([f"【{n.title}】\n{n.content}" for n in nodes if n.content])
         # 只要有任何正文就做全量检测：短文本里的负偏离词同样是废标红线
@@ -280,8 +282,10 @@ class EightDimensionQualityInspector:
         ))
 
         # ---------------- 维度 7: 招标评分点覆盖度 (Scoring Coverage) ----------------
-        coverage = check_scoring_coverage(outline, tender_analysis)
+        coverage = check_scoring_coverage(outline, tender_analysis, material)
         rate = coverage_rate(coverage)
+        material_rows = [c for c in coverage if c.material_status is not None]
+        material_complete = sum(1 for c in material_rows if c.material_status == "齐备")
         if rate is None:
             dimensions.append(QualityDimensionScore(
                 dimension_name="7. 招标评分点覆盖度",
@@ -299,7 +303,12 @@ class EightDimensionQualityInspector:
                 detail = f"，缺：{'、'.join(c.missing_points[:4])}" if c.missing_points else ""
                 d7_findings.append(f"【{c.name}】{c.points:g}分 · {c.status}{detail}" if c.points is not None
                                    else f"【{c.name}】{c.status}{detail}")
+            if material_rows:
+                d7_findings.append(f"证明材料（单独统计，不计入覆盖率）：{material_complete}/{len(material_rows)} 个评分项齐备")
             d7_suggestions = []
+            lacking = [f"{c.name}（{c.material_status}）" for c in material_rows if c.material_status != "齐备"]
+            if lacking:
+                d7_suggestions.append(f"补齐证明材料：{'、'.join(lacking[:6])}——在评分项上关联企业资料并上传证书/合同附件")
             unmapped = [c.name for c in issues if c.status == "未承接"]
             if unmapped:
                 d7_suggestions.append(f"为以下评分项新增或关联承接章节：{'、'.join(unmapped)}")
@@ -359,6 +368,8 @@ class EightDimensionQualityInspector:
                 dimensions=dimensions,
                 scoring_coverage=coverage,
                 scoring_coverage_rate=rate,
+                material_total=len(material_rows),
+                material_complete=material_complete,
                 summary="标书尚无正文内容，仅完成大纲结构与评分点承接检查；撰写正文后再执行完整质检。" + coverage_note,
             )
 
@@ -389,6 +400,8 @@ class EightDimensionQualityInspector:
             dimensions=dimensions,
             scoring_coverage=coverage,
             scoring_coverage_rate=rate,
+            material_total=len(material_rows),
+            material_complete=material_complete,
             de_ai_detected_phrases=list(set(detected_cliches)),
             high_risk_defects=high_risk_defects,
             summary=summary_text

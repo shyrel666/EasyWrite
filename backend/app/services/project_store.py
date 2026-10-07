@@ -70,6 +70,7 @@ class ProjectStore:
                 DeviationItem(**d) for d in json.loads(row.deviation_json or "[]")
             ],
             outline=[OutlineNode(**n) for n in json.loads(row.outline_json or "[]")],
+            evidence_links=json.loads(row.evidence_json or "{}"),
             stage=row.stage,
             created_at=row.created_at,
             updated_at=row.updated_at,
@@ -90,6 +91,7 @@ class ProjectStore:
         row.outline_json = json.dumps(
             [n.model_dump() for n in project.outline], ensure_ascii=False
         )
+        row.evidence_json = json.dumps(project.evidence_links, ensure_ascii=False)
         row.stage = project.stage
         row.updated_at = now_str()
 

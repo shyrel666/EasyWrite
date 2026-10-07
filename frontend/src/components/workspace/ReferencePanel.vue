@@ -1,8 +1,10 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '@/api/client'
 import { useProjectStore } from '@/stores/project'
+import EvidenceLinkDialog from '@/components/evidence/EvidenceLinkDialog.vue'
+import { materialChip } from '@/utils/material'
 
 const props = defineProps({
   node: { type: Object, default: null },
@@ -23,7 +25,32 @@ function open(node) {
 
 defineExpose({ open })
 // 面板可能在项目加载后才打开（窄屏默认收起），挂载时自行载入全局事实
-onMounted(open)
+onMounted(() => {
+  open()
+  loadEvidence()
+})
+
+// ---- 本节承接的证明材料类评分项：材料状态与关联资料（与质检第 7 维一致） ----
+const evidence = ref({})
+const linkOpen = ref(false)
+const linkItem = ref(null)
+
+async function loadEvidence() {
+  try {
+    const res = await api.evidence(props.projectId)
+    evidence.value = Object.fromEntries(res.items.map((it) => [it.item_id, it]))
+  } catch {
+    evidence.value = {}
+  }
+}
+
+const nodeEvidence = computed(() => (props.node?.scoring_item_ids || []).map((id) => evidence.value[id]).filter(Boolean))
+watch(() => props.node?.id, loadEvidence)
+
+function openLink(item) {
+  linkItem.value = item
+  linkOpen.value = true
+}
 
 async function saveFacts() {
   savingFacts.value = true
@@ -127,6 +154,26 @@ function saveInstruction() {
     <div class="flex-1 overflow-auto p-3 space-y-2.5">
       <!-- 引用溯源 -->
       <template v-if="activeTab === 'refs'">
+        <section v-if="nodeEvidence.length" class="rounded-lg border border-line p-3 text-xs space-y-3">
+          <p class="font-semibold text-ink flex items-center gap-1.5"><el-icon><Medal /></el-icon>本节证明材料</p>
+          <div v-for="it in nodeEvidence" :key="it.item_id">
+            <div class="flex items-center gap-2">
+              <span class="text-ink flex-1 min-w-0 truncate" :title="it.criteria">
+                {{ it.name }}<span v-if="it.points != null" class="num text-ink-3"> · {{ it.points }}分</span>
+              </span>
+              <span class="chip shrink-0" :class="materialChip(it.status)">{{ it.status }}</span>
+            </div>
+            <ul v-if="it.links.length" class="mt-1.5 space-y-1 pl-2 border-l border-line">
+              <li v-for="l in it.links" :key="`${l.kind}:${l.asset_id}`" class="flex items-center gap-1.5 text-2xs text-ink-2">
+                <span class="truncate flex-1 min-w-0" :title="l.problems.map((p) => p.message).join('；') || l.name">{{ l.name }}</span>
+                <span class="chip shrink-0" :class="materialChip(l.status)">{{ l.status }}</span>
+              </li>
+            </ul>
+            <button class="mt-1.5 text-2xs text-accent-fg hover:underline" @click="openLink(it)">
+              {{ it.links.length ? '调整关联资料' : '关联资料' }}
+            </button>
+          </div>
+        </section>
         <div v-if="!node?.last_refs?.length" class="text-xs text-ink-3 py-12 px-4 text-center leading-relaxed">
           <el-icon :size="22" class="text-line-strong mb-2"><Collection /></el-icon>
           <p>撰写本节后，这里会列出知识库检索命中的历史参考。</p>
@@ -209,5 +256,6 @@ function saveInstruction() {
         </div>
       </template>
     </div>
+    <EvidenceLinkDialog v-model="linkOpen" :project-id="projectId" :item="linkItem" @saved="loadEvidence" />
   </div>
 </template>

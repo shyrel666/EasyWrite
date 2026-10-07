@@ -7,9 +7,11 @@
 3. 评分子项 / 评分标准列举的要点是否在已撰写的章节标题或正文中出现——缺则"要点缺失"
 4. 方案类正文是否达到字数预算的 30%——不足则"篇幅不足"
 覆盖率按分值加权，只反映"有没有写到"，不评判写得好不好（后者需评审或大模型深度审查）。
+证明材料（material）是另一项结论：由调用方传入 {评分项ID: {status, notes, assets}}，原样附在结果上，
+不影响文字覆盖率。
 """
 import re
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from app.models.schemas import OutlineNode, ScoringCoverage, TenderAnalysis18
 from app.services.generator import rubric_planner as rp
@@ -54,8 +56,12 @@ def is_mentioned(point: str, text: str) -> bool:
     return hit / len(grams) >= 0.7
 
 
-def check_scoring_coverage(outline: List[OutlineNode], ta: Optional[TenderAnalysis18]) -> List[ScoringCoverage]:
+def check_scoring_coverage(
+    outline: List[OutlineNode], ta: Optional[TenderAnalysis18],
+    material: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> List[ScoringCoverage]:
     items = rp.target_items(ta)
+    material = material or {}
     flat = _flatten(outline)
     results: List[ScoringCoverage] = []
     for it in items:
@@ -89,11 +95,14 @@ def check_scoring_coverage(outline: List[OutlineNode], ta: Optional[TenderAnalys
             if not length_ok:
                 coverage *= 0.5
             status = "要点缺失" if missing else ("篇幅不足" if not length_ok else "已覆盖")
+        mat = material.get(it.id) or {}
         results.append(ScoringCoverage(
             item_id=it.id, name=it.name, points=it.points, response_type=it.response_type,
             status=status, coverage=round(coverage, 3),
             section_titles=[n.title for n in mapped], missing_points=missing,
             word_count=words, word_budget=budget or None,
+            material_status=mat.get("status"), material_notes=mat.get("notes", []),
+            material_assets=mat.get("assets", []),
         ))
     return results
 
