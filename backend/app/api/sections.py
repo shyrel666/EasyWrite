@@ -1,7 +1,8 @@
 """章节撰写路由：SSE 流式生成 / 同步生成 / 批量撰写 / 保存 / 润色 / 历史版本"""
+import asyncio
 import json
 import logging
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import StreamingResponse
@@ -13,6 +14,7 @@ from app.models.schemas import (
     UpdateSectionRequest, PolishSectionRequest, PolishSectionResponse,
 )
 from app.services.project_store import project_store, find_node
+from app.services.generator.evidence_set import select_evidence
 from app.services.generator.section_generator import section_generator, strip_title_heading
 from app.services.checker.quality_inspector import quality_inspector
 from app.services.version_store import version_store
@@ -28,32 +30,37 @@ def _get_project(project_id: str):
     return project
 
 
-def _node_kwargs(project, node: OutlineNode, **overrides) -> dict:
-    kwargs = dict(
-        section_title=node.title,
-        section_path=node.path or node.title,
-        requirements=node.requirements,
-        custom_instruction="",
-        facts=project.facts,
-        outline=project.outline,
-        section_id=node.id,
-        project_context=f"{project.name}（客户：{project.client_name}）",
-        pinned_refs=node.pinned_refs,
-        excluded_refs=node.excluded_refs,
+def _inputs(project, node: OutlineNode, **overrides) -> Tuple[dict, dict]:
+    """
+    返回 (select_evidence 参数, build_prompts 参数)。请求中为空的覆盖值回落到章节自身的设置。
+    先选资料（检索、企业资料、招标原文）再写正文：生成环节只使用选好的依据。
+    """
+    o = {k: v for k, v in overrides.items() if v}
+    title = o.get("section_title", node.title)
+    path = o.get("section_path", node.path or node.title)
+    reqs = o.get("requirements", node.requirements)
+    instruction = o.get("custom_instruction", "")
+    evidence_kw = dict(
+        instruction=instruction, section_title=title, section_path=path, requirements=reqs,
+        pinned_refs=o.get("pinned_refs", node.pinned_refs), excluded_refs=o.get("excluded_refs", node.excluded_refs),
     )
-    kwargs.update({k: v for k, v in overrides.items() if v})
-    return kwargs
+    prompt_kw = dict(
+        section_title=title, section_path=path, requirements=reqs, custom_instruction=instruction,
+        facts=project.facts, outline=project.outline, section_id=node.id,
+    )
+    return evidence_kw, prompt_kw
 
 
-def _generator_kwargs(project, req: GenerateSectionRequest) -> dict:
+def _request_inputs(project, req: GenerateSectionRequest) -> Tuple[OutlineNode, dict, dict]:
     node = find_node(project.outline, req.section_id)
     if not node:
         raise HTTPException(status_code=404, detail="未找到对应章节")
-    return _node_kwargs(
+    evidence_kw, prompt_kw = _inputs(
         project, node,
         section_title=req.section_title, section_path=req.section_path, requirements=req.requirements,
         custom_instruction=req.custom_instruction, pinned_refs=req.pinned_refs, excluded_refs=req.excluded_refs,
     )
+    return node, evidence_kw, prompt_kw
 
 
 def _save_section_content(
@@ -97,13 +104,15 @@ def _save_section_content(
 @router.post("/project/{project_id}/section/generate/stream", summary="章节流式草拟 (SSE：先推送引用元数据再逐 token 输出)")
 async def generate_section_content_stream(project_id: str, req: GenerateSectionRequest):
     project = _get_project(project_id)
-    kwargs = _generator_kwargs(project, req)
+    node, evidence_kw, prompt_kw = _request_inputs(project, req)
 
     async def event_generator():
         full_content = []
         refs: List[dict] = []
         try:
-            async for event in section_generator.draft_section_stream(**kwargs):
+            # 检索 + LLM 重排是同步阻塞调用，放到线程中执行，避免卡住事件循环（期间的自动保存等请求）
+            evidence = await asyncio.to_thread(select_evidence, project, node, **evidence_kw)
+            async for event in section_generator.draft_section_stream(evidence=evidence, **prompt_kw):
                 if "token" in event:
                     full_content.append(event["token"])
                     yield f"data: {json.dumps({'token': event['token']}, ensure_ascii=False)}\n\n"
@@ -121,7 +130,7 @@ async def generate_section_content_stream(project_id: str, req: GenerateSectionR
             yield f"data: {json.dumps({'done': False, 'error': str(e)}, ensure_ascii=False)}\n\n"
             return
 
-        complete_text = strip_title_heading("".join(full_content), kwargs["section_title"])
+        complete_text = strip_title_heading("".join(full_content), prompt_kw["section_title"])
         if complete_text.strip():
             try:
                 # 按 project_id 重新读取最新项目写回：流式期间其他章节的编辑不会被旧快照覆盖
@@ -140,7 +149,9 @@ async def generate_section_content_stream(project_id: str, req: GenerateSectionR
 @router.post("/project/{project_id}/section/generate", response_model=GenerateSectionResponse, summary="章节同步完整草拟（降级路径）")
 def generate_section_content(project_id: str, req: GenerateSectionRequest):
     project = _get_project(project_id)
-    result = section_generator.draft_section(**_generator_kwargs(project, req))
+    node, evidence_kw, prompt_kw = _request_inputs(project, req)
+    evidence = select_evidence(project, node, **evidence_kw)
+    result = section_generator.draft_section(evidence=evidence, **prompt_kw)
     _save_section_content(project_id, req.section_id, result["generated_content"], "completed",
                           last_refs=result["references"], version_source="ai_generate")
 
@@ -204,7 +215,9 @@ def generate_sections_batch(
             ctx.report(int(i / len(target_ids) * 100), f"撰写 {i + 1}/{len(target_ids)}：{node.title}")
             before = node.content
             try:
-                result = section_generator.draft_section(**_node_kwargs(latest, node))
+                evidence_kw, prompt_kw = _inputs(latest, node)
+                evidence = select_evidence(latest, node, **evidence_kw)
+                result = section_generator.draft_section(evidence=evidence, **prompt_kw)
             except Exception as e:
                 logger.exception("批量撰写章节失败 %s", sid)
                 failed.append({"id": sid, "title": node.title, "reason": str(e)[:120]})

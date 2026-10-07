@@ -27,13 +27,20 @@ def test_offline_demo_uses_placeholders_instead_of_commitments():
 
 def test_assembled_prompt_has_no_example_assets_or_commitments(monkeypatch):
     """全局事实为空、尚未录入资料：装配出的提示词既没有具体承诺数值，也没有示例人员/证书/业绩"""
+    from app.models.schemas import OutlineNode, Project
     from app.services.assets.asset_manager import EnterpriseAssetManager as M
-    from app.services.generator import section_generator as module
-    monkeypatch.setattr(module.retrieval_service, "retrieve", lambda **_kw: {"refs": [], "message": ""})
+    from app.services.generator import evidence_set
+    from app.services.generator.section_generator import section_generator
+    monkeypatch.setattr(evidence_set.retrieval_service, "retrieve", lambda **_kw: {"refs": [], "message": ""})
     example_markers = ([p["name"] for p in M.DEFAULT_PERSONNEL] + [q["cert_no"] for q in M.DEFAULT_QUALIFICATIONS]
                        + [c["project_name"] for c in M.DEFAULT_CASES] + [c["name"] for c in M.DEFAULT_COMPONENTS])
     for title in ["第五章 售后运维保障方案", "3.1 项目团队人员配置", "1.3 投标人资质条件响应", "6.1 类似项目业绩", "2.2 高可用容灾设计"]:
-        built = module.section_generator.build_prompts(section_title=title, section_path=title, requirements=[], facts=GlobalFacts())
+        node = OutlineNode(id="sec_x", title=title)
+        project = Project(id="p", name="项目", client_name="", description="", outline=[node], created_at="", updated_at="")
+        evidence = evidence_set.select_evidence(project, node)
+        assert not evidence.assets, title
+        built = section_generator.build_prompts(section_title=title, section_path=title, requirements=[],
+                                                evidence=evidence, facts=GlobalFacts())
         prompt = built["system"] + built["user"]
         assert not COMMITMENT_NUMBER.search(prompt), title
         assert not [m for m in example_markers if m in prompt], title

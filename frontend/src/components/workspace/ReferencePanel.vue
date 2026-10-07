@@ -45,6 +45,12 @@ async function loadEvidence() {
 }
 
 const nodeEvidence = computed(() => (props.node?.scoring_item_ids || []).map((id) => evidence.value[id]).filter(Boolean))
+
+// last_refs：知识库片段（ref_type 缺省或 kb）与本次撰写用到的企业资料（ref_type=asset）
+const kbRefs = computed(() => (props.node?.last_refs || []).filter((r) => r.ref_type !== 'asset'))
+const assetRefs = computed(() => (props.node?.last_refs || []).filter((r) => r.ref_type === 'asset'))
+const ASSET_KIND = { qualifications: '资质', personnel: '人员', cases: '业绩', components: '方案组件' }
+const ASSET_STATUS = { confirmed: { label: '已确认', chip: 'chip-ok' }, unverified: { label: '待核实', chip: 'chip-warn' } }
 watch(() => props.node?.id, loadEvidence)
 
 function openLink(item) {
@@ -136,7 +142,7 @@ function saveInstruction() {
       <div class="seg flex-1">
         <button
           v-for="t in [
-            { k: 'refs', l: '知识参考', n: node?.last_refs?.length || 0 },
+            { k: 'refs', l: '撰写依据', n: node?.last_refs?.length || 0 },
             { k: 'facts', l: '全局事实' },
             { k: 'instr', l: '写作意见' },
           ]"
@@ -174,13 +180,25 @@ function saveInstruction() {
             </button>
           </div>
         </section>
-        <div v-if="!node?.last_refs?.length" class="text-xs text-ink-3 py-12 px-4 text-center leading-relaxed">
+        <section v-if="assetRefs.length" class="rounded-lg border border-line p-3 text-xs">
+          <p class="font-semibold text-ink flex items-center gap-1.5 mb-2"><el-icon><Suitcase /></el-icon>本次用到的企业资料</p>
+          <ul class="space-y-1.5">
+            <li v-for="a in assetRefs" :key="`${a.kind}:${a.asset_id}`" class="flex items-center gap-1.5">
+              <span class="chip chip-mute shrink-0">{{ ASSET_KIND[a.kind] || a.kind }}</span>
+              <span class="truncate flex-1 min-w-0 text-ink-2" :title="a.name">{{ a.name }}</span>
+              <span v-if="a.source === 'linked'" class="text-2xs text-ink-3 shrink-0">评分项关联</span>
+              <span class="chip shrink-0" :class="ASSET_STATUS[a.status]?.chip || 'chip-mute'">{{ ASSET_STATUS[a.status]?.label || a.status }}</span>
+            </li>
+          </ul>
+          <p v-if="assetRefs.some((a) => a.status === 'unverified')" class="hint mt-2">待核实资料在正文中应以【待核实：…】标注，核实后到「企业资产」改为已确认。</p>
+        </section>
+        <div v-if="!kbRefs.length" class="text-xs text-ink-3 py-12 px-4 text-center leading-relaxed">
           <el-icon :size="22" class="text-line-strong mb-2"><Collection /></el-icon>
-          <p>撰写本节后，这里会列出知识库检索命中的历史参考。</p>
-          <p class="mt-1">可以「锁定」优先注入，或「排除」不再使用。</p>
+          <p>{{ node?.last_refs?.length ? '本次撰写没有命中高置信的知识库参考。' : '撰写本节后，这里会列出知识库检索命中的历史参考与用到的企业资料。' }}</p>
+          <p class="mt-1">知识库参考可以「锁定」优先注入，或「排除」不再使用。</p>
         </div>
         <article
-          v-for="refItem in node?.last_refs || []"
+          v-for="refItem in kbRefs"
           :key="refItem.chunk_id"
           class="rounded-lg border p-3 text-xs transition"
           :class="[

@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.models.schemas import (
     AssetAttachment, CompanyQualification, PersonnelAsset, CaseContract, SolutionComponent, MaterialCheck,
 )
+from app.services.assets.matching import best_match
 from app.services.assets.material_check import MATERIAL_KINDS, check_material
 
 logger = logging.getLogger("easywrite.assets")
@@ -622,6 +623,12 @@ class EnterpriseAssetManager:
 
     # ==================== 5. 撰写时的资料匹配 ====================
 
+    # 每章最多注入的资料条数：只取与本章相关的条目，不整库注入
+    MAX_MATCHED = 8
+    # 相关度门槛（matching.best_match 得分）
+    RELEVANCE = {"personnel": 0.8, "qualifications": 0.6, "cases": 0.6}
+    KIND_TITLES = {"personnel": "拟任团队人员", "qualifications": "资质证书", "cases": "类似项目业绩"}
+
     @staticmethod
     def _mark(item) -> str:
         return "（待核实：未经企业确认，正文中只能写作【待核实：…】）" if item.status == "unverified" else ""
@@ -631,77 +638,111 @@ class EnterpriseAssetManager:
         """预设示例只用于展示录入格式，绝不进入撰写"""
         return [x for x in items if x.status != "example"]
 
+    def asset_line(self, kind: str, x) -> str:
+        """一条资料注入提示词的文本：只列已填写的字段；写明所属主体；待核实资料附带占位说明"""
+        holder = f"所属主体：{x.holder}" if getattr(x, "holder", "") else ""
+        if kind == "personnel":
+            details = "，".join(v for v in [
+                x.education,
+                f"从业{x.years_of_experience}年" if x.years_of_experience is not None else "",
+                f"职称：{x.professional_title}" if x.professional_title else "",
+                f"持有证书：{'、'.join(x.certificates)}" if x.certificates else "",
+                holder,
+            ] if v)
+            return (f"- **{x.role}**：{x.name}（{details or '履历未填写'}）{self._mark(x)}"
+                    + (f"\n  简介：{x.intro}" if x.intro else ""))
+        if kind == "qualifications":
+            details = "，".join(v for v in [
+                f"级别：{x.level}" if x.level else "",
+                f"证书号：{x.cert_no}" if x.cert_no else "",
+                f"发证机关：{x.issue_org}" if x.issue_org else "",
+                f"有效期至：{x.expiry_date}" if x.expiry_date else "",
+                holder,
+            ] if v)
+            return f"- **{x.name}**（{details}）{self._mark(x)}" + (f"\n  说明：{x.summary}" if x.summary else "")
+        details = "，".join(v for v in [
+            f"客户：{x.client_name}" if x.client_name else "",
+            f"合同额：{x.contract_amount}" if x.contract_amount else "",
+            f"签约时间：{x.sign_date}" if x.sign_date else "",
+            f"验收结论：{x.acceptance_status}" if x.acceptance_status else "",
+            holder,
+        ] if v)
+        return f"- **{x.project_name}**（{details}）{self._mark(x)}" + (f"\n  概述：{x.summary}" if x.summary else "")
+
+    def _relevance(self, kind: str, x, text: str) -> float:
+        if kind == "personnel":
+            return best_match([x.role] + list(x.certificates) + [x.professional_title], text)[0]
+        if kind == "qualifications":
+            return best_match([x.name], text)[0]
+        return best_match([x.project_name, x.contract_category] + list(x.key_deliverables), text)[0]
+
+    def select_relevant(self, kind: str, items: list, text: str) -> list:
+        """
+        按与章节标题/要求的相关度挑选资料：有明确命中（岗位、证书名、资质名、业绩名）时只取命中的条目；
+        泛指的团队/资质/业绩章节没有命中时取全部可用资料。最多 MAX_MATCHED 条。
+        """
+        scored = sorted(((self._relevance(kind, x, text), x) for x in items), key=lambda t: -t[0])
+        hits = [x for s, x in scored if s >= self.RELEVANCE[kind]]
+        return (hits or list(items))[: self.MAX_MATCHED]
+
+    def linked_context(self, pairs: List[Tuple[str, Dict[str, Any]]]) -> Tuple[str, List[Tuple[str, Any]]]:
+        """
+        本节评分项已关联的资料（用户确认）→ (提示词文本, [(kind, 资料模型)])。示例资料不进入撰写。
+        """
+        models = [(kind, ASSET_MODELS[kind](**item)) for kind, item in pairs if item.get("status") != "example"]
+        if not models:
+            return "", []
+        lines = ["【本节评分项关联的企业资料（用户确认关联；资质、人员、业绩等事实只能取自以下条目）】："]
+        for kind in MATERIAL_KINDS:
+            group = [m for k, m in models if k == kind]
+            if group:
+                lines.append(f"{self.KIND_TITLES[kind]}：")
+                lines.extend(self.asset_line(kind, m) for m in group)
+        return "\n".join(lines), models
+
     def match_assets_for_section(self, section_title: str, requirements: List[str]) -> Dict[str, Any]:
         """
-        根据当前撰写章节的主题匹配企业资料（只用用户录入的资料，排除预设示例）。
+        根据当前撰写章节的主题匹配企业资料：只用用户录入的资料（排除预设示例），只取与本章相关的条目。
         团队/资质/业绩类章节没有可用资料时返回"未录入"说明，提示模型按事实完备纪律处理、不得编造。
+        返回 {type, kind, title, context_text, items}；kind 为资料类别（personnel / qualifications / cases / components）。
         """
         text = f"{section_title} {' '.join(requirements)}"
         matched = {
             "type": "none",
+            "kind": "",
             "title": "",
             "context_text": "",
             "items": []
         }
 
-        def fill(kind: str, title: str, items: list, header: str, lines: List[str], missing: str):
-            matched.update(type=kind, title=title, items=[x.model_dump() for x in items])
-            matched["context_text"] = "\n".join([header] + lines) if items else missing
+        def fill(kind: str, legacy: str, title: str, items: list, missing: str):
+            items = self.select_relevant(kind, items, text) if items else []
+            matched.update(type=legacy, kind=kind, title=title, items=[x.model_dump() for x in items])
+            header = f"【{self.KIND_TITLES[kind]}（用户录入，相关事实只能取自以下条目）】："
+            matched["context_text"] = "\n".join([header] + [self.asset_line(kind, x) for x in items]) if items else missing
             return matched
 
         # 1. 团队人员/组织架构章节
-        if any(kw in text for kw in ["实施团队", "人员配置", "项目团队", "项目经理", "架构师", "技术人员"]):
-            personnel = self._usable(self.list_personnel())
-            lines = []
-            for p in personnel:
-                details = "，".join(x for x in [
-                    p.education,
-                    f"从业{p.years_of_experience}年" if p.years_of_experience is not None else "",
-                    f"职称：{p.professional_title}" if p.professional_title else "",
-                    f"持有证书：{'、'.join(p.certificates)}" if p.certificates else "",
-                ] if x)
-                lines.append(f"- **{p.role}**：{p.name}（{details or '履历未填写'}）{self._mark(p)}"
-                             + (f"\n  简介：{p.intro}" if p.intro else ""))
-            return fill("personnel", "企业资料：拟任团队人员", personnel,
-                        "【拟任团队人员（用户录入，人员事实只能取自以下条目）】：", lines,
+        if any(kw in text for kw in ["实施团队", "人员配置", "项目团队", "项目经理", "架构师", "技术人员",
+                                     "人员资质", "人员要求", "团队成员", "项目负责人", "技术负责人"]):
+            return fill("personnel", "personnel", "企业资料：拟任团队人员", self._usable(self.list_personnel()),
                         "【拟任团队人员】企业尚未录入人员资料：人员姓名、证书、从业年限按事实完备纪律处理，不得编造。")
 
         # 2. 资质资信/合规准入章节
         if any(kw in text for kw in ["资质", "准入", "CMMI", "ISO", "高新", "涉密", "信用"]):
-            quals = self._usable(self.list_qualifications())
-            lines = []
-            for q in quals:
-                details = "，".join(x for x in [
-                    f"级别：{q.level}" if q.level else "",
-                    f"证书号：{q.cert_no}" if q.cert_no else "",
-                    f"发证机关：{q.issue_org}" if q.issue_org else "",
-                    f"有效期至：{q.expiry_date}" if q.expiry_date else "",
-                ] if x)
-                lines.append(f"- **{q.name}**（{details}）{self._mark(q)}" + (f"\n  说明：{q.summary}" if q.summary else ""))
-            return fill("qualification", "企业资料：资质证书", quals,
-                        "【资质证书（用户录入，资质事实只能取自以下条目）】：", lines,
+            return fill("qualifications", "qualification", "企业资料：资质证书", self._usable(self.list_qualifications()),
                         "【资质证书】企业尚未录入资质资料：不得声称持有任何具体资质或证书编号，按事实完备纪律处理。")
 
         # 3. 类似业绩/成功案例章节
         if any(kw in text for kw in ["业绩", "案例", "项目经历", "类似项目", "成功案例"]):
-            cases = self._usable(self.list_cases())
-            lines = []
-            for c in cases:
-                details = "，".join(x for x in [
-                    f"客户：{c.client_name}" if c.client_name else "",
-                    f"合同额：{c.contract_amount}" if c.contract_amount else "",
-                    f"签约时间：{c.sign_date}" if c.sign_date else "",
-                    f"验收结论：{c.acceptance_status}" if c.acceptance_status else "",
-                ] if x)
-                lines.append(f"- **{c.project_name}**（{details}）{self._mark(c)}" + (f"\n  概述：{c.summary}" if c.summary else ""))
-            return fill("case", "企业资料：类似项目业绩", cases,
-                        "【类似项目业绩（用户录入，业绩事实只能取自以下条目）】：", lines,
+            return fill("cases", "case", "企业资料：类似项目业绩", self._usable(self.list_cases()),
                         "【类似项目业绩】企业尚未录入业绩资料：不得编造项目名称、客户与合同金额，按事实完备纪律处理。")
 
         # 4. 技术方案组件匹配（按分类/标签）
         for comp in self._usable(self.list_components()):
             if comp.category in text or any(t in text for t in comp.tags):
-                matched.update(type="component", title=f"企业资料：方案组件 {comp.name}", items=[comp.model_dump()])
+                matched.update(type="component", kind="components", title=f"企业资料：方案组件 {comp.name}",
+                               items=[comp.model_dump()])
                 matched["context_text"] = f"【企业方案组件（用户录入）- {comp.name}】{self._mark(comp)}：\n{comp.content}"
                 return matched
 

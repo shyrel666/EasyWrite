@@ -201,7 +201,7 @@ const progress = computed(() => {
             </button>
           </template>
           <template #toolbar-end>
-            <button class="icon-btn shrink-0" :class="{ 'is-active': rightOpen }" title="知识参考 / 全局事实" @click="rightOpen = !rightOpen">
+            <button class="icon-btn shrink-0" :class="{ 'is-active': rightOpen }" title="撰写依据 / 全局事实" @click="rightOpen = !rightOpen">
               <el-icon :size="17"><Notebook /></el-icon>
             </button>
           </template>

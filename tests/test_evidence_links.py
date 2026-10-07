@@ -1,5 +1,5 @@
 """评分项与企业资料关联、证明材料状态与质检第 7 维（阶段 B2）"""
-from app.services.assets.evidence import _codes, _code_ok, phrase_ratio
+from app.services.assets.matching import code_ok, codes, phrase_ratio
 
 PDF_BYTES = b"%PDF-1.4\n%%EOF\n"
 
@@ -41,11 +41,11 @@ def _setup(client, pid):
 
 
 def test_code_tokens_must_match():
-    assert _codes("ISO/IEC 27001 信息安全") == {"27001"}
-    assert "2023" not in _codes("2023年1月1日以来 ISO9001")
-    assert _code_ok("ISO9001 质量管理体系认证", "具有ISO9001质量管理体系认证证书")
-    assert not _code_ok("ISO9001 质量管理体系认证", "具有ISO27001信息安全管理体系认证证书")
-    assert not _code_ok("PMP", "具备信息系统项目管理师证书")
+    assert codes("ISO/IEC 27001 信息安全") == {"27001"}
+    assert "2023" not in codes("2023年1月1日以来 ISO9001")
+    assert code_ok("ISO9001 质量管理体系认证", "具有ISO9001质量管理体系认证证书")
+    assert not code_ok("ISO9001 质量管理体系认证", "具有ISO27001信息安全管理体系认证证书")
+    assert not code_ok("PMP", "具备信息系统项目管理师证书")
     assert phrase_ratio("信息系统安全集成服务资质（一级）", "信息系统安全集成服务认证证书（一级）") > 0.8
 
 

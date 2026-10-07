@@ -16,9 +16,10 @@ from app.services.rag.chunker import chunk_parsed_document  # noqa: E402
 from app.services.rag.ingestor import ingest_document  # noqa: E402
 from app.services.rag.indexer import knowledge_index  # noqa: E402
 from app.services.rag.retriever import retrieval_service  # noqa: E402
+from app.services.generator.evidence_set import select_evidence  # noqa: E402
 from app.services.generator.section_generator import section_generator  # noqa: E402
 from app.services.exporter.docx_generator import docx_exporter  # noqa: E402
-from app.models.schemas import GlobalFacts, OutlineNode  # noqa: E402
+from app.models.schemas import GlobalFacts, OutlineNode, Project  # noqa: E402
 from conftest import build_sample_bid_docx  # noqa: E402
 
 
@@ -56,17 +57,26 @@ def test_retrieve_and_draft_with_refs(kb_doc, tmp_path):
         database_selection="国产信创达梦数据库 DM8",
     )
     outline = [OutlineNode(id="sec_2", title="第二章 数据安全与容灾设计", level=1, path="第二章 数据安全与容灾设计")]
+    project = Project(id="p", name="智慧水务", client_name="水务集团", description="", facts=facts,
+                      outline=outline, created_at="", updated_at="")
+    evidence = select_evidence(
+        project, outline[0], section_title="2.1 数据容灾与加密方案",
+        section_path="第二章 数据安全与容灾设计 > 2.1 数据容灾与加密方案",
+        requirements=["核心数据加密存储", "RPO=0"],
+    )
+    assert evidence.refs, "选资料应命中知识库"
     built = section_generator.build_prompts(
         section_title="2.1 数据容灾与加密方案",
         section_path="第二章 数据安全与容灾设计 > 2.1 数据容灾与加密方案",
         requirements=["核心数据加密存储", "RPO=0"],
-        facts=facts, outline=outline, section_id="sec_2",
+        evidence=evidence, facts=facts, outline=outline, section_id="sec_2",
     )
     # 引用注入提示词（含溯源块）
     assert "参考资料" in built["user"]
     assert built["refs"], "草拟应携带引用溯源"
 
     result = section_generator.draft_section(
+        evidence=evidence,
         section_title="2.1 数据容灾与加密方案",
         section_path="第二章 数据安全与容灾设计 > 2.1 数据容灾与加密方案",
         requirements=["核心数据加密存储"],
@@ -74,6 +84,7 @@ def test_retrieve_and_draft_with_refs(kb_doc, tmp_path):
     )
     assert result["generated_content"]
     assert result["mode"] in ("llm", "mock")
+    assert {r["ref_type"] for r in result["references"]} == {"kb"}
 
 
 def test_export_with_toc(tmp_path):

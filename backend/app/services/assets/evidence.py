@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.models.schemas import MaterialCheck, Project, ScoringItem
 from app.services.assets.asset_manager import asset_manager
+from app.services.assets.matching import best_match
 from app.services.assets.material_check import (
     MATERIAL_KINDS, NOT_LINKED, asset_name, bid_deadline, check_material, worst_status,
 )
@@ -19,12 +20,6 @@ from app.services.generator import rubric_planner as rp
 KIND_LABELS = {"qualifications": "资质", "personnel": "人员", "cases": "业绩"}
 # 评分项提到这些词时，业绩资料按类别建议（"每提供一个类似业绩得 x 分"通常不点名具体项目）
 CASE_HINT = re.compile(r"业绩|项目经验|案例|类似项目|同类项目")
-# 只表示"证书/资质"类别、不能区分具体证书的通用词
-GENERIC = re.compile(r"认证|证书|资质|资格|证明|有效期|复印件|的|及|与|和|等|[^\w]|_")
-# 证书编号类关键词：标准号（ISO 9001 / 27001 / 20000 的数字部分）与英文缩写（CMMI、ITSS、CISP、PMP…）
-STANDARD_NO = re.compile(r"(?<!\d)\d{4,5}(?!\d)")
-ACRONYM = re.compile(r"[A-Z]{3,}")
-CODE_PREFIXES = {"ISO", "IEC", "GBT"}
 MAX_SUGGESTIONS = 8
 
 
@@ -41,45 +36,6 @@ def needs_material(item: ScoringItem) -> bool:
     return item.response_type == "evidence"
 
 
-def _compact(text: str) -> str:
-    return re.sub(r"\s+", "", text or "").upper()
-
-
-def _codes(text: str) -> set:
-    compact = _compact(text)
-    numbers = {n for n in STANDARD_NO.findall(compact) if not re.fullmatch(r"(?:19|20)\d\d", n)}  # 年份不算
-    return numbers | (set(ACRONYM.findall(compact)) - CODE_PREFIXES)
-
-
-def phrase_ratio(phrase: str, text: str) -> float:
-    """短语（资料名、证书名）在评分标准中出现的程度：原文命中为 1，否则按去通用词后的二字片段命中比例"""
-    core = GENERIC.sub("", _compact(phrase))
-    compact = _compact(text)
-    if len(core) < 2:
-        return 0.0
-    if core in compact:
-        return 1.0
-    grams = {core[i:i + 2] for i in range(len(core) - 1)}
-    return sum(1 for g in grams if g in compact) / len(grams)
-
-
-def _code_ok(phrase: str, text: str) -> bool:
-    """短语带证书编号类关键词时，至少要有一个原样出现在评分标准中（ISO9001 不能配 ISO27001 的评分项）"""
-    codes = _codes(phrase)
-    return not codes or bool(codes & _codes(text))
-
-
-def _best(phrases: List[str], text: str) -> Tuple[float, str]:
-    best, label = 0.0, ""
-    for p in phrases:
-        if not p or not _code_ok(p, text):
-            continue
-        r = phrase_ratio(p, text)
-        if r > best:
-            best, label = r, p
-    return best, label
-
-
 def _item_text(item: ScoringItem) -> str:
     return f"{item.name} {item.criteria} {item.note}"
 
@@ -87,13 +43,13 @@ def _item_text(item: ScoringItem) -> str:
 def _candidate(kind: str, asset: Dict[str, Any], item: ScoringItem, project_name: str) -> Optional[Dict[str, Any]]:
     text = _item_text(item)
     if kind == "qualifications":
-        score, hit = _best([asset.get("name", "")], text)
+        score, hit = best_match([asset.get("name", "")], text)
         if score < 0.6:
             return None
         reason = f"资质名称与评分标准匹配：{hit}"
     elif kind == "personnel":
         phrases = list(asset.get("certificates") or []) + [asset.get("professional_title", "")]
-        score, hit = _best(phrases, text)
+        score, hit = best_match(phrases, text)
         if score < 0.8:
             return None
         reason = f"持有评分标准提到的证书/职称：{hit}"
@@ -101,7 +57,7 @@ def _candidate(kind: str, asset: Dict[str, Any], item: ScoringItem, project_name
         if not CASE_HINT.search(text):
             return None
         phrases = [asset.get("project_name", ""), asset.get("contract_category", "")] + list(asset.get("key_deliverables") or [])
-        similarity, hit = _best(phrases, f"{text} {project_name}")
+        similarity, hit = best_match(phrases, f"{text} {project_name}")
         score = 0.5 + 0.5 * similarity
         reason = "业绩类评分项" + (f"，关键词匹配：{hit}" if similarity >= 0.5 else "（请人工确认是否属于类似项目）")
     return {

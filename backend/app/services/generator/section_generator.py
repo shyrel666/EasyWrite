@@ -8,16 +8,15 @@
 3. 事实完备模式：omit/placeholder 两档，未提供的事实不再被模型自由编造
 4. 领域专家 System Prompt 按章节主题自动装配（保留）
 5. SSE 流式走 AsyncOpenAI，不阻塞事件循环
+6. "选资料"与"写正文"分离：依据由 evidence_set.select_evidence 选好后传入，build_prompts 是纯函数
 """
-import asyncio
 import re
 import logging
 from typing import Dict, Any, List, Optional, AsyncGenerator
 
 from app.core.llm_client import llm_client
 from app.models.schemas import OutlineNode, GlobalFacts
-from app.services.rag.retriever import retrieval_service
-from app.services.assets.asset_manager import asset_manager
+from app.services.generator.evidence_set import EvidenceSet
 
 logger = logging.getLogger("easywrite.section")
 
@@ -113,37 +112,23 @@ class SectionGenerator:
         section_title: str,
         section_path: str,
         requirements: List[str],
+        evidence: Optional[EvidenceSet] = None,
         custom_instruction: str = "",
         facts: Optional[GlobalFacts] = None,
         outline: Optional[List[OutlineNode]] = None,
         section_id: str = "",
-        project_context: str = "",
-        pinned_refs: Optional[List[str]] = None,
-        excluded_refs: Optional[List[str]] = None,
+        base_text: Optional[str] = None,
+        issues: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """装配检索 + 提示词，返回 {system, user, refs, retrieval_message}"""
+        """
+        装配提示词（纯函数：不检索、不读资料库，依据全部来自 evidence），返回 {system, user, refs, retrieval_message}。
+        base_text / issues：定向修订——在原稿基础上逐条处理问题清单，未涉及的段落保持原样。
+        """
         facts_obj = facts or GlobalFacts()
-
-        # ---- RAG 混合检索（锁定/排除人工在环） ----
-        retrieval = retrieval_service.retrieve(
-            query=f"{section_title} {custom_instruction}",
-            section_title=section_title,
-            section_path=section_path,
-            requirements=requirements,
-            project_context=project_context,
-            top_k=4,
-            pinned_ids=pinned_refs,
-            excluded_ids=excluded_refs,
-        )
-        refs = retrieval["refs"]
-        reference_context = retrieval_service.build_reference_prompt(refs)
-
-        # ---- 企业资料匹配（只用用户录入的资料，示例资料不进入提示词） ----
-        matched_asset = asset_manager.match_assets_for_section(section_title, requirements)
-        asset_context = (
-            f"\n【企业资料（用户录入）】：\n{matched_asset['context_text']}"
-            if matched_asset.get("context_text") else ""
-        )
+        evidence = evidence or EvidenceSet()
+        reference_context = evidence.reference_prompt()
+        asset_context = f"\n【企业资料（用户录入）】：\n{evidence.asset_context}" if evidence.asset_context else ""
+        tender_context = evidence.tender_prompt()
 
         # ---- 跨章连贯上下文 ----
         coherence = _sibling_context(outline, section_id) if outline and section_id else ""
@@ -165,6 +150,25 @@ class SectionGenerator:
 
         req_lines = "\n".join(f"- {r}" for r in requirements) if requirements else "- 详实阐述该模块的具体设计与方案保障"
 
+        if base_text is not None:
+            issue_lines = "\n".join(f"{i}. {x}" for i, x in enumerate(issues or [], 1)) or "（无）"
+            task = f"""【原稿（在此基础上定向修订）】：
+{base_text}
+
+【需逐条处理的问题】：
+{issue_lines}
+
+【修订任务】：
+逐条处理上述问题，输出修订后的完整正文；未涉及问题的段落保持原样。资料不足以解决的问题用【待填写】或【待核实】占位，不得编造企业事实或承诺数值。直接输出正文，不要解释修改过程。"""
+        else:
+            task = """【编写任务】：
+请针对上述章节，融合可用的参考资料与企业资料，输出详尽、专业的技术标书正文；企业资质、人员、业绩等事实只能取自上面的企业资料与全局事实。
+要求：
+1. 方案行文中体现投标主体与核心产品的具体应用与保障（以全局事实为准）；
+2. 如涉及架构设计或流转机制，附带一段规范的 ```mermaid 架构图；
+3. 严格遵守政企标书语言风格，分层、分点阐述；
+4. 直接输出正文内容，无需寒暄。"""
+
         user_prompt = f"""【当前待撰写章节】：{section_title}
 【完整大纲路径】：{section_path or section_title}
 {budget_line}
@@ -174,48 +178,41 @@ class SectionGenerator:
 
 【本章节须响应的招标要点/评分项】：
 {req_lines}
-
+{f'{chr(10)}{tender_context}{chr(10)}' if tender_context else ''}
 【人工补充指导意见】：
 {custom_instruction if custom_instruction else "无特殊补充，按业内顶级政企技术标标准编写"}
 {asset_context}
 {f'{chr(10)}{coherence}{chr(10)}' if coherence else ''}
 {reference_context if reference_context else '（知识库无高置信参考，请基于业界顶级规范自主设计，严禁套用无关领域方案）'}
 
-【编写任务】：
-请针对上述章节，融合可用的参考资料与企业资料，输出详尽、专业的技术标书正文；企业资质、人员、业绩等事实只能取自上面的企业资料与全局事实。
-要求：
-1. 方案行文中体现投标主体与核心产品的具体应用与保障（以全局事实为准）；
-2. 如涉及架构设计或流转机制，附带一段规范的 ```mermaid 架构图；
-3. 严格遵守政企标书语言风格，分层、分点阐述；
-4. 直接输出正文内容，无需寒暄。"""
+{task}"""
 
         return {
             "system": _select_system_prompt(section_title),
             "user": user_prompt,
-            "refs": refs,
-            "retrieval_message": retrieval.get("message", ""),
+            "refs": evidence.refs,
+            "retrieval_message": evidence.retrieval_message,
         }
 
-    def draft_section(self, **kwargs) -> Dict[str, Any]:
-        """同步完整生成（后台批量任务使用）"""
-        built = self.build_prompts(**kwargs)
+    def draft_section(self, evidence: EvidenceSet, **kwargs) -> Dict[str, Any]:
+        """同步完整生成（后台批量任务使用）；依据由调用方先经 select_evidence 选好"""
+        built = self.build_prompts(evidence=evidence, **kwargs)
         content = self.llm.chat_completion(system_prompt=built["system"], user_prompt=built["user"], purpose="section_write")
         return {
             "generated_content": strip_title_heading(content, kwargs.get("section_title", "")),
-            "references": built["refs"],
-            "retrieval_message": built["retrieval_message"],
+            "references": evidence.ref_records(),
+            "retrieval_message": evidence.retrieval_message,
             "mode": self.llm.get_mode(),
         }
 
-    async def draft_section_stream(self, **kwargs) -> AsyncGenerator[Dict[str, Any], None]:
+    async def draft_section_stream(self, evidence: EvidenceSet, **kwargs) -> AsyncGenerator[Dict[str, Any], None]:
         """
-        异步流式生成：先 yield 检索元数据（引用面板即时可见），再逐 token yield。
+        异步流式生成：先 yield 本次依据（知识库片段 + 企业资料，引用面板即时可见），再逐 token yield。
         """
-        # 检索 + LLM 重排是同步阻塞调用，放到线程中执行，避免卡住事件循环（期间的自动保存等请求）
-        built = await asyncio.to_thread(self.build_prompts, **kwargs)
+        built = self.build_prompts(evidence=evidence, **kwargs)
         yield {
-            "refs": built["refs"],
-            "retrieval_message": built["retrieval_message"],
+            "refs": evidence.ref_records(),
+            "retrieval_message": evidence.retrieval_message,
             "mode": self.llm.get_mode(),
         }
         async for token in self.llm.chat_completion_stream_async(
