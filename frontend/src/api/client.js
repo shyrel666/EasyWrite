@@ -277,6 +277,8 @@ export const api = {
   // diagrams：前端用 Mermaid 渲染好的架构图 [{code, image}]
   exportBid: (id, templateId, diagrams) =>
     downloadPost(`/project/${id}/export`, { template_id: templateId || 'gov_standard', diagrams }, '技术标书.docx'),
+  // 导出前检查清单（只提示，不阻止导出）
+  exportPreflight: (id) => request(`/project/${id}/export/preflight`),
   deviationExportUrl: (id, templateId) =>
     `${BASE}/project/${id}/deviation/export?template_id=${templateId || 'gov_standard'}`,
 

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import api from '@/api/client'
@@ -53,7 +53,10 @@ onMounted(async () => {
   const p = await store.load(projectId, true)
   if (!p.outline?.length) {
     ElMessage.warning('该项目尚未规划大纲，请先完成向导')
-  } else if (p.outline.length) {
+  } else if (route.query.section && store.findNode(route.query.section)) {
+    // 从导出前检查等处"定位"到指定章节
+    selectedId.value = route.query.section
+  } else {
     // 默认选中第一个叶节点
     const firstLeaf = findFirstLeaf(p.outline)
     selectedId.value = firstLeaf?.id || p.outline[0].id
@@ -67,6 +70,11 @@ onMounted(async () => {
       batchOpen.value = true
     }
   } catch { /* 任务查询失败不影响编纂 */ }
+})
+
+// 已在编纂台时再次"定位"：路由复用组件，只更新选中章节
+watch(() => route.query.section, (id) => {
+  if (id && store.findNode(id)) selectedId.value = id
 })
 
 function findFirstLeaf(nodes) {

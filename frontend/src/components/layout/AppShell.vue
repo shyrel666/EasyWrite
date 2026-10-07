@@ -93,9 +93,45 @@ const exportDialog = ref(false)
 const templates = ref([])
 const templateId = ref('gov_standard')
 
+// 导出前检查清单：只提示、不阻止导出
+const preflight = ref(null)
+const preflightLoading = ref(false)
+const openChecks = ref(new Set())
+const PREFLIGHT_ICON = {
+  ok: { icon: 'CircleCheckFilled', cls: 'text-ok' },
+  warn: { icon: 'WarningFilled', cls: 'text-warn' },
+  unknown: { icon: 'QuestionFilled', cls: 'text-ink-3' },
+}
+
+async function loadPreflight() {
+  preflightLoading.value = true
+  openChecks.value = new Set()
+  try {
+    preflight.value = await api.exportPreflight(props.projectId)
+  } catch (e) {
+    preflight.value = null
+    ElMessage.error('导出前检查失败：' + e.message)
+  } finally {
+    preflightLoading.value = false
+  }
+}
+
+function toggleCheck(key) {
+  const next = new Set(openChecks.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  openChecks.value = next
+}
+
+function locateSection(sectionId) {
+  exportDialog.value = false
+  router.push({ path: `/project/${props.projectId}/workspace`, query: { section: sectionId } })
+}
+
 async function openExport() {
   mobileOpen.value = false
   exportDialog.value = true
+  loadPreflight()
   try {
     templateId.value = localStorage.getItem(TEMPLATE_KEY) || 'gov_standard'
   } catch { /* 存储不可用时使用默认模板 */ }
@@ -285,9 +321,51 @@ async function exportWord() {
     </div>
 
     <!-- ======= 导出模板选择 ======= -->
-    <el-dialog v-model="exportDialog" title="导出标书 Word" width="min(560px, 94vw)" align-center>
-      <p class="text-xs text-ink-2 -mt-2 mb-4">选择排版模板（字体、主题色、页边距与页眉），可在「排版模板」中自定义。导出含封面、目录域与页码。</p>
-      <div class="grid sm:grid-cols-2 gap-2.5 max-h-[52vh] overflow-auto p-0.5">
+    <el-dialog v-model="exportDialog" title="导出标书 Word" width="min(600px, 94vw)" align-center>
+      <section class="-mt-2 mb-5">
+        <div class="flex items-center justify-between gap-2 mb-2">
+          <h4 class="text-[13px] font-semibold text-ink">
+            导出前检查
+            <template v-if="preflight">
+              <span v-if="preflight.ready" class="chip chip-ok ml-1.5 align-[1px]">全部通过</span>
+              <span v-else class="chip chip-warn ml-1.5 align-[1px]">{{ preflight.attention }} 项需关注</span>
+            </template>
+          </h4>
+          <button class="text-2xs text-ink-3 hover:text-ink inline-flex items-center gap-1" :disabled="preflightLoading" @click="loadPreflight">
+            <el-icon :class="{ 'animate-spin': preflightLoading }"><Refresh /></el-icon>重新检查
+          </button>
+        </div>
+        <div v-if="preflightLoading && !preflight" class="text-xs text-ink-3 py-4 text-center">正在检查…</div>
+        <div v-else-if="preflight" class="rounded-lg border border-line divide-y divide-line max-h-[34vh] overflow-auto">
+          <div v-for="c in preflight.checks" :key="c.key" class="px-3 py-2">
+            <button
+              class="w-full flex items-start gap-2 text-left"
+              :class="c.details.length ? 'cursor-pointer' : 'cursor-default'"
+              @click="c.details.length && toggleCheck(c.key)"
+            >
+              <el-icon class="mt-0.5 shrink-0" :class="PREFLIGHT_ICON[c.status].cls"><component :is="PREFLIGHT_ICON[c.status].icon" /></el-icon>
+              <span class="flex-1 min-w-0">
+                <span class="block text-xs font-medium text-ink">{{ c.title }}</span>
+                <span class="block text-2xs text-ink-2 mt-0.5 leading-relaxed">{{ c.message }}</span>
+              </span>
+              <el-icon v-if="c.details.length" class="mt-0.5 text-ink-3 transition-transform" :class="{ 'rotate-90': openChecks.has(c.key) }"><ArrowRight /></el-icon>
+            </button>
+            <ul v-if="openChecks.has(c.key)" class="mt-1.5 ml-6 space-y-1">
+              <li v-for="(d, i) in c.details" :key="i" class="flex items-start gap-2 text-2xs">
+                <span class="min-w-0 flex-1 leading-relaxed">
+                  <span class="text-ink">{{ d.title }}</span><span v-if="d.detail" class="text-ink-3"> · {{ d.detail }}</span>
+                </span>
+                <button v-if="d.section_id" class="shrink-0 text-accent-fg hover:underline" @click="locateSection(d.section_id)">定位</button>
+              </li>
+              <li v-if="c.details.length >= 50" class="text-2xs text-ink-3">仅列出前 50 项</li>
+            </ul>
+          </div>
+        </div>
+        <p class="hint mt-1.5">清单只作提示，不影响导出。</p>
+      </section>
+
+      <p class="text-xs text-ink-2 mb-3">选择排版模板（字体、主题色、页边距与页眉），可在「排版模板」中自定义。导出含封面、目录域与页码。</p>
+      <div class="grid sm:grid-cols-2 gap-2.5 max-h-[30vh] overflow-auto p-0.5">
         <button
           v-for="t in templates"
           :key="t.id"

@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from app.core.task_manager import task_manager
+from app.services.checker.export_preflight import build_preflight
 from app.services.project_store import project_store
 from app.services.exporter.docx_generator import docx_exporter
 from app.services.exporter.template_manager import template_manager
@@ -71,6 +73,15 @@ def delete_template(template_id: str):
     if not template_manager.delete_template(template_id):
         raise HTTPException(status_code=404, detail="模板不存在或为内置模板不可删除")
     return {"status": "success", "deleted_id": template_id}
+
+
+@router.get("/project/{project_id}/export/preflight", summary="导出前检查清单（未撰写、占位、待核实资料、证明材料、未校审、红线核查、偏离表；只提示不阻止导出）")
+def export_preflight(project_id: str):
+    project = project_store.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    latest = task_manager.list(1, project_id=project_id, task_type="compliance_check", with_result=True)
+    return build_preflight(project, latest[0] if latest else None)
 
 
 @router.get("/project/{project_id}/export", summary="导出项目为高保真技术标书 Word（含目录与页码；架构图由服务端简化渲染）")
