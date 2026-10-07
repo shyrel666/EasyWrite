@@ -1,15 +1,31 @@
 <p align="center">
-  <a href="docs/assets/readme-header-light.svg#gh-light-mode-only">
-    <img src="docs/assets/readme-header-light.svg" width="320" height="96" alt="EasyWrite · 智能招投标技术标编纂系统">
-  </a>
-  <a href="docs/assets/readme-header-dark.svg#gh-dark-mode-only">
-    <img src="docs/assets/readme-header-dark.svg" width="320" height="96" alt="EasyWrite · 智能招投标技术标编纂系统">
-  </a>
+  <img src="docs/assets/easywrite-logo.svg" width="96" height="96" alt="EasyWrite Logo">
 </p>
 
-面向政企信息化与软件工程项目的 AI 标书工作台。把招标要求、历史资料与企业资产组织成可核查、可导出的技术标书。
+<h1 align="center">EasyWrite</h1>
 
-[快速开始](#快速开始) · [核心功能](#核心功能) · [开发与测试](#开发与测试) · [开源参考](#开源参考)
+<p align="center">
+  <strong>本地运行的智能招投标技术标编纂系统</strong>
+</p>
+
+<p align="center">
+  招标解析 · 大纲规划 · 章节撰写 · 核查整改 · Word 导出
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/version-v0.2.0-4F7FC9?style=flat-square" alt="Version 0.2.0">
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-64748B?style=flat-square" alt="Windows, macOS and Linux">
+  <img src="https://img.shields.io/badge/AI-OpenAI%20compatible-0D9488?style=flat-square" alt="OpenAI 兼容接口">
+  <a href="https://github.com/shyrel666/EasyWrite/stargazers"><img src="https://img.shields.io/github/stars/shyrel666/EasyWrite?style=flat-square&amp;label=stars&amp;color=E3B341" alt="GitHub stars"></a>
+</p>
+
+<p align="center">
+  <a href="#快速开始"><strong>快速开始</strong></a> ·
+  <a href="#核心功能">核心功能</a> ·
+  <a href="#开发与测试">开发与测试</a> ·
+  <a href="IMPROVEMENT_PLAN.md">改进计划</a> ·
+  <a href="https://github.com/shyrel666/EasyWrite/issues">问题反馈</a>
+</p>
 
 ## 快速开始
 
@@ -50,6 +66,8 @@ AI 设置保存于 `backend/data/ai_settings.json`；也可使用 `backend/.env`
 </details>
 
 ## 核心功能
+
+面向政企信息化与软件工程项目，将招标要求、历史资料与企业资产组织成可核查、可导出的技术标书。
 
 **招标解析 → 大纲确认 → 章节撰写 → 核查整改 → Word 导出**
 
