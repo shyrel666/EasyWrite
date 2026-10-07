@@ -203,6 +203,11 @@ export const api = {
     request(`/project/${id}/tender/apply`, { method: 'POST', body: { analysis, tender_text: tenderText } }),
   // 承诺建议只复述招标要求，用户采纳后经 updateFacts 写入全局事实
   commitmentSuggestions: (id) => request(`/project/${id}/tender/commitment-suggestions`),
+  // 招标原文：章节树（传 sectionId 时附带该章节的要点与相关原文章节）、按章节分段读取
+  tenderOutline: (id, sectionId) =>
+    request(`/project/${id}/tender/outline${sectionId ? `?section_id=${encodeURIComponent(sectionId)}` : ''}`),
+  tenderSection: (id, path, offset = 0, limit = 20000) =>
+    request(`/project/${id}/tender/section?${new URLSearchParams({ path, offset: String(offset), limit: String(limit) })}`),
 
   // 大纲
   draftLevel1: (id) => request(`/project/${id}/outline/draft-level1`, { method: 'POST', body: {} }),

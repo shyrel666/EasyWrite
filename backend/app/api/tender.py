@@ -12,8 +12,9 @@ from app.core.task_manager import task_manager
 from app.models.schemas import TenderAnalysis18
 from app.services.parser.commitments import suggest_commitments
 from app.services.parser.document_parser import describe_source, parse_document, unsupported_reason
+from app.services.parser import tender_reader
 from app.services.parser.tender_analyzer import tender_analyzer
-from app.services.project_store import project_store
+from app.services.project_store import find_node, project_store
 
 logger = logging.getLogger("easywrite.api.tender")
 router = APIRouter(tags=["招标文件解析"])
@@ -97,10 +98,49 @@ def get_commitment_suggestions(project_id: str):
     return {"suggestions": suggest_commitments(project.tender_analysis)}
 
 
-@router.get("/project/{project_id}/tender/text", summary="获取项目已存档的招标文件正文")
-def get_tender_text(project_id: str):
+def _page(text: str, offset: int, limit: int) -> dict:
+    """分段返回长文本：start/end 为本段在全文中的位置，truncated 表示全文未读完"""
+    total = len(text)
+    start = min(max(offset, 0), total)
+    end = min(start + max(limit, 1), total)
+    return {"text": text[start:end], "start": start, "end": end, "total": total, "truncated": start > 0 or end < total}
+
+
+@router.get("/project/{project_id}/tender/text", summary="获取项目已存档的招标文件正文（分段读取，truncated 标明是否截断）")
+def get_tender_text(project_id: str, offset: int = 0, limit: int = 5000):
     project = project_store.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
     text = project_store.get_tender_text(project_id)
-    return {"has_text": bool(text), "length": len(text), "text": text[:5000]}
+    return {"has_text": bool(text), "length": len(text), **_page(text, offset, limit)}
+
+
+@router.get("/project/{project_id}/tender/outline", summary="招标文件章节树（ID、标题、层级、路径、字数）；传 section_id 时附带该撰写章节的要点与相关原文章节")
+def get_tender_outline(project_id: str, section_id: Optional[str] = None):
+    project = project_store.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    structure = project_store.get_tender_structure(project_id)
+    result = {"has_structure": bool(structure and structure.get("sections")),
+              "sections": tender_reader.outline_tree(structure), "keywords": [], "related": []}
+    node = find_node(project.outline, section_id) if section_id else None
+    if node:
+        result["keywords"] = tender_reader.node_keywords(node, project.tender_analysis)
+        result["related"] = tender_reader.related_sections(
+            structure, result["keywords"], primary=tender_reader.own_keywords(node))
+    return result
+
+
+@router.get("/project/{project_id}/tender/section", summary="读取招标文件某一章节的正文（path 为章节 ID 或完整路径；默认含下级章节，分段读取）")
+def get_tender_section(project_id: str, path: str, offset: int = 0, limit: int = 20000, deep: bool = True):
+    if not project_store.get(project_id):
+        raise HTTPException(status_code=404, detail="项目不存在")
+    section = tender_reader.find_section(project_store.get_tender_structure(project_id), path)
+    if section is None:
+        raise HTTPException(status_code=404, detail="招标文件中没有该章节（或尚未上传招标文件）")
+    return {
+        "id": section.get("section_id", ""),
+        "title": section.get("title", ""),
+        "path": section.get("breadcrumb", "") or section.get("title", ""),
+        **_page(tender_reader.section_text(section, deep), offset, limit),
+    }

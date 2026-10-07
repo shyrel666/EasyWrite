@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import api from '@/api/client'
 import { useProjectStore } from '@/stores/project'
 import EvidenceLinkDialog from '@/components/evidence/EvidenceLinkDialog.vue'
+import TenderSourcePanel from '@/components/workspace/TenderSourcePanel.vue'
 import { materialChip } from '@/utils/material'
 
 const props = defineProps({
@@ -143,11 +144,12 @@ function saveInstruction() {
         <button
           v-for="t in [
             { k: 'refs', l: '撰写依据', n: node?.last_refs?.length || 0 },
+            { k: 'tender', l: '招标原文' },
             { k: 'facts', l: '全局事实' },
             { k: 'instr', l: '写作意见' },
           ]"
           :key="t.k"
-          class="seg-item flex-1"
+          class="seg-item flex-1 !px-1 whitespace-nowrap"
           :class="{ 'is-active': activeTab === t.k }"
           @click="activeTab = t.k"
         >
@@ -229,6 +231,9 @@ function saveInstruction() {
           </div>
         </article>
       </template>
+
+      <!-- 招标原文 -->
+      <TenderSourcePanel v-else-if="activeTab === 'tender'" :project-id="projectId" :node="node" />
 
       <!-- 全局事实 -->
       <template v-else-if="activeTab === 'facts'">
