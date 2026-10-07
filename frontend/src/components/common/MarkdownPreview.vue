@@ -1,14 +1,13 @@
 <script setup>
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import MarkdownIt from 'markdown-it'
-import mermaid from 'mermaid'
+import { renderMermaidSvg } from '@/utils/mermaid'
 
 const props = defineProps({
   content: { type: String, default: '' },
   mode: { type: String, default: 'preview' }, // 'preview' 公文预览 | 'plain' 通用
+  dense: { type: Boolean, default: false }, // 窄容器（抽屉）里收紧纸面边距
 })
-
-mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'loose', fontFamily: 'inherit' })
 
 const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
 
@@ -19,7 +18,11 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
   const code = token.content.trim()
   if (token.info && token.info.trim().startsWith('mermaid')) {
     const id = `mmd-${Math.random().toString(36).slice(2, 9)}`
-    return `<figure class="mermaid-figure" data-mermaid-id="${id}">\n<pre class="mermaid">${md.utils.escapeHtml(code)}</pre>\n<figcaption>图：系统逻辑架构与数据流向图</figcaption>\n</figure>`
+    // 图题：Mermaid 前置元数据里的 title（导出 Word 时同样用它作题注）
+    const front = code.match(/^---\s*\n([\s\S]*?)\n---/)
+    const title = front && (front[1].match(/^\s*title:\s*(.+?)\s*$/m) || [])[1]
+    const caption = '图：' + md.utils.escapeHtml((title || '架构图').replace(/^['"]|['"]$/g, ''))
+    return `<figure class="mermaid-figure" data-mermaid-id="${id}">\n<pre class="mermaid">${md.utils.escapeHtml(code)}</pre>\n<figcaption>${caption}</figcaption>\n</figure>`
   }
   return defaultFence ? defaultFence(tokens, idx, options, env, self) : `<pre><code>${md.utils.escapeHtml(code)}</code></pre>`
 }
@@ -30,12 +33,10 @@ const html = computed(() => md.render(props.content || ''))
 async function renderMermaids() {
   if (!el.value) return
   const blocks = el.value.querySelectorAll('pre.mermaid')
-  let seq = 0
   for (const block of blocks) {
     const code = block.textContent || ''
-    const id = `mmd-svg-${Date.now()}-${seq++}`
     try {
-      const { svg } = await mermaid.render(id, code)
+      const svg = await renderMermaidSvg(code)
       const wrapper = document.createElement('div')
       wrapper.innerHTML = svg
       wrapper.style.display = 'inline-block'
@@ -52,10 +53,11 @@ watch(html, () => nextTick(renderMermaids))
 </script>
 
 <template>
-  <div
-    ref="el"
-    class="md-render overflow-auto h-full px-4 sm:px-6 py-4"
-    :class="mode === 'preview' ? 'bid-doc-preview' : 'text-sm leading-relaxed'"
-    v-html="html"
-  />
+  <div class="md-render h-full overflow-auto" :class="mode === 'preview' ? (dense ? 'p-3' : 'px-2 py-3 sm:px-6 sm:py-8') : ''">
+    <div
+      ref="el"
+      :class="mode === 'preview' ? ['doc-page bid-doc-preview', dense ? '!px-7 !py-8' : ''] : 'text-sm leading-relaxed'"
+      v-html="html"
+    />
+  </div>
 </template>

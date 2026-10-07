@@ -1,0 +1,21 @@
+# 代码检查（ruff）：在仓库根目录运行 python -m ruff check .
+target-version = "py310"
+line-length = 120
+extend-exclude = ["frontend", "backend/app/static", "downloads"]
+
+[lint]
+# pyflakes（未使用 / 未定义名称）+ pycodestyle + bugbear（可变默认值、闭包捕获循环变量、异常链等常见陷阱）
+select = ["E", "F", "W", "B"]
+ignore = [
+    "E501",  # 中文提示词与长字符串较多，不限制行宽
+    "E741",  # PDF 解析里 l 表示"行"，沿用
+    "B905",  # zip() 不强制 strict=
+]
+
+[lint.per-file-ignores]
+# 个别测试在导入应用前自行调整 sys.path
+"tests/*" = ["E402"]
+
+[lint.flake8-bugbear]
+# FastAPI 的参数声明写在默认值里，不是可变默认值
+extend-immutable-calls = ["fastapi.Body", "fastapi.File", "fastapi.Form", "fastapi.Query", "fastapi.Depends"]

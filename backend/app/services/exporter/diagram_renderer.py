@@ -42,7 +42,10 @@ class DiagramRenderer:
         nodes: Dict[str, str] = {}
         edges: List[Tuple[str, str, str]] = []
 
-        lines = [l.strip() for l in mermaid_code.split("\n") if l.strip()]
+        lines = [l.strip() for l in mermaid_code.split("\n") if l.strip() and not l.strip().startswith("%%")]
+        # 只支持流程图（graph / flowchart）；时序图、甘特图等其他类型交给前端真实 Mermaid 渲染
+        if not lines or not re.match(r"^(graph|flowchart)\b", lines[0]):
+            return nodes, edges
         for line in lines:
             if line.startswith("graph") or line.startswith("flowchart") or line.startswith("```"):
                 continue
@@ -58,38 +61,22 @@ class DiagramRenderer:
                     # 提取左节点定义
                     left_id, left_label = self._extract_node_info(left)
                     if left_id:
-                        nodes[left_id] = left_label or nodes.get(left_id, left_id)
+                        nodes[left_id] = left_label or nodes.get(left_id) or left_id
 
                     # 提取右节点定义
                     right_id, right_label = self._extract_node_info(right)
                     if right_id:
-                        nodes[right_id] = right_label or nodes.get(right_id, right_id)
+                        nodes[right_id] = right_label or nodes.get(right_id) or right_id
 
                     if left_id and right_id:
                         edges.append((left_id, right_id, ""))
-            else:
-                # 独立单节点定义
+            elif not re.match(r"^(subgraph|end|style|classDef|class|linkStyle|click|direction)\b", line):
+                # 独立单节点定义（跳过子图、样式等指令行）
                 nid, nlabel = self._extract_node_info(line)
                 if nid:
-                    nodes[nid] = nlabel
+                    nodes[nid] = nlabel or nodes.get(nid) or nid
 
-        if not nodes:
-            # 缺省标准四层微服务架构拓扑
-            nodes = {
-                "User": "用户业务终端 / 移动门户",
-                "Gateway": "API智能网关 / 安全鉴权中心",
-                "ServiceA": "核心业务微服务应用集群",
-                "ServiceB": "数据共享与大数据计算引擎",
-                "Database": "国产信创达梦高可用数据库集群"
-            }
-            edges = [
-                ("User", "Gateway", ""),
-                ("Gateway", "ServiceA", ""),
-                ("Gateway", "ServiceB", ""),
-                ("ServiceA", "Database", ""),
-                ("ServiceB", "Database", "")
-            ]
-
+        # 解析不出节点时返回空，由调用方降级为代码插槽——绝不画一张与正文无关的"缺省架构图"
         return nodes, edges
 
     def _extract_node_info(self, text: str) -> Tuple[str, str]:
@@ -101,7 +88,7 @@ class DiagramRenderer:
         # 纯 ID
         m_id = re.match(r'^[A-Za-z0-9_]+$', text)
         if m_id:
-            return m_id.group(0), text
+            return m_id.group(0), ""  # 只引用节点 ID：不能用 ID 覆盖此前定义的中文标签
         return "", ""
 
     def render_to_image(self, mermaid_code: str, diagram_title: str = "系统总体技术逻辑架构与数据流向图") -> Optional[Path]:
@@ -116,19 +103,19 @@ class DiagramRenderer:
             # 简易分层排布 (Top-Down BFS 层级分配)
             node_ids = list(nodes.keys())
             in_degrees = {nid: 0 for nid in node_ids}
-            for u, v, _ in edges:
+            for _u, v, _ in edges:
                 if v in in_degrees:
                     in_degrees[v] += 1
 
             # 拓扑分层
             layers: List[List[str]] = []
             visited = set()
-            
+
             # 第一层：入度为0的节点
             current_layer = [nid for nid in node_ids if in_degrees[nid] == 0]
             if not current_layer:
                 current_layer = [node_ids[0]]
-            
+
             layers.append(current_layer)
             visited.update(current_layer)
 
@@ -156,7 +143,7 @@ class DiagramRenderer:
             # 计算各节点绘制中心坐标 (x, y)
             positions: Dict[str, Tuple[float, float]] = {}
             total_layers = len(layers)
-            
+
             for l_idx, layer in enumerate(layers):
                 y = 0.90 - (l_idx / max(1, total_layers - 0.5)) * 0.75
                 layer_count = len(layer)
@@ -223,11 +210,12 @@ class DiagramRenderer:
             ax.set_ylim(0, 1)
             ax.axis('off')
 
-            plt.title(
-                f"【{diagram_title}】",
-                fontsize=13, fontweight='bold', color='#0F172A',
-                pad=14
-            )
+            if diagram_title:  # Word 导出时图题由题注承担，图内不再重复
+                plt.title(
+                    f"【{diagram_title}】",
+                    fontsize=13, fontweight='bold', color='#0F172A',
+                    pad=14
+                )
 
             img_id = uuid.uuid4().hex[:8]
             output_file = self.output_dir / f"topology_{img_id}.png"

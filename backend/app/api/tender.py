@@ -3,49 +3,54 @@ import logging
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Body
-from fastapi.responses import JSONResponse
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Body
 
 from app.core.config import settings
 from app.core.task_manager import task_manager
 from app.models.schemas import TenderAnalysis18
-from app.services.parser.word_parser import WordDocumentParser
+from app.services.parser.document_parser import describe_source, parse_document, unsupported_reason
 from app.services.parser.tender_analyzer import tender_analyzer
 from app.services.project_store import project_store
 
 logger = logging.getLogger("easywrite.api.tender")
 router = APIRouter(tags=["招标文件解析"])
-_parser = WordDocumentParser()
 
 
-@router.post("/tender/analyze", summary="上传招标文件并后台执行18项结构化拆解（返回任务ID）")
-async def analyze_tender_document(file: UploadFile = File(...)):
-    if not file.filename or not file.filename.lower().endswith(".docx"):
-        raise HTTPException(status_code=400, detail="目前仅支持上传 .docx 格式招标文件")
+@router.post("/tender/analyze", summary="上传招标文件（.docx / .pdf）并后台执行18项结构化拆解 + 评分细则抽取（返回任务ID）")
+async def analyze_tender_document(file: UploadFile = File(...), project_id: Optional[str] = Form(default=None)):
+    reason = unsupported_reason(file.filename)
+    if reason:
+        raise HTTPException(status_code=400, detail=reason)
+    if project_id and not project_store.get(project_id):
+        raise HTTPException(status_code=404, detail="项目不存在")
 
     content = await file.read()
     saved_path = settings.UPLOAD_DIR / f"tender_{uuid.uuid4().hex[:8]}_{Path(file.filename).name}"
     saved_path.write_bytes(content)
 
     def _run(ctx):
-        ctx.report(10, "解析 Word 文档结构")
-        parsed = _parser.parse_docx(saved_path)
-        all_text = "\n".join(sec.get("content", "") for sec in parsed.get("sections", []))
-        tables_text = []
-        for sec in parsed.get("sections", []):
-            for tbl in sec.get("tables", []):
-                tables_text.append("\n".join(" | ".join(r) for r in tbl))
-        full_text = all_text + ("\n\n" + "\n\n".join(tables_text) if tables_text else "")
+        ctx.report(10, "解析 PDF 页面与表格" if saved_path.suffix.lower() == ".pdf" else "解析 Word 文档结构")
+        parsed = parse_document(saved_path)  # PDF 扫描件/加密/乱码时抛出可读的 PdfParseError
+        full_text = parsed.get("full_text", "")
         if not full_text.strip():
             raise ValueError("招标文件解析后无有效文本（可能为扫描件或空文档）")
-        ctx.report(30, f"正文 {len(full_text)} 字，开始 LLM 结构化抽取")
-        analysis = tender_analyzer.analyze_text(full_text, filename_hint=file.filename)
+        if project_id:
+            # 招标原文是后续偏离表抽取 / 合规核查的依据，上传即存档（与是否应用拆标结论无关）
+            project_store.set_tender_text(project_id, full_text)
+            project_store.set_tender_structure(project_id, parsed)
+        ctx.report(30, f"正文 {len(full_text)} 字、表格 {len(parsed.get('tables', []))} 张，开始结构化抽取")
+        analysis = tender_analyzer.analyze_document(parsed, filename_hint=file.filename)
+        analysis.source_note = describe_source(parsed)
         if not analysis.project_name:
             analysis.project_name = Path(file.filename).stem
         ctx.report(100, "拆解完成")
         return analysis.model_dump()
 
-    task_id = task_manager.submit("tender_analyze", _run, description=f"拆标分析：{file.filename}")
+    task_id = task_manager.submit(
+        "tender_analyze", _run, description=f"拆标分析：{file.filename}", project_id=project_id or "",
+    )
     return {"task_id": task_id, "filename": file.filename}
 
 
@@ -54,28 +59,28 @@ def analyze_tender_text(text: str = Body(..., embed=True)):
     if not text or not text.strip():
         raise HTTPException(status_code=400, detail="招标文件文本为空")
     analysis = tender_analyzer.analyze_text(text)
+    analysis.scoring_note = "粘贴的纯文本无法保留评分表结构，未抽取评分细则；建议上传 .docx 或 .pdf 招标文件"
     return analysis
 
 
 @router.post("/project/{project_id}/tender/apply", summary="将18项拆标结果应用到项目（联动事实/偏离表建议）")
 def apply_tender_analysis(project_id: str, analysis: TenderAnalysis18, tender_text: str = Body(default="", embed=True)):
-    project = project_store.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="项目不存在")
+    def mutate(project):
+        project.tender_analysis = analysis
+        if analysis.purchaser_name and not project.client_name:
+            project.client_name = analysis.purchaser_name
 
-    project.tender_analysis = analysis
-    if analysis.purchaser_name and not project.client_name:
-        project.client_name = analysis.purchaser_name
+        # 联动填充全局事实（只补充空字段，不覆盖用户已填内容）
+        if analysis.duration_requirement and analysis.duration_requirement != "未提及" and not project.facts.delivery_guarantee:
+            project.facts.delivery_guarantee = f"承诺在【{analysis.duration_requirement}】内保质完成整体交付"
+        if analysis.warranty_period and analysis.warranty_period != "未提及" and not project.facts.sla_commitment:
+            project.facts.sla_commitment = f"承诺提供【{analysis.warranty_period}】及7×24小时全天候响应保障"
 
-    # 联动填充全局事实（只补充空字段，不覆盖用户已填内容）
-    if analysis.duration_requirement and analysis.duration_requirement != "未提及" and not project.facts.delivery_guarantee:
-        project.facts.delivery_guarantee = f"承诺在【{analysis.duration_requirement}】内保质完成整体交付"
-    if analysis.warranty_period and analysis.warranty_period != "未提及" and not project.facts.sla_commitment:
-        project.facts.sla_commitment = f"承诺提供【{analysis.warranty_period}】及7×24小时全天候响应保障"
+        if project.stage == "created":
+            project.stage = "tender_analyzed"
+        return project
 
-    if project.stage == "created":
-        project.stage = "tender_analyzed"
-    project_store.save(project)
+    project = project_store.update(project_id, mutate)
 
     if tender_text and tender_text.strip():
         project_store.set_tender_text(project_id, tender_text)

@@ -192,8 +192,9 @@ class ComplianceChecker:
         text_items = star_items
         r1 = self.llm.chat_completion_structured(
             _ROUND1_SYSTEM,
-            f"★号条款清单：\n" + "\n".join(f"- {s}" for s in star_items) + f"\n\n标书章节目录：\n{toc}",
+            "★号条款清单：\n" + "\n".join(f"- {s}" for s in star_items) + f"\n\n标书章节目录：\n{toc}",
             temperature=0.1,
+            purpose="compliance_check",
         )
         paper_only = set()
         if isinstance(r1, dict) and isinstance(r1.get("classification"), list):
@@ -217,10 +218,10 @@ class ComplianceChecker:
             if not pending:
                 break
             user_prompt = (
-                f"★号不可偏离条款（逐条核查）：\n" + "\n".join(f"- {s}" for s in pending)
+                "★号不可偏离条款（逐条核查）：\n" + "\n".join(f"- {s}" for s in pending)
                 + f"\n\n投标方案正文（第 {bi + 1}/{len(batches)} 批）：\n{batch}"
             )
-            r2 = self.llm.chat_completion_structured(_ROUND2_SYSTEM, user_prompt, temperature=0.1)
+            r2 = self.llm.chat_completion_structured(_ROUND2_SYSTEM, user_prompt, temperature=0.1, purpose="compliance_check")
             if not (isinstance(r2, dict) and isinstance(r2.get("results"), list)):
                 logger.warning("合规核查 Round 2 第 %d 批解析失败", bi + 1)
                 continue

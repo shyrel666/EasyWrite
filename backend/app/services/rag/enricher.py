@@ -45,7 +45,7 @@ def enrich_chunks_inplace(doc_name: str, chunks: List[Dict], progress=None) -> i
             lines.append(f"[块{j + 1}] 面包屑：{c['breadcrumb']}\n{head}")
         user_prompt = "文档名：" + doc_name + "\n\n" + "\n\n".join(lines)
 
-        result = llm_client.chat_completion_structured(_ENRICH_SYSTEM, user_prompt, temperature=0.1)
+        result = llm_client.chat_completion_structured(_ENRICH_SYSTEM, user_prompt, temperature=0.1, purpose="kb_enrich")
         summaries = None
         if isinstance(result, dict) and isinstance(result.get("summaries"), list):
             summaries = [str(s) for s in result["summaries"]]

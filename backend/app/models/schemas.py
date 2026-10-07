@@ -22,6 +22,8 @@ class OutlineNode(BaseModel):
     excluded_refs: List[str] = Field(default_factory=list, description="排除引用的 chunk_id 列表")
     # 最近一次生成使用的引用（溯源展示）
     last_refs: List[Dict[str, Any]] = Field(default_factory=list)
+    # 本章节承接的评分项（ScoringItem.id），用于字数分配与评分点覆盖核查
+    scoring_item_ids: List[str] = Field(default_factory=list)
     children: List['OutlineNode'] = Field(default_factory=list, description="子章节节点")
 
 
@@ -48,7 +50,7 @@ class GlobalFacts(BaseModel):
 
     def to_constraint_text(self) -> str:
         """将全局事实转换为大模型 System Prompt 约束文本"""
-        filled, omitted = [], []
+        filled = []
         fields = [
             ("投标人官方全称", self.company_name),
             ("统一社会信用代码", self.credit_code),
@@ -88,6 +90,30 @@ class GlobalFacts(BaseModel):
         return sum(1 for v in core if v and v.strip() and v.strip() != NOT_MENTIONED)
 
 
+class ScoringSubItem(BaseModel):
+    """评分标准正文中显式给出分值的子项，如 "1.现状及需求分析（10分）" """
+    name: str
+    points: Optional[float] = None
+
+
+class ScoringItem(BaseModel):
+    """评分细则中的一个评分项（评分表的一行）——大纲对齐与评分点覆盖核查的基础"""
+    id: str = Field(..., description="评分项 ID，如 pkg1_s3")
+    package: str = Field(default="", description="分包标识，如 包1；单包项目为空")
+    category: str = Field(default="", description="评分大类原文，如 技术部分（60%）")
+    category_weight: Optional[float] = Field(default=None, description="评分大类权重（%）")
+    kind: str = Field(default="other", description="price 价格 / technical 技术 / business 商务 / other")
+    # 应答方式决定大纲如何承接：proposal 撰写方案章节 / evidence 证书业绩人员等证明材料 /
+    # demo 现场演示 / compliance 逐条响应（起评分扣分制）/ price 报价
+    response_type: str = Field(default="proposal")
+    name: str = Field(..., description="评分项名称，如 技术服务方案")
+    points: Optional[float] = Field(default=None, description="分值；无法识别时为空，不臆测")
+    criteria: str = Field(default="", description="评分标准原文")
+    note: str = Field(default="", description="说明/证明材料要求原文")
+    sub_items: List[ScoringSubItem] = Field(default_factory=list)
+    source: str = Field(default="table", description="table 评分表确定性抽取 / llm 大模型抽取 / manual 人工录入")
+
+
 class TenderAnalysis18(BaseModel):
     """
     招标文件 18 项结构化拆解模型（借鉴 OpenBidKit 18 项要素）。
@@ -105,22 +131,33 @@ class TenderAnalysis18(BaseModel):
     price_score_weight: str = Field(default="", description="10. 价格分权重与评分公式")
     tech_score_weight: str = Field(default="", description="11. 技术方案分值与各章节评分明细")
     business_score_weight: str = Field(default="", description="12. 商务资信分值与资质要求")
-    star_disqualification_items: List[str] = Field(default_factory=list, description="13. ★号不可偏离重大条款与废标红线清单（原文摘录）")
+    star_disqualification_items: List[str] = Field(default_factory=list, description="13. 废标红线：不满足即无效投标的标记条款（★/※ 等，以文件对标记的定义为准；原文摘录）")
+    important_items: List[str] = Field(default_factory=list, description="重要条款：不满足按评分办法扣分、不直接废标的标记条款（如重庆模板中的 ★/▲）")
+    marker_legend: Dict[str, str] = Field(default_factory=dict, description="文件对条款标记含义的原文定义，如 {'※': '…不满足按无效投标处理'}")
     qualification_thresholds: List[str] = Field(default_factory=list, description="14. 投标人强制资质门槛")
     project_location: str = Field(default="", description="15. 项目实施与交付地点")
     payment_milestones: str = Field(default="", description="16. 付款节点比例")
     site_survey_rules: str = Field(default="", description="17. 是否组织现场踏勘及答疑规则")
     submission_deadline: str = Field(default="", description="18. 投标截止时间与递交形式")
+    # 结构化评分细则（评分表逐项）+ 抽取说明（分值合计核对 / 未识别到评分表等）
+    scoring_items: List[ScoringItem] = Field(default_factory=list, description="评分细则逐项")
+    scoring_note: str = Field(default="", description="评分细则抽取说明")
+    target_package: str = Field(default="", description="多分包项目中本次投标的分包（对应 ScoringItem.package）")
     # 诚实信号：llm=大模型抽取 / rules=正则规则抽取（覆盖度有限）
     extraction_mode: str = Field(default="llm")
     extraction_note: str = Field(default="")
+    # 来源说明：PDF 页数、章节识别方式（书签 / 版面推断）、扫描页告警；Word 为空
+    source_note: str = Field(default="")
 
 
 class DeviationItem(BaseModel):
     """技术规格与条款点对点偏离表项"""
     index: int
     clause_title: str = Field(..., description="招标文件条款要求（原文摘录）")
-    is_star: bool = Field(default=False, description="是否为★号不可偏离条款")
+    is_star: bool = Field(default=False, description="是否为废标红线条款（level == redline，兼容旧字段）")
+    level: str = Field(default="normal", description="redline 不满足即无效投标 / important 不满足按评分扣分 / normal")
+    section: str = Field(default="", description="条款在招标文件中的章节路径")
+    response_source: str = Field(default="", description="ai 大模型拟稿（待人工核实）/ manual 人工填写")
     response_status: str = Field(default="完全满足", description="响应结果：完全满足/正偏离/负偏离")
     response_detail: str = Field(default="", description="点对点具体实现技术论述与佐证")
     source_fingerprint: str = Field(default="", description="条款来源指纹（确定性抽取溯源）")
@@ -255,17 +292,33 @@ class SolutionComponent(BaseModel):
 class QualityDimensionScore(BaseModel):
     """单个维度的质检打分与问题反馈"""
     dimension_name: str = Field(..., description="维度名称")
-    score: int = Field(default=90, description="得分 0~100")
-    status: str = Field(default="良好", description="状态: 优秀/良好/需整改/高危")
+    score: Optional[int] = Field(default=None, description="得分 0~100；None 表示条件不足未检测（不计入综合分）")
+    status: str = Field(default="未检测", description="状态: 优秀/良好/需整改/高危/未检测")
     findings: List[str] = Field(default_factory=list, description="发现的优点或问题")
     suggestions: List[str] = Field(default_factory=list, description="整改建议")
 
 
+class ScoringCoverage(BaseModel):
+    """单个评分项的覆盖核查结果"""
+    item_id: str
+    name: str
+    points: Optional[float] = None
+    response_type: str = "proposal"
+    status: str = Field(..., description="已覆盖 / 要点缺失 / 篇幅不足 / 未撰写 / 未承接")
+    coverage: float = Field(default=0.0, description="覆盖度 0~1")
+    section_titles: List[str] = Field(default_factory=list, description="承接章节")
+    missing_points: List[str] = Field(default_factory=list, description="未在正文中出现的评分要点")
+    word_count: int = 0
+    word_budget: Optional[int] = None
+
+
 class EightDimensionQualityReport(BaseModel):
     """标书八维全盘质量体检报告"""
-    overall_score: int = Field(default=85, description="八维综合评分 0~100")
-    passed: bool = Field(default=True, description="是否满足投标推荐标准")
-    rating_level: str = Field(default="甲级推荐", description="评级: 甲级推荐/乙级可投/丙级需整改/高危废标风险")
+    overall_score: int = Field(default=0, description="已检测维度的平均分 0~100")
+    passed: bool = Field(default=False, description="是否满足投标推荐标准")
+    rating_level: str = Field(default="未撰写", description="评级: 甲级推荐/乙级可投/丙级需整改/高危废标风险/未撰写")
+    scoring_coverage: List[ScoringCoverage] = Field(default_factory=list, description="评分点逐项覆盖核查")
+    scoring_coverage_rate: Optional[float] = Field(default=None, description="按分值加权的评分点覆盖率 0~1")
     dimensions: List[QualityDimensionScore] = Field(default_factory=list, description="八维细分评分与分析")
     de_ai_detected_phrases: List[str] = Field(default_factory=list, description="检测到的 AI 廉价空话套话")
     high_risk_defects: List[str] = Field(default_factory=list, description="一票否决废标缺陷")

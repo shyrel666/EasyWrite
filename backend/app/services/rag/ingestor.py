@@ -1,7 +1,7 @@
 """
 知识库入库管线（后台任务入口）。
 
-流程：保存文件 → 解析 docx → 结构感知分块 → [可选]LLM 摘要增强
+流程：保存文件 → 解析 docx / pdf → 结构感知分块 → [可选]LLM 摘要增强
      → 双通道索引（BM25 恒建 + 嵌入如已配置）→ [可选]LLM 条目策展
 
 全程通过 TaskContext 上报进度；失败时文档状态置 error 并保留原因。
@@ -10,19 +10,19 @@ import logging
 import uuid
 from pathlib import Path
 
+from sqlmodel import select
+
 from app.core.config import settings
 from app.core.task_manager import TaskContext
 from app.db.database import get_session
 from app.db.models import KBDocument
-from app.services.parser.word_parser import WordDocumentParser
+from app.services.parser.document_parser import parse_document
 from app.services.rag.chunker import chunk_parsed_document
 from app.services.rag.enricher import enrich_chunks_inplace
 from app.services.rag.indexer import knowledge_index, now_str
 from app.services.rag import curator
 
 logger = logging.getLogger("easywrite.rag.ingest")
-
-_parser = WordDocumentParser()
 
 
 def ingest_document(file_bytes: bytes, doc_name: str, curate: bool = True) -> str:
@@ -39,6 +39,18 @@ def ingest_document_task(file_bytes: bytes, doc_name: str, curate: bool, ctx: Ta
     """后台任务包装"""
     doc_id = _ingest_impl(file_bytes, doc_name, curate, ctx)
     return {"doc_id": doc_id, "doc_name": doc_name}
+
+
+def mark_interrupted_ingests() -> int:
+    """启动时调用：重启前未入库完成（仍为 ingesting）的文档置为 error，避免永远显示"入库中"。"""
+    with get_session() as session:
+        docs = session.exec(select(KBDocument).where(KBDocument.status == "ingesting")).all()
+        for doc in docs:
+            doc.status = "error"
+            doc.error_msg = "服务重启，入库未完成，请删除后重新上传"
+            doc.updated_at = now_str()
+            session.add(doc)
+    return len(docs)
 
 
 def _ingest_impl(file_bytes: bytes, doc_name: str, curate: bool, ctx) -> str:
@@ -59,8 +71,8 @@ def _ingest_impl(file_bytes: bytes, doc_name: str, curate: bool, ctx) -> str:
         saved_path.write_bytes(file_bytes)
 
         # 2. 解析
-        ctx.report(15, "解析 Word 文档结构")
-        parsed = _parser.parse_docx(saved_path)
+        ctx.report(15, "解析文档结构")
+        parsed = parse_document(saved_path)
 
         # 3. 语义分块
         ctx.report(35, "结构感知语义分块")

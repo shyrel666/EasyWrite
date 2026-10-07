@@ -7,7 +7,6 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
 
 BASE_DIR = Path(__file__).resolve().parent.parent / "backend"
 sys.path.insert(0, str(BASE_DIR))
@@ -78,6 +77,7 @@ def test_full_lifecycle():
             if event.get("done"):
                 done = True
         assert done, "SSE 未收到 done 事件"
+        assert refs_event is not None, "SSE 未先推送检索引用事件"
         assert "".join(tokens), "流式生成内容为空"
 
     # 7. 章节人工保存

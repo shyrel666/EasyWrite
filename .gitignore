@@ -7,6 +7,7 @@ __pycache__/
 env/
 venv/
 .venv/
+.runtime/
 
 # EasyWrite Runtime Data（SQLite 数据库与用户配置为运行时产物）
 backend/data/ai_settings.json
@@ -43,5 +44,9 @@ yarn-error.log*
 
 # Pytest
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
+
+# 公开招标文件样本（第三方文档，仅本地验证用）
+downloads/

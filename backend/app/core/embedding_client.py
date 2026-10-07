@@ -10,12 +10,13 @@
 """
 import logging
 import threading
+import time
 from typing import List, Optional, Tuple
 
 import numpy as np
 from openai import OpenAI, AsyncOpenAI
 
-from app.core.config import settings
+from app.core import llm_usage
 from app.core.ai_settings_manager import ai_settings_manager
 
 logger = logging.getLogger("easywrite.embedding")
@@ -29,17 +30,22 @@ EMBEDDING_PRESETS = {
     "siliconflow": {
         "name": "硅基流动 SiliconFlow（推荐，注册送额度）",
         "base_url": "https://api.siliconflow.cn/v1",
-        "models": ["BAAI/bge-m3", "BAAI/bge-large-zh-v1.5", "netease-youdao/bce-embedding-base_v1"],
+        "models": ["BAAI/bge-m3", "Qwen/Qwen3-Embedding-8B", "Qwen/Qwen3-Embedding-4B", "Qwen/Qwen3-Embedding-0.6B"],
     },
     "dashscope": {
         "name": "阿里 DashScope",
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "models": ["text-embedding-v3", "text-embedding-v2"],
+        "models": ["qwen3.7-text-embedding", "qwen3.7-text-embedding-flash", "text-embedding-v4"],
+    },
+    "zhipu": {
+        "name": "智谱 BigModel",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "models": ["embedding-3"],
     },
     "ollama": {
         "name": "本地 Ollama（内网离线）",
         "base_url": "http://localhost:11434/v1",
-        "models": ["bge-m3", "bge-large-zh-v1.5"],
+        "models": ["bge-m3", "qwen3-embedding:0.6b", "qwen3-embedding:4b", "qwen3-embedding:8b"],
     },
     "openai": {
         "name": "OpenAI",
@@ -108,10 +114,14 @@ class EmbeddingClient:
         all_vectors: List[List[float]] = []
         for i in range(0, len(texts), BATCH_SIZE):
             batch = [t[:MAX_TEXT_CHARS] for t in texts[i : i + BATCH_SIZE]]
+            started = time.perf_counter()
             try:
                 resp = self.client.embeddings.create(input=batch, model=self.model)
+                llm_usage.record(purpose="embedding", kind="embedding", model=self.model, started=started,
+                                 usage=getattr(resp, "usage", None))
                 all_vectors.extend(item.embedding for item in resp.data)
             except Exception as e:
+                llm_usage.record(purpose="embedding", kind="embedding", model=self.model, started=started, error=e)
                 logger.error("Embedding 批量计算失败 (batch %d): %s", i // BATCH_SIZE, e)
                 return None
         if not all_vectors:

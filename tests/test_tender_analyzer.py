@@ -7,7 +7,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent / "backend"
 sys.path.insert(0, str(BASE_DIR))
 
-from app.services.parser.tender_analyzer import tender_analyzer, NOT_MENTIONED  # noqa: E402
+from app.services.parser.tender_analyzer import tender_analyzer  # noqa: E402
 from conftest import TENDER_SAMPLE  # noqa: E402
 
 

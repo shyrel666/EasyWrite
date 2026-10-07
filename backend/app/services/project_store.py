@@ -4,12 +4,15 @@
 替代原 endpoints.py 中的内存 dict + 全量重写 JSON 文件方案：
 - 每次变更单行 UPDATE，WAL 模式并发安全
 - 大纲树/事实/偏离矩阵序列化为 JSON 列（访问模式总是整树加载）
+- 写入统一走 update()：写锁内重新读取最新行再修改，杜绝"旧快照整体写回"
+  覆盖并发编辑（如流式生成数十秒后写回，冲掉期间其他章节的自动保存）
 """
 import json
 import logging
+import threading
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import Callable, List, Optional, TypeVar
 
 from sqlmodel import select
 
@@ -24,6 +27,26 @@ logger = logging.getLogger("easywrite.project_store")
 
 # 招标正文存储上限（防超大文件拖垮单行读写）
 TENDER_TEXT_LIMIT = 200_000
+
+# 单进程内串行化项目的"读-改-写"（本系统为单用户单进程部署）
+_write_lock = threading.RLock()
+
+T = TypeVar("T")
+
+
+class ProjectNotFound(KeyError):
+    """项目不存在（main.py 统一映射为 404）"""
+
+
+def find_node(nodes: List[OutlineNode], section_id: str) -> Optional[OutlineNode]:
+    """在大纲树中按 id 深度优先查找节点"""
+    for n in nodes:
+        if n.id == section_id:
+            return n
+        found = find_node(n.children, section_id)
+        if found:
+            return found
+    return None
 
 
 def now_str() -> str:
@@ -83,12 +106,29 @@ class ProjectStore:
             return row.tender_text if row else ""
 
     def set_tender_text(self, project_id: str, text: str):
-        with get_session() as session:
+        with _write_lock, get_session() as session:
             row = session.get(ProjectModel, project_id)
             if row:
                 row.tender_text = (text or "")[:TENDER_TEXT_LIMIT]
                 row.updated_at = now_str()
                 session.add(row)
+
+    def set_tender_structure(self, project_id: str, parsed: dict):
+        """存档招标文件章节树（不含 full_text，避免与 tender_text 重复）"""
+        payload = {"heading_mode": parsed.get("heading_mode", ""), "sections": parsed.get("sections", [])}
+        with _write_lock, get_session() as session:
+            row = session.get(ProjectModel, project_id)
+            if row:
+                row.tender_structure_json = json.dumps(payload, ensure_ascii=False)
+                row.updated_at = now_str()
+                session.add(row)
+
+    def get_tender_structure(self, project_id: str) -> Optional[dict]:
+        with get_session() as session:
+            row = session.get(ProjectModel, project_id)
+            if not row or not row.tender_structure_json:
+                return None
+            return json.loads(row.tender_structure_json)
 
     def list(self) -> List[ProjectListItem]:
         with get_session() as session:
@@ -144,17 +184,33 @@ class ProjectStore:
             ))
         return project
 
+    def update(self, project_id: str, mutate: Callable[[Project], T]) -> T:
+        """
+        原子更新：写锁 + 单事务内读取最新项目 → mutate 就地修改 → 写回，返回 mutate 的返回值。
+        mutate 内只做内存修改；LLM 调用等耗时操作必须放在 update 之外，避免长时间占锁。
+        mutate 抛出异常时事务回滚、不写入。
+        """
+        with _write_lock, get_session() as session:
+            row = session.get(ProjectModel, project_id)
+            if not row:
+                raise ProjectNotFound(project_id)
+            project = self._to_domain(row)
+            result = mutate(project)
+            self._apply_domain(row, project)
+            session.add(row)
+        return result
+
     def save(self, project: Project):
-        """整项目写回（大纲/事实/偏离等变更后调用）"""
-        with get_session() as session:
+        """整项目覆盖写回。仅适用于刚读出、未经耗时操作的对象；API 层请使用 update()"""
+        with _write_lock, get_session() as session:
             row = session.get(ProjectModel, project.id)
             if not row:
-                raise KeyError(f"项目不存在: {project.id}")
+                raise ProjectNotFound(project.id)
             self._apply_domain(row, project)
             session.add(row)
 
     def update_stage(self, project_id: str, stage: str):
-        with get_session() as session:
+        with _write_lock, get_session() as session:
             row = session.get(ProjectModel, project_id)
             if row:
                 row.stage = stage
@@ -162,7 +218,7 @@ class ProjectStore:
                 session.add(row)
 
     def delete(self, project_id: str) -> bool:
-        with get_session() as session:
+        with _write_lock, get_session() as session:
             row = session.get(ProjectModel, project_id)
             if not row:
                 return False

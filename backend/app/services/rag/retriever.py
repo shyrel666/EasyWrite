@@ -13,7 +13,7 @@ from typing import Dict, List, Optional
 
 from app.core.config import settings
 from app.core.llm_client import llm_client
-from app.services.rag.indexer import knowledge_index, embedding_version
+from app.services.rag.indexer import knowledge_index
 
 logger = logging.getLogger("easywrite.rag.retriever")
 
@@ -192,7 +192,7 @@ class RetrievalService:
         user_prompt = (
             f"写作需求：{section_title or ''} {query}\n\n候选资料：\n" + "\n\n".join(lines)
         )
-        result = llm_client.chat_completion_structured(_RERANK_SYSTEM, user_prompt, temperature=0.1)
+        result = llm_client.chat_completion_structured(_RERANK_SYSTEM, user_prompt, temperature=0.1, purpose="rerank")
         if not isinstance(result, dict) or not isinstance(result.get("scores"), list):
             return None
         id_list = [cid for cid in candidate_ids if idx.get_chunk(cid)]

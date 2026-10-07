@@ -1,13 +1,14 @@
 """项目管理路由"""
-from typing import List, Optional
+from typing import List
 
 from fastapi import APIRouter, HTTPException, Body
 
 from app.models.schemas import (
-    Project, ProjectCreate, GlobalFacts, OutlineNode,
+    Project, ProjectCreate, GlobalFacts,
     OutlineUpdateRequest, ProjectListItem,
 )
-from app.services.project_store import project_store
+from app.services.project_store import project_store, find_node
+from app.services.version_store import version_store
 
 router = APIRouter(tags=["项目管理"])
 
@@ -38,25 +39,29 @@ def get_project(project_id: str):
 def delete_project(project_id: str):
     if not project_store.delete(project_id):
         raise HTTPException(status_code=404, detail="项目不存在")
+    version_store.delete_project(project_id)
     return {"status": "success", "deleted_id": project_id}
 
 
 @router.put("/project/{project_id}/facts", summary="更新项目全局事实设定（Global Facts）")
 def update_project_facts(project_id: str, facts: GlobalFacts):
-    project = _get_or_404(project_id)
-    project.facts = facts
-    project_store.save(project)
+    def mutate(project: Project):
+        project.facts = facts
+
+    project_store.update(project_id, mutate)
     return {"status": "success", "facts": facts}
 
 
 @router.put("/project/{project_id}/outline", summary="人工编辑保存大纲树（增删改节点/字数预算）")
 def update_project_outline(project_id: str, req: OutlineUpdateRequest):
-    project = _get_or_404(project_id)
-    project.outline = req.outline
-    if project.stage in ("created", "tender_analyzed"):
-        project.stage = "outline_confirmed"
-    project_store.save(project)
-    return {"status": "success", "stage": project.stage}
+    def mutate(project: Project) -> str:
+        project.outline = req.outline
+        if project.stage in ("created", "tender_analyzed"):
+            project.stage = "outline_confirmed"
+        return project.stage
+
+    stage = project_store.update(project_id, mutate)
+    return {"status": "success", "stage": stage}
 
 
 @router.put("/project/{project_id}/stage", summary="更新向导流程阶段")
@@ -76,19 +81,12 @@ def update_section_refs(
     pinned_refs: List[str] = Body(default_factory=list, embed=True),
     excluded_refs: List[str] = Body(default_factory=list, embed=True),
 ):
-    project = _get_or_404(project_id)
+    def mutate(project: Project):
+        node = find_node(project.outline, section_id)
+        if not node:
+            raise HTTPException(status_code=404, detail="未找到对应章节")
+        node.pinned_refs = pinned_refs
+        node.excluded_refs = excluded_refs
 
-    def walk(nodes: List[OutlineNode]) -> bool:
-        for n in nodes:
-            if n.id == section_id:
-                n.pinned_refs = pinned_refs
-                n.excluded_refs = excluded_refs
-                return True
-            if walk(n.children):
-                return True
-        return False
-
-    if not walk(project.outline):
-        raise HTTPException(status_code=404, detail="未找到对应章节")
-    project_store.save(project)
+    project_store.update(project_id, mutate)
     return {"status": "success", "section_id": section_id}

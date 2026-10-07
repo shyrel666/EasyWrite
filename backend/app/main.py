@@ -1,14 +1,19 @@
 import logging
+import re
 from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.core.config import settings
-from app.core.task_manager import task_manager  # noqa: F401 保活单例
+from app.core import llm_usage
+from app.core.request_context import current_project_id
+from app.core.task_manager import task_manager
 from app.db.database import migrate_legacy_json  # noqa: F401
+from app.services.rag.ingestor import mark_interrupted_ingests
+from app.services.project_store import ProjectNotFound
 from app.api.ai_settings import router as ai_settings_router
 from app.api.projects import router as projects_router
 from app.api.tender import router as tender_router
@@ -27,6 +32,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("easywrite")
 
+# 重启恢复：上次进程未跑完的后台任务标记为"已中断"，未入库完成的知识库文档标记为失败；清理过期调用记录
+task_manager.recover_interrupted()
+mark_interrupted_ingests()
+llm_usage.prune()
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
@@ -41,6 +51,35 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_PROJECT_PATH = re.compile(rf"^{re.escape(settings.API_PREFIX)}/project/([^/]+)")
+
+
+class ProjectContextMiddleware:
+    """按 URL 绑定当前项目（纯 ASGI，不包装 SSE 流）：后台任务归属与模型用量记录据此归档"""
+
+    def __init__(self, asgi_app):
+        self.app = asgi_app
+
+    async def __call__(self, scope, receive, send):
+        match = _PROJECT_PATH.match(scope.get("path", "")) if scope["type"] == "http" else None
+        if not match or match.group(1) == "create":
+            await self.app(scope, receive, send)
+            return
+        token = current_project_id.set(match.group(1))
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            current_project_id.reset(token)
+
+
+app.add_middleware(ProjectContextMiddleware)
+
+
+@app.exception_handler(ProjectNotFound)
+async def project_not_found_handler(request: Request, exc: ProjectNotFound):
+    return JSONResponse(status_code=404, content={"detail": "项目不存在"})
+
 
 for r in (
     ai_settings_router, projects_router, tender_router, outline_router,

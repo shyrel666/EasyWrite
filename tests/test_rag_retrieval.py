@@ -14,7 +14,6 @@ RAG 分层混合检索评估（金标准集）。
 注意：LLM 重排需要真实 Key，评估在无 Key 环境跑 BM25-only 路径
 （分层设计的语义兜底层），重排路径在 CI 有 Key 时生效。
 """
-import json
 import sys
 from pathlib import Path
 

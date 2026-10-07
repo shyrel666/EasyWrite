@@ -84,7 +84,7 @@ def test_de_ai_polish_standalone():
     print(f"    润色前文本: {raw_ai_text}")
     print(f"    润色后文本: {resp.polished_content}")
     print(f"    改进项: {resp.improvements}")
-    
+
     assert "众所周知" not in resp.polished_content
     assert "在当今数字化转型的浪潮中" not in resp.polished_content
     assert "北京信创数智科技有限公司" in resp.polished_content

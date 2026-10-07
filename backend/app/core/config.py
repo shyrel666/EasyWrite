@@ -13,12 +13,12 @@ class Settings(BaseSettings):
     # LLM Settings (OpenAI-compatible)
     # Supports DeepSeek, 通义千问 Qwen, OpenAI, Kimi, etc.
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
-    LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "deepseek-chat")
+    LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "deepseek-flash")
     LLM_TEMPERATURE: float = 0.3
 
     # Embedding Settings (OpenAI-compatible; separate from LLM provider)
-    # e.g. SiliconFlow BAAI/bge-m3, DashScope text-embedding-v3, Ollama bge-m3
+    # e.g. SiliconFlow BAAI/bge-m3, DashScope qwen3.7-text-embedding, Ollama bge-m3
     EMBEDDING_API_KEY: str = os.getenv("EMBEDDING_API_KEY", "")
     EMBEDDING_BASE_URL: str = os.getenv("EMBEDDING_BASE_URL", "")
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")

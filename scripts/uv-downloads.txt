@@ -1,0 +1,9 @@
+# uv 0.12.23 wheels; SHA256 values from https://pypi.org/pypi/uv/0.12.23/json
+# platform|path relative to the PyPI file mirror|sha256
+windows-x86_64|packages/af/fd/816f4e8a76197312ec8037369e5b5c8a5ebde7aa118b6250259e031d3444/uv-0.12.23-py3-none-win_amd64.whl|fb8a4117a5224d73abe2204a1e744ae34b544f1b9a0b761576851deaa7215c12
+windows-aarch64|packages/d9/74/1906f7f3f785fcf37a72b371d4ab58ec7193c5760923136cca1376209bc8/uv-0.12.23-py3-none-win_arm64.whl|9a65258535db432df51ca7d26338c01431820b94b634762f5718fc55895f974e
+macos-x86_64|packages/01/15/a2514d061b92d4b7c0ebefc3da51f3ff5a528e9f4c067ea2cf48c5573e5a/uv-0.12.23-py3-none-macosx_10_12_x86_64.whl|4951286e68f116fa41897ecf8e248cc2836cb013be6d4f37afae4049f9ef4df7
+macos-aarch64|packages/23/e9/b75db33954e985a763bd3277a477cabd551aaba7d08872b22400838dace2/uv-0.12.23-py3-none-macosx_11_0_arm64.whl|99197c022afbd1edd0a295e9fdac5078c61eddf2e77657a77294cfe8ea0d94b9
+linux-x86_64|packages/e5/83/85a6c63c24905af4924fddb11a499b934913f59a134248367a1ef1a4716f/uv-0.12.23-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl|565c6e2874dbeae86c02f3dea97255e878fec672659a73d4930c6b93fcab2fff
+linux-x86_64-musl|packages/71/b7/340260cf1a92017b271869764a68d9a019d796c4a7fa80c6c1bbcf5721eb/uv-0.12.23-py3-none-musllinux_1_1_x86_64.whl|11d18c1589d7907376b4f3fa31028e46cc609ac4b7d83eabc2b04cd8ca1433cc
+linux-aarch64|packages/39/77/ff15f878a215b543fd5aa05d2e3f939f3a2c46502ff58362eb5b51434af3/uv-0.12.23-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl|895137194d242cc8075c3006288b485af54feeae68512f4ffc96f75b27543cc0

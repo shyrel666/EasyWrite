@@ -1,10 +1,19 @@
 import re
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Optional
 from app.models.schemas import (
     OutlineNode, GlobalFacts, QualityDimensionScore, EightDimensionQualityReport,
-    PolishSectionRequest, PolishSectionResponse
+    PolishSectionRequest, PolishSectionResponse, TenderAnalysis18,
 )
 from app.core.llm_client import llm_client
+from app.services.checker.scoring_coverage import check_scoring_coverage, coverage_rate
+
+# 依赖正文内容的维度（无正文时标记"未检测"，不给分）
+TEXT_DIMENSION_PREFIXES = ("1.", "2.", "4.", "5.", "6.", "8.")
+NOT_CHECKED = "未检测"
+
+
+def _status_of(score: int) -> str:
+    return "优秀" if score >= 90 else ("良好" if score >= 75 else ("需整改" if score >= 60 else "高危"))
 
 DE_AI_CLICHE_PATTERNS = [
     (r"正如(?:前文|上文|我们)?所(?:述|说|知)", "直接阐述事实，删除套话过渡"),
@@ -68,12 +77,13 @@ class EightDimensionQualityInspector:
         self,
         outline: List[OutlineNode],
         facts: GlobalFacts,
-        star_clauses: Optional[List[str]] = None
+        star_clauses: Optional[List[str]] = None,
+        tender_analysis: Optional[TenderAnalysis18] = None,
     ) -> EightDimensionQualityReport:
         nodes = self._traverse_outline(outline)
         all_text = "\n\n".join([f"【{n.title}】\n{n.content}" for n in nodes if n.content])
-        total_chars = len(all_text)
-        has_content = total_chars > 100
+        # 只要有任何正文就做全量检测：短文本里的负偏离词同样是废标红线
+        has_content = any(n.content.strip() for n in nodes)
 
         dimensions: List[QualityDimensionScore] = []
         detected_cliches: List[str] = []
@@ -241,7 +251,7 @@ class EightDimensionQualityInspector:
         d6_suggestions = []
         has_mermaid = "```mermaid" in all_text or "<pre class=\"mermaid\"" in all_text
         has_table = "|" in all_text and "-|-" in all_text or "table" in all_text.lower()
-        
+
         if has_mermaid and has_table:
             d6_score = 95
             d6_findings.append("方案图文并茂，同时包含专业 Mermaid 架构拓扑图与原生指标对比表格")
@@ -268,27 +278,39 @@ class EightDimensionQualityInspector:
             suggestions=d6_suggestions
         ))
 
-        # ---------------- 维度 7: 招标评分点对标度 (Scoring Alignment) ----------------
-        d7_score = 88
-        d7_findings = []
-        d7_suggestions = []
-        req_count = sum([len(n.requirements) for n in nodes])
-        if req_count > 0:
-            d7_findings.append(f"明确设置了 {req_count} 项招标文件对标评分响应要求")
-            d7_score = 92
+        # ---------------- 维度 7: 招标评分点覆盖度 (Scoring Coverage) ----------------
+        coverage = check_scoring_coverage(outline, tender_analysis)
+        rate = coverage_rate(coverage)
+        if rate is None:
+            dimensions.append(QualityDimensionScore(
+                dimension_name="7. 招标评分点覆盖度",
+                score=None,
+                status=NOT_CHECKED,
+                findings=["未识别到评分细则，无法逐项核查评分点覆盖"],
+                suggestions=["在项目向导【确认拆标结果】中核对或录入评分细则后重新质检"],
+            ))
         else:
-            d7_findings.append("已结合通用政企招投标评分重点进行对标阐述")
-            d7_suggestions.append("可针对重点高分章节设置针对性的评分要点提示")
-
-        d7_score = max(0, min(100, d7_score))
-        d7_status = "优秀" if d7_score >= 90 else ("良好" if d7_score >= 75 else ("需整改" if d7_score >= 60 else "高危"))
-        dimensions.append(QualityDimensionScore(
-            dimension_name="7. 招标文件评分点对标度",
-            score=d7_score,
-            status=d7_status,
-            findings=d7_findings,
-            suggestions=d7_suggestions
-        ))
+            d7_score = round(rate * 100)
+            full = [c for c in coverage if c.status == "已覆盖"]
+            issues = sorted((c for c in coverage if c.status != "已覆盖"), key=lambda c: -(c.points or 0))
+            d7_findings = [f"按分值加权覆盖率 {d7_score}%：{len(full)}/{len(coverage)} 个评分项已完整覆盖"]
+            for c in issues[:5]:
+                detail = f"，缺：{'、'.join(c.missing_points[:4])}" if c.missing_points else ""
+                d7_findings.append(f"【{c.name}】{c.points:g}分 · {c.status}{detail}" if c.points is not None
+                                   else f"【{c.name}】{c.status}{detail}")
+            d7_suggestions = []
+            unmapped = [c.name for c in issues if c.status == "未承接"]
+            if unmapped:
+                d7_suggestions.append(f"为以下评分项新增或关联承接章节：{'、'.join(unmapped)}")
+            if any(c.status in ("未撰写", "篇幅不足", "要点缺失") for c in issues):
+                d7_suggestions.append("优先补写高分值评分项；章节标题与评分要点一一对应，便于评审专家找分")
+            dimensions.append(QualityDimensionScore(
+                dimension_name="7. 招标评分点覆盖度",
+                score=d7_score,
+                status=_status_of(d7_score),
+                findings=d7_findings,
+                suggestions=d7_suggestions,
+            ))
 
         # ---------------- 维度 8: 公文语言庄重度 (Official Formality) ----------------
         d8_score = 95
@@ -313,9 +335,31 @@ class EightDimensionQualityInspector:
             suggestions=d8_suggestions or ["保持严谨公文体裁"]
         ))
 
-        # 综合计算
-        overall_score = round(sum(d.score for d in dimensions) / len(dimensions))
+        # 无正文时，依赖正文的维度不给分（此前空标书也能拿到 80+ 分"乙级可投"）
+        if not has_content:
+            for d in dimensions:
+                if d.dimension_name.startswith(TEXT_DIMENSION_PREFIXES):
+                    d.score, d.status = None, NOT_CHECKED
+                    d.findings, d.suggestions = ["尚无正文内容，未进行该项检测"], []
+            high_risk_defects = []
+            detected_cliches = []
+
+        # 综合计算：仅对已检测维度取平均
+        scored = [d.score for d in dimensions if d.score is not None]
+        overall_score = round(sum(scored) / len(scored)) if scored else 0
         has_critical = len(high_risk_defects) > 0
+        coverage_note = f" 评分点覆盖率 {round(rate * 100)}%。" if rate is not None else ""
+
+        if not has_content:
+            return EightDimensionQualityReport(
+                overall_score=overall_score,
+                passed=False,
+                rating_level="未撰写",
+                dimensions=dimensions,
+                scoring_coverage=coverage,
+                scoring_coverage_rate=rate,
+                summary="标书尚无正文内容，仅完成大纲结构与评分点承接检查；撰写正文后再执行完整质检。" + coverage_note,
+            )
 
         if has_critical or overall_score < 60:
             rating = "高危废标风险"
@@ -334,6 +378,7 @@ class EightDimensionQualityInspector:
             f"本次八维质量体检综合评分为【{overall_score} 分】，标书评级为【{rating}】。"
             + (f" 发现 {len(high_risk_defects)} 项高危废标风险，必须整改！" if high_risk_defects else " 未发现实质性废标红线，整体技术方案完备、逻辑严谨。")
             + (f" 检测到 {len(detected_cliches)} 处典型 AI 套话，建议执行降AI味一键润色。" if detected_cliches else "")
+            + coverage_note
         )
 
         return EightDimensionQualityReport(
@@ -341,6 +386,8 @@ class EightDimensionQualityInspector:
             passed=passed,
             rating_level=rating,
             dimensions=dimensions,
+            scoring_coverage=coverage,
+            scoring_coverage_rate=rate,
             de_ai_detected_phrases=list(set(detected_cliches)),
             high_risk_defects=high_risk_defects,
             summary=summary_text
@@ -384,7 +431,7 @@ class EightDimensionQualityInspector:
                     f"技术栈【{facts.architecture_stack}】，数据库【{facts.database_selection}】\n\n"
                     f"【待二次精修的方案文本如下】：\n{stage1_text}"
                 )
-                polished = self.llm.chat_completion(system_prompt=POLISH_PROMPT, user_prompt=user_prompt)
+                polished = self.llm.chat_completion(system_prompt=POLISH_PROMPT, user_prompt=user_prompt, purpose="polish")
                 if polished and "方案设计思路与技术路线" not in polished:
                     improvements.append("通过大模型完成政企公文体裁升华与工程落地参数重构")
                     return PolishSectionResponse(

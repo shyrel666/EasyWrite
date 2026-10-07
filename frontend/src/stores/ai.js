@@ -8,7 +8,7 @@ export const useAiStore = defineStore('ai', {
     llmModel: '',
     embeddingAvailable: false,
     embeddingModel: '',
-    lastMode: 'mock',
+    lastMode: null,
   }),
   getters: {
     /** 离线演示模式：未配置 LLM 或最近一次调用走了模拟器 */

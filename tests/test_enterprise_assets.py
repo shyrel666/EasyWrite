@@ -7,9 +7,6 @@ sys.path.insert(0, str(BASE_DIR))
 from fastapi.testclient import TestClient
 from app.main import app
 from app.services.assets.asset_manager import asset_manager
-from app.models.schemas import (
-    CompanyQualification, PersonnelAsset, CaseContract, SolutionComponent
-)
 
 client = TestClient(app)
 
@@ -39,12 +36,12 @@ def test_asset_manager_standalone():
     assert team_match["type"] == "personnel"
     assert len(team_match["items"]) >= 2
     assert "拟任核心团队配置" in team_match["context_text"]
-    print(f"    章节资产智能关联测试通过: 识别出团队人员资产")
+    print("    章节资产智能关联测试通过: 识别出团队人员资产")
 
     qual_match = asset_manager.match_assets_for_section("1.3 投标人资质条件响应", ["CMMI认证", "涉密资质"])
     assert qual_match["type"] == "qualification"
     assert "已认证核心资质清单" in qual_match["context_text"]
-    print(f"    章节资产智能关联测试通过: 识别出企业资质资产")
+    print("    章节资产智能关联测试通过: 识别出企业资质资产")
 
 def test_asset_api_integration():
     print("\n[2] 接口集成测试：企业资产中台 RESTful 接口...")

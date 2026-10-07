@@ -10,10 +10,11 @@
 """
 import logging
 import re
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from app.core.llm_client import llm_client
 from app.models.schemas import TenderAnalysis18
+from app.services.parser.scoring_extractor import apply_to_analysis, extract_scoring_items
 
 logger = logging.getLogger("easywrite.tender")
 
@@ -23,9 +24,12 @@ TENDER_18_SYSTEM = """你是一名从业20年的政企招投标高级评审专�
 请仔细阅读招标文件内容，提取以下 18 项关键要素。
 
 【输出纪律】：
-1. 只依据文件原文提取，绝不推测或编造；文件未提及的字段一律填 "未提及"。
-2. "★"号条款、废标条款、重大负偏离条款逐条完整摘录原文，一条都不能遗漏；
-   摘录时保留条款原文表述（可截断至关键句），并保留★或▲标记。
+1. 只依据文件原文提取，绝不推测或编造；你看到的可能只是文件的一个片段，片段中没有的信息一律只填 "未提及" 四个字，不要附加任何解释。
+2. 招标文件常用 ★/※/▲ 等标记条款，并在文中定义其含义（如"※标注的…不满足按无效投标处理"、
+   "★标注的…不满足按评标因素扣分"），必须以文件自身的定义为准：
+   - star_disqualification_items：不满足即无效投标/废标的条款（实质性要求、废标条款），逐条摘录原文，一条都不能遗漏；
+   - important_items：不满足仅按评分办法扣分的重要条款，逐条摘录原文；
+   摘录时保留条款原文表述（可截断至关键句）与标记符号。
 3. 评分办法需提取：评标方法、价格/技术/商务三维分值与关键评分项名称。
 4. 只输出一个严格合法的 JSON 对象，禁止输出任何解释文字或 markdown 代码块。
 
@@ -43,7 +47,8 @@ TENDER_18_SYSTEM = """你是一名从业20年的政企招投标高级评审专�
   "price_score_weight": "价格分权重及说明",
   "tech_score_weight": "技术分权重及章节要点",
   "business_score_weight": "商务分权重",
-  "star_disqualification_items": ["★号条款原文1", "★号条款原文2"],
+  "star_disqualification_items": ["不满足即废标的条款原文1", "条款原文2"],
+  "important_items": ["不满足扣分的重要条款原文1"],
   "qualification_thresholds": ["资质门槛1", "资质门槛2"],
   "project_location": "实施地点",
   "payment_milestones": "付款条件与比例",
@@ -54,12 +59,105 @@ TENDER_18_SYSTEM = """你是一名从业20年的政企招投标高级评审专�
 # 分段参数：单段 ~12000 字（DeepSeek 64K token 上下文富余），段落对齐
 SEGMENT_CHAR_LIMIT = 12000
 
+# 大模型可写入的字段（评分细则/标记定义等由确定性规则产出，不接受模型输出）
+LLM_FIELDS = set(TenderAnalysis18.model_fields) - {
+    "scoring_items", "scoring_note", "target_package", "marker_legend", "extraction_mode", "extraction_note",
+}
+
+# 条款标记：含义以招标文件自身的说明句为准（☆△# 只在文件定义了含义时才起作用）
+CLAUSE_MARKERS = "★※▲◆☆△#"
+INVALID_RE = re.compile(r"无效投标|无效响应|投标无效|废标|否决|实质性|投标被拒绝|拒绝其投标|不通过符合性审查")
+DEDUCT_RE = re.compile(r"评标因素|评分|扣分|扣除|酌情|重要")
+# 「不作为认定无效投标的依据」之类的否定说明不算废标
+NEGATED_INVALID = re.compile(r"不(?:作为|属于|视为|构成|按)[^，。；;]{0,12}(?:无效|废标|实质|否决)[^，。；;]*")
+# 规则抽取的字段值里出现下一个字段标签时截断（PDF 同一行并排的两个字段被合成一行）
+NEXT_FIELD = re.compile(
+    r"(?<=\S)\s*(?=(?:项目编号|招标编号|采购编号|项目名称|预算金额|最高限价"
+    r"|(?:采购人|采购单位|招标人|采购代理机构|代理机构)(?:名称|地址|联系人|联系电话|联系方式|电话|邮箱)?"
+    r"|联系人|联系电话|联系方式|地\s*址)\s*[:：])"
+)
+_OPEN_Q, _CLOSE_Q =r"[“\"「‘'（(]?\s*", r"\s*[”\"」’'）)]?"
+# 定义句中的标记：「“※”标注的」「★代表」「★表示」「凡标有★条款」「标“★”号项」
+LEGEND_MARK = re.compile(
+    r"(?:(?:标有|标注有|带有|打有|凡标)\s*" + _OPEN_Q + r"|标\s*[“\"「‘'（(]\s*)([" + CLAUSE_MARKERS + "])" + _CLOSE_Q
+    + r"|" + _OPEN_Q + "([" + CLAUSE_MARKERS + "])" + _CLOSE_Q + r"\s*(?:号|符号)?\s*的?\s*(?:标注|标识|标记|代表|表示)"
+)
+
+
+def coerce_llm_fields(data: dict) -> dict:
+    """
+    把模型输出规整为 TenderAnalysis18 可接受的类型：数字/列表/对象转字符串、字符串转列表；
+    「未提及（本片段仅…）」之类带解释的哨兵值归一为「未提及」。单个字段类型不对不应丢掉整段结果。
+    """
+    out = {}
+    for key, value in data.items():
+        if key not in LLM_FIELDS or value is None:
+            continue
+        expects_list = TenderAnalysis18.model_fields[key].annotation in (List[str], list)
+        if expects_list:
+            if isinstance(value, str):
+                value = [value] if value.strip() and not value.strip().startswith(NOT_MENTIONED) else []
+            elif isinstance(value, list):
+                value = [str(v).strip() for v in value
+                         if str(v).strip() and not str(v).strip().startswith(NOT_MENTIONED)]
+            else:
+                continue
+        else:
+            if isinstance(value, list):
+                value = "；".join(str(v) for v in value)
+            elif isinstance(value, dict):
+                value = "；".join(f"{k}：{v}" for k, v in value.items())
+            value = str(value).strip()
+            if value.startswith(NOT_MENTIONED):
+                value = NOT_MENTIONED
+        out[key] = value
+    return out
+
+
+def marker_semantics(text: str) -> Dict[str, Tuple[str, str]]:
+    """
+    解析标记定义句：「“※”标注的…为符合性审查中的实质性要求，若不满足按无效投标处理」→ {"※": ("invalid", 原句)}；
+    「“★”标注的…若不满足将按照评标因素中相关规定处理」→ {"★": ("deduct", 原句)}。
+    文件未定义时按国内通行惯例：★ 视为实质性条款（invalid），▲ 视为重要条款（deduct）。
+    """
+    found: Dict[str, Tuple[str, str]] = {}
+    for line in (text or "").split("\n"):
+        # 一句里可能依次定义多个标记（「★代表实质性指标…，☆代表优质优价指标，#代表重要指标」），逐段判断
+        marks = list(LEGEND_MARK.finditer(line))
+        for k, m in enumerate(marks):
+            marker = m.group(1) or m.group(2)
+            if marker in found:
+                continue
+            clause = line[m.start():marks[k + 1].start() if k + 1 < len(marks) else len(line)]
+            sentence = line.strip()[:120] if len(marks) == 1 else clause.strip(" ，,；;")[:120]
+            plain = NEGATED_INVALID.sub("", clause)
+            if INVALID_RE.search(plain):
+                found[marker] = ("invalid", sentence)
+            elif DEDUCT_RE.search(plain):
+                found[marker] = ("deduct", sentence)
+    found.setdefault("★", ("invalid", ""))
+    found.setdefault("▲", ("deduct", ""))
+    return found
+
+
+def is_marker_reference(line: str) -> bool:
+    """标记定义句（「※标注的…」「★代表…」「凡标有★的条款…」）或「（※）号标注的部分」这类引用说明本身不是条款"""
+    return "标注" in line or bool(LEGEND_MARK.search(line))
+
 
 class TenderAnalyzer:
     def __init__(self):
         self.llm = llm_client
 
     # ---------------- 对外入口 ----------------
+
+    def analyze_document(self, parsed: dict, filename_hint: str = "") -> TenderAnalysis18:
+        """
+        解析后的 .docx 招标文件：全文走 18 项抽取，评分表走确定性结构化抽取。
+        parsed 为 WordDocumentParser.parse_docx() 的返回值。
+        """
+        analysis = self.analyze_text(parsed.get("full_text", ""), filename_hint=filename_hint)
+        return apply_to_analysis(analysis, extract_scoring_items(parsed.get("tables", [])))
 
     def analyze_text(self, tender_text: str, filename_hint: str = "") -> TenderAnalysis18:
         """
@@ -102,10 +200,11 @@ class TenderAnalyzer:
                 system_prompt=TENDER_18_SYSTEM,
                 user_prompt=f"【招标文件正文片段 {i + 1}/{len(segments)}】：\n{seg}",
                 temperature=0.1,
+                purpose="tender_extract",
             )
             if isinstance(data, dict):
                 try:
-                    results.append(TenderAnalysis18(**{k: v for k, v in data.items() if k in TenderAnalysis18.model_fields()}))
+                    results.append(TenderAnalysis18(**coerce_llm_fields(data)))
                 except Exception as e:
                     logger.warning("分段 %d 结构化解析失败: %s", i + 1, e)
         if not results:
@@ -133,9 +232,7 @@ class TenderAnalyzer:
     def _merge_results(results: List[TenderAnalysis18]) -> TenderAnalysis18:
         """多段合并：字符串字段取首个非哨兵值，列表字段去重并集，★条款优先保留"""
         merged = TenderAnalysis18()
-        for field in TenderAnalysis18.model_fields():
-            if field in ("extraction_mode", "extraction_note"):
-                continue
+        for field in LLM_FIELDS:
             values = [getattr(r, field) for r in results]
             if isinstance(values[0], list):
                 seen, combined = set(), []
@@ -164,23 +261,54 @@ class TenderAnalyzer:
             if key and key not in existing_stars:
                 target.star_disqualification_items.append(s)
                 existing_stars.add(key)
+        # 模型常把标记定义句本身（「本篇“※”标注的…」）当成条款摘录，剔除
+        target.star_disqualification_items = [s for s in target.star_disqualification_items if not is_marker_reference(s)]
+        target.important_items = [s for s in target.important_items if not is_marker_reference(s)]
+        existing_important = {re.sub(r"\s+", "", s)[:60] for s in (target.important_items or [])}
+        for s in rules.important_items or []:
+            key = re.sub(r"\s+", "", s)[:60]
+            if key and key not in existing_important and key not in existing_stars:
+                target.important_items.append(s)
+                existing_important.add(key)
         # 空列表字段用规则结果填充（规则未命中则为空，保持诚实）
         for field in ("star_disqualification_items", "qualification_thresholds"):
             if not getattr(target, field) and getattr(rules, field):
                 setattr(target, field, getattr(rules, field))
+        target.marker_legend = rules.marker_legend
+        # 模型没给出（空/未提及）而规则命中的单值字段用规则结果补齐（如项目名称、截止时间）
+        for field in LLM_FIELDS:
+            value = getattr(target, field)
+            rule_value = getattr(rules, field)
+            if isinstance(value, str) and (not value.strip() or value.strip() == NOT_MENTIONED) \
+                    and isinstance(rule_value, str) and rule_value.strip():
+                setattr(target, field, rule_value)
 
     # ---------------- 规则抽取（只提取，不编造） ----------------
 
     def _rule_based_extract(self, text: str) -> TenderAnalysis18:
         a = TenderAnalysis18()
 
-        def take(pattern: str, flags: int = 0) -> Optional[str]:
-            m = re.search(pattern, text, flags)
-            return m.group(1).strip() if m else None
+        def take(*patterns: str) -> Optional[str]:
+            """
+            按顺序取第一个像样的命中：表格行拼接片段（含 |）与只有标签的残值（如「包1：」）宁可留空；
+            同一行并排的下一个字段（PDF 中「项目名称：XX项目编号：YY」）截掉
+            """
+            for pattern in patterns:
+                for m in re.finditer(pattern, text):
+                    value = NEXT_FIELD.split(m.group(1).strip(), maxsplit=1)[0].strip()
+                    if "|" in value or len(value) < 2 or value[-1] in "：:" or re.fullmatch(r"[（(][^）)]*[）)]", value):
+                        continue
+                    return value
+            return None
 
         a.project_name = take(r"(?:项目名称|招标项目名称)[:：\s]+([^\n\r，。；]+)") or ""
         a.tender_number = take(r"(?:项目编号|招标编号|采购编号|标段编号)[:：\s]+([A-Za-z0-9\-_（）()\[\]]+)") or ""
-        a.purchaser_name = take(r"(?:采购人|招标人|采购单位)[:：\s]+([^\n\r，。；]+)") or ""
+        # 只认冒号、表格分隔（「采购人名称 | XX」）与「采购人信息 / 名称：XX」：「采购人 承担连带责任」是正文
+        a.purchaser_name = take(
+            r"(?:采购人|招标人|采购单位)(?:名称)?\s*[:：]\s*([^\n\r，。；|]+)",
+            r"(?:采购人|招标人|采购单位)(?:名称)?\s*\|\s*([^\n\r，。；|]+)",
+            r"采购人信息\s*\n\s*名\s*称\s*[:：]\s*([^\n\r，。；|]+)",
+        ) or ""
         a.budget_limit = take(r"(?:最高限价|预算金额|控制价|项目预算|采购预算)[:：\s]+([^\n\r，。；]+)") or ""
         a.duration_requirement = take(r"(?:工期要求|工期|交货期|交付期|服务期|实施周期|建设期)[:：\s]+([^\n\r。；]+)") or ""
         a.warranty_period = take(r"(?:质保期|售后服务期|保修期|免费维护期)[:：\s]+([^\n\r。；]+)") or ""
@@ -198,13 +326,8 @@ class TenderAnalyzer:
         if "踏勘" in text:
             a.site_survey_rules = "招标文件包含现场踏勘相关条款（详见原文）"
 
-        # ★号条款：逐行摘录原文（关键红线，宁多勿漏）
-        stars = []
-        for line in text.split("\n"):
-            line = line.strip()
-            if ("★" in line or line.startswith("▲")) and 4 < len(line) < 200:
-                stars.append(line)
-        a.star_disqualification_items = stars[:20]
+        # 标记条款：按文件对 ★/※/▲ 的定义区分废标红线与扣分重要条款（宁多勿漏）
+        a.star_disqualification_items, a.important_items, a.marker_legend = self._rule_marked_clauses(text)
 
         # 资质门槛：仅在原文出现关键词时记录
         quals = []
@@ -214,6 +337,25 @@ class TenderAnalyzer:
         a.qualification_thresholds = quals
 
         return a
+
+    @staticmethod
+    def _rule_marked_clauses(text: str) -> Tuple[List[str], List[str], Dict[str, str]]:
+        """按文件定义的标记含义拆分（废标红线, 重要扣分条款, 标记定义）"""
+        semantics = marker_semantics(text)
+        invalid = {m for m, (level, _) in semantics.items() if level == "invalid"}
+        deduct = {m for m, (level, _) in semantics.items() if level == "deduct"}
+        stars, important = [], []
+        for line in text.split("\n"):
+            line = line.strip()
+            if not (4 < len(line) < 200) or is_marker_reference(line):
+                continue
+            marks = {c for c in line if c in CLAUSE_MARKERS}
+            if marks & invalid:
+                stars.append(line)
+            elif marks & deduct:
+                important.append(line)
+        legend = {m: sentence for m, (_, sentence) in semantics.items() if sentence}
+        return stars[:40], important[:60], legend
 
 
 tender_analyzer = TenderAnalyzer()

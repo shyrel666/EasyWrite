@@ -1,0 +1,6 @@
+/start.bat text eol=crlf
+/start.sh text eol=lf
+/scripts/uv-downloads.txt text eol=lf
+
+# Bundled third-party templates may contain intentional trailing whitespace.
+/backend/app/static/assets/** -whitespace

@@ -67,7 +67,7 @@ def curate_document(doc_id: str, progress=None) -> int:
     user_prompt = f"文档名：{doc_name}\n\n文本块集合：\n{block_listing}"
 
     items: List[Dict] = []
-    first = llm_client.chat_completion_structured(_EXTRACT_SYSTEM, user_prompt, temperature=0.2)
+    first = llm_client.chat_completion_structured(_EXTRACT_SYSTEM, user_prompt, temperature=0.2, purpose="kb_curate")
     if isinstance(first, dict) and isinstance(first.get("items"), list):
         items.extend(i for i in first["items"] if isinstance(i, dict) and i.get("title"))
 
@@ -77,6 +77,7 @@ def curate_document(doc_id: str, progress=None) -> int:
         _SUPPLEMENT_SYSTEM,
         f"文档名：{doc_name}\n\n第一轮已提取条目：\n{titles}\n\n文本块集合：\n{block_listing}",
         temperature=0.2,
+        purpose="kb_curate",
     )
     if isinstance(second, dict) and isinstance(second.get("items"), list):
         items.extend(i for i in second["items"] if isinstance(i, dict) and i.get("title"))

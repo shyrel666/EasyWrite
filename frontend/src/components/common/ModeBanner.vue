@@ -9,17 +9,15 @@ const router = useRouter()
 <template>
   <div
     v-if="ai.loaded && ai.isMockMode"
-    class="w-full bg-amber-100 border-b border-amber-300 text-amber-900 text-xs sm:text-sm px-3 sm:px-4 py-1.5 flex items-center justify-center gap-2 flex-wrap"
+    class="shrink-0 border-b border-warn/25 bg-warn/[0.08] text-ink text-xs px-4 py-2 flex items-center justify-center gap-x-3 gap-y-1 flex-wrap"
   >
-    <el-icon class="text-amber-600"><WarningFilled /></el-icon>
-    <span>
-      当前为<b>离线演示模式</b>：未配置大模型 API Key，生成内容为内置演示样例（不代表真实 AI 输出）。
+    <span class="inline-flex items-center gap-1.5 font-semibold text-warn">
+      <el-icon><WarningFilled /></el-icon>{{ ai.llmConfigured ? '上次生成已回退到演示模式' : '离线演示模式' }}
     </span>
-    <button
-      class="underline font-medium hover:text-amber-700 whitespace-nowrap"
-      @click="router.push('/settings')"
-    >
-      前往配置 →
+    <span class="text-ink-2 hidden sm:inline">{{ ai.llmConfigured ? '模型已配置，但上次生成未获得真实输出。请测试连通性后重试。' : '未配置大模型 API Key，生成内容为内置演示样例，不代表真实 AI 输出。' }}</span>
+    <span class="text-ink-2 sm:hidden">{{ ai.llmConfigured ? '上次生成内容为演示样例' : '生成内容为演示样例' }}</span>
+    <button class="font-medium text-accent-fg hover:underline underline-offset-2 whitespace-nowrap" @click="router.push('/settings')">
+      {{ ai.llmConfigured ? '检查模型配置 →' : '前往配置 →' }}
     </button>
   </div>
 </template>

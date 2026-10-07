@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '@/api/client'
 import { useProjectStore } from '@/stores/project'
@@ -8,7 +8,7 @@ const props = defineProps({
   node: { type: Object, default: null },
   projectId: { type: String, required: true },
 })
-const emit = defineEmits(['refs-changed'])
+const emit = defineEmits(['refs-changed', 'close'])
 
 const store = useProjectStore()
 const activeTab = ref('refs')
@@ -22,6 +22,8 @@ function open(node) {
 }
 
 defineExpose({ open })
+// 面板可能在项目加载后才打开（窄屏默认收起），挂载时自行载入全局事实
+onMounted(open)
 
 async function saveFacts() {
   savingFacts.value = true
@@ -85,10 +87,10 @@ async function exclude(refItem) {
 function scoreLabel(refItem) {
   if (refItem.rerank_score != null) {
     const s = refItem.rerank_score
-    const cls = s >= 8 ? 'bg-emerald-100 text-emerald-700' : s >= 6 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'
-    return { text: `重排 ${s}分`, cls }
+    const cls = s >= 8 ? 'chip-ok' : s >= 6 ? 'chip-warn' : 'chip-mute'
+    return { text: `重排 ${s}`, cls }
   }
-  return { text: '召回', cls: 'bg-slate-100 text-slate-500' }
+  return { text: '召回', cls: 'chip-mute' }
 }
 
 function saveInstruction() {
@@ -102,102 +104,109 @@ function saveInstruction() {
 </script>
 
 <template>
-  <div class="h-full flex flex-col bg-white">
-    <!-- 子标签 -->
-    <div class="flex border-b border-slate-200 shrink-0 text-sm">
-      <button
-        v-for="t in [
-          { k: 'refs', l: `知识参考 ${node?.last_refs?.length ? `(${node.last_refs.length})` : ''}` },
-          { k: 'facts', l: '全局事实' },
-          { k: 'instr', l: '专家意见' },
-        ]"
-        :key="t.k"
-        class="flex-1 py-2 text-center border-b-2 transition"
-        :class="activeTab === t.k ? 'border-blue-500 text-blue-600 font-medium' : 'border-transparent text-slate-500'"
-        @click="activeTab = t.k"
-      >
-        {{ t.l }}
-      </button>
+  <div class="h-full flex flex-col bg-surface">
+    <div class="shrink-0 h-14 flex items-center gap-2 px-3 border-b border-line">
+      <div class="seg flex-1">
+        <button
+          v-for="t in [
+            { k: 'refs', l: '知识参考', n: node?.last_refs?.length || 0 },
+            { k: 'facts', l: '全局事实' },
+            { k: 'instr', l: '写作意见' },
+          ]"
+          :key="t.k"
+          class="seg-item flex-1"
+          :class="{ 'is-active': activeTab === t.k }"
+          @click="activeTab = t.k"
+        >
+          {{ t.l }}<span v-if="t.n" class="ml-1 text-ink-3 num">{{ t.n }}</span>
+        </button>
+      </div>
+      <button class="icon-btn shrink-0" title="收起" @click="emit('close')"><el-icon><Close /></el-icon></button>
     </div>
 
     <div class="flex-1 overflow-auto p-3 space-y-2.5">
       <!-- 引用溯源 -->
       <template v-if="activeTab === 'refs'">
-        <div v-if="!node?.last_refs?.length" class="text-xs text-slate-400 py-8 text-center leading-relaxed">
-          撰写章节后将在此展示知识库检索到的历史参考<br />
-          可【锁定】优先注入或【排除】不再使用
+        <div v-if="!node?.last_refs?.length" class="text-xs text-ink-3 py-12 px-4 text-center leading-relaxed">
+          <el-icon :size="22" class="text-line-strong mb-2"><Collection /></el-icon>
+          <p>撰写本节后，这里会列出知识库检索命中的历史参考。</p>
+          <p class="mt-1">可以「锁定」优先注入，或「排除」不再使用。</p>
         </div>
-        <div
+        <article
           v-for="refItem in node?.last_refs || []"
           :key="refItem.chunk_id"
-          class="border border-slate-200 rounded-lg p-2.5 text-xs hover:border-blue-300 transition"
-          :class="isExcluded(refItem) ? 'opacity-40' : ''"
+          class="rounded-lg border p-3 text-xs transition"
+          :class="[
+            isPinned(refItem) ? 'border-accent/50 bg-accent-soft/40' : 'border-line hover:border-line-strong',
+            isExcluded(refItem) ? 'opacity-45' : '',
+          ]"
         >
-          <div class="flex items-center justify-between gap-2 mb-1">
-            <span class="font-medium text-slate-700 truncate flex-1">{{ refItem.section_title || refItem.breadcrumb }}</span>
-            <span class="px-1.5 py-0.5 rounded text-[10px] shrink-0" :class="scoreLabel(refItem).cls">
-              {{ scoreLabel(refItem).text }}
-            </span>
+          <div class="flex items-start justify-between gap-2">
+            <p class="font-medium text-ink leading-snug line-clamp-2 flex-1">{{ refItem.section_title || refItem.breadcrumb }}</p>
+            <span class="chip shrink-0" :class="scoreLabel(refItem).cls">{{ scoreLabel(refItem).text }}</span>
           </div>
-          <p class="text-slate-400 truncate mb-1.5">{{ refItem.doc_name }} / {{ refItem.breadcrumb }}</p>
-          <p class="text-slate-600 leading-relaxed line-clamp-3">{{ refItem.content }}</p>
-          <div v-if="refItem.rerank_reason" class="text-[11px] text-blue-500 mt-1">评审：{{ refItem.rerank_reason }}</div>
-          <div class="flex gap-2 mt-2">
+          <p class="text-2xs text-ink-3 truncate mt-1" :title="`${refItem.doc_name} / ${refItem.breadcrumb}`">
+            {{ refItem.doc_name }} / {{ refItem.breadcrumb }}
+          </p>
+          <p class="text-ink-2 leading-relaxed line-clamp-4 mt-2">{{ refItem.content }}</p>
+          <p v-if="refItem.rerank_reason" class="text-2xs text-accent-fg mt-2 leading-relaxed">评审：{{ refItem.rerank_reason }}</p>
+          <div class="flex items-center gap-1 mt-2.5 -mb-0.5">
             <el-button
               size="small"
               :type="isPinned(refItem) ? 'primary' : 'default'"
               :plain="!isPinned(refItem)"
               @click="togglePin(refItem)"
             >
-              {{ isPinned(refItem) ? '✓ 已锁定' : '锁定' }}
+              <el-icon class="mr-1"><Paperclip /></el-icon>{{ isPinned(refItem) ? '已锁定' : '锁定' }}
             </el-button>
-            <el-button v-if="!isExcluded(refItem)" size="small" text type="danger" @click="exclude(refItem)">排除</el-button>
+            <el-button v-if="!isExcluded(refItem)" size="small" text @click="exclude(refItem)">排除</el-button>
+            <span v-else class="text-2xs text-ink-3 ml-1">已排除</span>
           </div>
-        </div>
+        </article>
       </template>
 
       <!-- 全局事实 -->
       <template v-else-if="activeTab === 'facts'">
-        <div v-if="factsDraft" class="space-y-2.5 text-sm">
+        <div v-if="factsDraft" class="space-y-3 text-sm p-1">
+          <p class="note note-info">
+            <el-icon class="mt-0.5 text-accent-fg shrink-0"><Lock /></el-icon>
+            <span>作为只读硬约束注入每次生成，保证全书公司名、产品与技术路线前后一致。留空即不编造。</span>
+          </p>
           <div v-for="f in [
             { k: 'company_name', l: '投标企业全称' },
-            { k: 'core_product_name', l: '核心产品/平台' },
+            { k: 'core_product_name', l: '核心产品 / 平台' },
             { k: 'architecture_stack', l: '技术架构路线' },
             { k: 'database_selection', l: '数据库底座' },
             { k: 'sla_commitment', l: 'SLA 售后承诺' },
             { k: 'delivery_guarantee', l: '工期交付承诺' },
           ]" :key="f.k">
-            <label class="text-xs text-slate-500 block mb-0.5">{{ f.l }}</label>
-            <el-input v-model="factsDraft[f.k]" size="small" placeholder="留空 = 不编造" />
+            <label class="field-label">{{ f.l }}</label>
+            <el-input v-model="factsDraft[f.k]" placeholder="留空 = 不编造" />
           </div>
           <div>
-            <label class="text-xs text-slate-500 block mb-0.5">未提及事实的完备纪律</label>
-            <el-select v-model="factsDraft.fact_completeness_mode" size="small" class="w-full">
+            <label class="field-label">未提及事实的处理</label>
+            <el-select v-model="factsDraft.fact_completeness_mode" class="w-full">
               <el-option label="【待填写】占位" value="placeholder" />
-              <el-option label="保持模糊" value="omit" />
+              <el-option label="保持模糊表述" value="omit" />
             </el-select>
           </div>
-          <el-button type="primary" size="small" class="w-full" :loading="savingFacts" @click="saveFacts">
-            保存全局事实
-          </el-button>
-          <p class="text-[11px] text-slate-400 leading-relaxed">
-            全局事实作为只读硬约束注入每次生成，确保全书公司名、产品、技术路线前后一致。
-          </p>
+          <el-button type="primary" class="w-full" :loading="savingFacts" @click="saveFacts">保存全局事实</el-button>
         </div>
       </template>
 
-      <!-- 专家意见 -->
+      <!-- 写作意见 -->
       <template v-else>
-        <el-input
-          :model-value="instruction"
-          type="textarea"
-          :rows="6"
-          placeholder="补充本章节的特殊写作要求，如：重点强调国产化适配、提供详细的验收测试用例、控制篇幅不超过3000字等"
-          @input="instruction = $event; saveInstruction()"
-        />
-        <p class="text-[11px] text-slate-400 leading-relaxed">
-          专家意见将作为本章节的额外指导注入生成提示词。意见内容随项目保存在章节 requirements 中。
-        </p>
+        <div class="p-1 space-y-2">
+          <label class="field-label">本节额外的写作要求</label>
+          <el-input
+            :model-value="instruction"
+            type="textarea"
+            :rows="8"
+            placeholder="如：重点强调国产化适配；给出详细的验收测试用例；篇幅控制在 3000 字以内"
+            @input="instruction = $event; saveInstruction()"
+          />
+          <p class="hint">意见作为本节的额外指导注入生成提示词，随项目保存在章节要求中。</p>
+        </div>
       </template>
     </div>
   </div>

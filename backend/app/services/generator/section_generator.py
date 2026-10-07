@@ -9,6 +9,8 @@
 4. 领域专家 System Prompt 按章节主题自动装配（保留）
 5. SSE 流式走 AsyncOpenAI，不阻塞事件循环
 """
+import asyncio
+import re
 import logging
 from typing import Dict, Any, List, Optional, AsyncGenerator
 
@@ -27,7 +29,7 @@ SYSTEM_BID_WRITER_PROMPT = """你是一名拥有15年政企信息化与软件工
 2. 【杜绝空话套话】：严禁车轱辘话与AI味连接词（"综上所述""不难看出""值得一提的是"），方案必须包含具体的架构分层、模块划分、技术选型、设计模式或行业标准编号。
 3. 【点对点响应】：严格点对点响应招标要求，特别是带"★"号的关键条款，必须在正文中给出清晰、明确的承接论述。
 4. 【图文结合】：如果本节涉及系统架构、技术路线、业务流程或数据流向，请用标准 ```mermaid 语法绘制一张高清晰度架构图或流转图。
-5. 【公文排版规范】：结构清晰，逻辑严密，多采用"1.1.1"、"1.1.2"或"（1）"、"（2）"的条目化论述；不输出大标题（标题由大纲体系承担）。
+5. 【公文排版规范】：结构清晰，逻辑严密，多采用"1.1.1"、"1.1.2"或"（1）"、"（2）"的条目化论述；不要输出本节标题（标题由大纲体系承担），直接从正文开始；正文内的小标题用加粗的"**1.1.1 xxx**"形式，不使用 # 号标题。
 6. 【参考资料纪律】：如提供了历史标书参考资料，只吸收其思路与参数并改写融入本项目语境，严禁整段照抄，正文中绝不出现"知识库""参考资料"等来源字样。
 """
 
@@ -39,13 +41,33 @@ CHAPTER_SPECIALIZED_PROMPTS = {
 
 
 def _select_system_prompt(section_title: str) -> str:
+    """专项角色提示叠加在通用红线规则之上（不能替换掉全局事实/禁套话/不出标题等规则）"""
+    specialized = None
     if any(kw in section_title for kw in ["架构", "拓扑", "技术路线", "信创", "高可用"]):
-        return CHAPTER_SPECIALIZED_PROMPTS["arch"]
-    if any(kw in section_title for kw in ["团队", "人员", "组织架构", "资质", "配置"]):
-        return CHAPTER_SPECIALIZED_PROMPTS["team"]
-    if any(kw in section_title for kw in ["售后", "运维", "SLA", "巡检", "维保", "培训"]):
-        return CHAPTER_SPECIALIZED_PROMPTS["maintenance"]
-    return SYSTEM_BID_WRITER_PROMPT
+        specialized = CHAPTER_SPECIALIZED_PROMPTS["arch"]
+    elif any(kw in section_title for kw in ["团队", "人员", "组织架构", "资质", "配置"]):
+        specialized = CHAPTER_SPECIALIZED_PROMPTS["team"]
+    elif any(kw in section_title for kw in ["售后", "运维", "SLA", "巡检", "维保", "培训"]):
+        specialized = CHAPTER_SPECIALIZED_PROMPTS["maintenance"]
+    return f"{SYSTEM_BID_WRITER_PROMPT}\n【本章专项要求】：{specialized}" if specialized else SYSTEM_BID_WRITER_PROMPT
+
+
+def _title_core(text: str) -> str:
+    text = re.sub(r"[#*\s]", "", text or "")
+    return re.sub(r"^(?:第[一二三四五六七八九十百\d]+[章节篇]|[\d.]+|[一二三四五六七八九十]+[、.．])", "", text)
+
+
+def strip_title_heading(content: str, section_title: str) -> str:
+    """模型常把本节标题当首行标题重复输出（导出 Word 会出现两次）：去掉与章节标题相同的开头标题行"""
+    body = (content or "").lstrip("\n")
+    first, _, rest = body.partition("\n")
+    m = re.match(r"^\s*(?:#{1,6}\s*(.+)|\*\*(.+)\*\*)\s*$", first)
+    if not m:
+        return content
+    heading, title = _title_core(m.group(1) or m.group(2)), _title_core(section_title)
+    if heading and title and (heading == title or title in heading):
+        return rest.lstrip("\n")
+    return content
 
 
 def _sibling_context(outline: List[OutlineNode], section_id: str, max_siblings: int = 3) -> str:
@@ -176,9 +198,9 @@ class SectionGenerator:
     def draft_section(self, **kwargs) -> Dict[str, Any]:
         """同步完整生成（后台批量任务使用）"""
         built = self.build_prompts(**kwargs)
-        content = self.llm.chat_completion(system_prompt=built["system"], user_prompt=built["user"])
+        content = self.llm.chat_completion(system_prompt=built["system"], user_prompt=built["user"], purpose="section_write")
         return {
-            "generated_content": content,
+            "generated_content": strip_title_heading(content, kwargs.get("section_title", "")),
             "references": built["refs"],
             "retrieval_message": built["retrieval_message"],
             "mode": self.llm.get_mode(),
@@ -188,14 +210,15 @@ class SectionGenerator:
         """
         异步流式生成：先 yield 检索元数据（引用面板即时可见），再逐 token yield。
         """
-        built = self.build_prompts(**kwargs)
+        # 检索 + LLM 重排是同步阻塞调用，放到线程中执行，避免卡住事件循环（期间的自动保存等请求）
+        built = await asyncio.to_thread(self.build_prompts, **kwargs)
         yield {
             "refs": built["refs"],
             "retrieval_message": built["retrieval_message"],
             "mode": self.llm.get_mode(),
         }
         async for token in self.llm.chat_completion_stream_async(
-            system_prompt=built["system"], user_prompt=built["user"]
+            system_prompt=built["system"], user_prompt=built["user"], purpose="section_write"
         ):
             yield {"token": token}
 

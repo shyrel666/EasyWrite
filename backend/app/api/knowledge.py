@@ -1,26 +1,25 @@
 """知识库路由：入库（后台任务）/ 文档管理 / 混合检索 / 条目策展"""
 import logging
-import uuid
-from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Body
+from fastapi import APIRouter, HTTPException, UploadFile, File
 
-from app.core.config import settings
 from app.core.task_manager import task_manager
 from app.models.schemas import KnowledgeQueryRequest
 from app.services.rag.indexer import knowledge_index
 from app.services.rag.retriever import retrieval_service
 from app.services.rag import curator
 from app.services.rag.ingestor import ingest_document_task
+from app.services.parser.document_parser import unsupported_reason
 
 logger = logging.getLogger("easywrite.api.knowledge")
 router = APIRouter(prefix="/knowledge", tags=["知识库"])
 
 
-@router.post("/upload", summary="上传历史标书/方案并后台入库（分块+索引+可选策展）")
+@router.post("/upload", summary="上传历史标书/方案（.docx / .pdf）并后台入库（分块+索引+可选策展）")
 async def upload_historical_bid(file: UploadFile = File(...), curate: bool = True):
-    if not file.filename or not file.filename.lower().endswith(".docx"):
-        raise HTTPException(status_code=400, detail="目前仅支持上传 .docx 格式文档")
+    reason = unsupported_reason(file.filename)
+    if reason:
+        raise HTTPException(status_code=400, detail=reason)
 
     content = await file.read()
     task_id = task_manager.submit(

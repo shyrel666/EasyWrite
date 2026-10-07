@@ -1,8 +1,9 @@
 """AI 模型与嵌入配置路由"""
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Body
 
+from app.core import llm_usage
 from app.core.ai_settings_manager import ai_settings_manager
 from app.core.llm_client import llm_client
 from app.core.embedding_client import embedding_client
@@ -62,3 +63,8 @@ def ai_status():
         "embedding_available": embedding_client.is_available,
         "embedding_model": embedding_client.model if embedding_client.is_available else "",
     }
+
+
+@router.get("/usage", summary="模型调用记录汇总：次数、用量、耗时（按用途/模型/日期），可按项目筛选")
+def llm_usage_summary(days: int = 7, project_id: Optional[str] = None, recent: int = 30):
+    return llm_usage.summarize(days=max(1, min(days, 180)), project_id=project_id, recent_limit=max(0, min(recent, 200)))

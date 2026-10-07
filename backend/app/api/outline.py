@@ -4,7 +4,6 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Body
 
-from app.models.schemas import GlobalFacts
 from app.services.project_store import project_store
 from app.services.generator.outline_generator import outline_generator
 
@@ -49,9 +48,11 @@ def expand_outline(
         total_word_budget=total_word_budget,
     )
 
-    project.outline = result["outline"]
-    if project.stage in ("created", "tender_analyzed"):
-        project.stage = "outline_confirmed"
-    project_store.save(project)
+    def mutate(latest) -> str:
+        latest.outline = result["outline"]
+        if latest.stage in ("created", "tender_analyzed"):
+            latest.stage = "outline_confirmed"
+        return latest.stage
 
-    return {"status": "success", "outline": result["outline"], "mode": result["mode"], "message": result["message"], "stage": project.stage}
+    stage = project_store.update(project_id, mutate)
+    return {"status": "success", "outline": result["outline"], "mode": result["mode"], "message": result["message"], "stage": stage}

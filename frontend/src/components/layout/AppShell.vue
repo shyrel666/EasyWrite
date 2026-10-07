@@ -1,183 +1,331 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAiStore } from '@/stores/ai'
+import { useProjectStore } from '@/stores/project'
+import { useTaskStore } from '@/stores/tasks'
 import { ElMessage } from 'element-plus'
+import api from '@/api/client'
+import TaskCenter from '@/components/layout/TaskCenter.vue'
+import ModeBanner from '@/components/common/ModeBanner.vue'
+import BrandMark from '@/components/common/BrandMark.vue'
+import { STAGES, stageIndex, stageLabel } from '@/utils/project'
+import { cycleTheme, themePref } from '@/utils/theme'
 
 const props = defineProps({
   projectId: { type: String, default: '' },
   projectName: { type: String, default: '' },
   active: { type: String, default: '' },
   exportEnabled: { type: Boolean, default: false },
+  // 内容区撑满视口、自行管理滚动（编纂台三栏布局）
+  fill: { type: Boolean, default: false },
 })
 
 const route = useRoute()
 const router = useRouter()
 const ai = useAiStore()
+const projectStore = useProjectStore()
+const taskStore = useTaskStore()
 
 const globalNav = [
-  { name: 'dashboard', path: '/', label: '工作台' },
-  { name: 'knowledge', path: '/knowledge', label: '知识库' },
-  { name: 'assets', path: '/assets', label: '企业资产' },
-  { name: 'templates', path: '/templates', label: '模板中心' },
+  { name: 'dashboard', path: '/', label: '工作台', icon: 'House' },
+  { name: 'knowledge', path: '/knowledge', label: '知识库', icon: 'Collection' },
+  { name: 'assets', path: '/assets', label: '企业资产', icon: 'Suitcase' },
+  { name: 'templates', path: '/templates', label: '排版模板', icon: 'Brush' },
 ]
 
 const projectNav = computed(() =>
   props.projectId
     ? [
-        { name: 'workspace', path: `/project/${props.projectId}/workspace`, label: '标书编纂' },
-        { name: 'deviation', path: `/project/${props.projectId}/deviation`, label: '技术偏离表' },
-        { name: 'quality', path: `/project/${props.projectId}/quality`, label: '质检与合规' },
+        { name: 'wizard', path: `/project/${props.projectId}/wizard`, label: '项目向导', icon: 'Guide' },
+        { name: 'workspace', path: `/project/${props.projectId}/workspace`, label: '标书编纂', icon: 'EditPen' },
+        { name: 'deviation', path: `/project/${props.projectId}/deviation`, label: '技术偏离表', icon: 'List' },
+        { name: 'quality', path: `/project/${props.projectId}/quality`, label: '质检与合规', icon: 'CircleCheck' },
       ]
     : []
 )
 
-const mobileNav = computed(() => [
-  { name: 'dashboard', path: '/', label: '首页', icon: 'HomeFilled' },
-  ...(props.projectId
-    ? [
-        { name: 'workspace', path: `/project/${props.projectId}/workspace`, label: '编纂', icon: 'EditPen' },
-        { name: 'deviation', path: `/project/${props.projectId}/deviation`, label: '偏离', icon: 'List' },
-        { name: 'quality', path: `/project/${props.projectId}/quality`, label: '质检', icon: 'CircleCheck' },
-      ]
-    : []),
-  { name: 'knowledge', path: '/knowledge', label: '知识库', icon: 'Collection' },
-])
+const stage = computed(() => (projectStore.id === props.projectId ? projectStore.stage : ''))
 
 function isActive(name) {
   if (props.active === name) return true
   return route.name === name
 }
 
-function exportWord() {
-  const url = `/api/v1/project/${props.projectId}/export?template_id=gov_standard`
-  window.open(url, '_blank')
-  ElMessage.success('已开始下载技术标书 Word（含目录与页码）')
+// ---- 侧栏：桌面端可收起为图标栏（记在本浏览器），移动端为抽屉 ----
+const COLLAPSE_KEY = 'easywrite.sidebarCollapsed'
+function readCollapsed() {
+  try {
+    return localStorage.getItem(COLLAPSE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+const collapsed = ref(readCollapsed())
+const mobileOpen = ref(false)
+const hideC = computed(() => (collapsed.value ? 'md:hidden' : ''))
+const rowC = computed(() => (collapsed.value ? 'md:justify-center md:px-0' : ''))
+
+function toggleCollapse() {
+  collapsed.value = !collapsed.value
+  try {
+    localStorage.setItem(COLLAPSE_KEY, collapsed.value ? '1' : '0')
+  } catch { /* 忽略 */ }
+}
+
+function go(path) {
+  mobileOpen.value = false
+  router.push(path)
+}
+
+watch(() => route.fullPath, () => { mobileOpen.value = false })
+
+const THEME_META = {
+  system: { label: '跟随系统', icon: 'Monitor' },
+  light: { label: '浅色', icon: 'Sunny' },
+  dark: { label: '深色', icon: 'Moon' },
+}
+const themeMeta = computed(() => THEME_META[themePref.value])
+
+// ---- 导出：选择 Word 排版模板（记住本浏览器上次的选择） ----
+const TEMPLATE_KEY = 'easywrite.exportTemplate'
+const exportDialog = ref(false)
+const templates = ref([])
+const templateId = ref('gov_standard')
+
+async function openExport() {
+  mobileOpen.value = false
+  exportDialog.value = true
+  try {
+    templateId.value = localStorage.getItem(TEMPLATE_KEY) || 'gov_standard'
+  } catch { /* 存储不可用时使用默认模板 */ }
+  try {
+    templates.value = (await api.templates()).templates
+    if (!templates.value.some((t) => t.id === templateId.value)) {
+      templateId.value = templates.value[0]?.id || 'gov_standard'
+    }
+  } catch (e) {
+    ElMessage.error('模板列表加载失败：' + e.message)
+  }
+}
+
+function themeColor(t) {
+  return t.theme_rgb ? `rgb(${t.theme_rgb.join(',')})` : (t.theme_color || '#003366')
+}
+
+// 架构图先在浏览器里用 Mermaid 渲染成图片随导出请求提交（Mermaid 按需加载，不拖慢其他页面）
+const exporting = ref(false)
+const exportProgress = ref('')
+
+async function exportWord() {
+  try {
+    localStorage.setItem(TEMPLATE_KEY, templateId.value)
+  } catch { /* 忽略 */ }
+  exporting.value = true
+  try {
+    exportProgress.value = '读取标书内容…'
+    const project = await api.getProject(props.projectId)
+    const { renderOutlineDiagrams } = await import('@/utils/mermaid')
+    const { diagrams, failed, total } = await renderOutlineDiagrams(project.outline, (i, n) => {
+      exportProgress.value = `渲染架构图 ${i}/${n}…`
+    })
+    exportProgress.value = '生成 Word…'
+    await api.exportBid(props.projectId, templateId.value, diagrams)
+    exportDialog.value = false
+    if (failed) {
+      ElMessage.warning(`已导出技术标书 Word；${failed} 张架构图代码有误未能渲染，文档中已留出插图位置`)
+    } else {
+      ElMessage.success(total ? `已导出技术标书 Word（含 ${total} 张架构图）` : '已导出技术标书 Word（含目录与页码）')
+    }
+  } catch (e) {
+    ElMessage.error('导出失败：' + e.message)
+  } finally {
+    exporting.value = false
+    exportProgress.value = ''
+  }
 }
 </script>
 
 <template>
-  <div class="flex flex-col min-h-screen">
-    <!-- ======= 顶部导航（桌面） ======= -->
-    <header class="bg-slate-900 text-white shadow-md z-30 shrink-0 hidden md:block">
-      <div class="flex items-center justify-between px-4 lg:px-6 h-14">
-        <div class="flex items-center gap-6 min-w-0">
-          <!-- Logo -->
-          <div class="flex items-center gap-2.5 cursor-pointer shrink-0" @click="router.push('/')">
-            <div class="w-8 h-8 rounded bg-blue-600 flex items-center justify-center font-bold text-white shadow">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            </div>
-            <div class="font-bold tracking-wide leading-tight">
-              EasyWrite
-              <span class="hidden lg:inline text-[11px] px-2 py-0.5 ml-1 rounded bg-slate-800 text-slate-300 border border-slate-700">技术标 Copilot</span>
-            </div>
-          </div>
+  <div class="h-[100dvh] flex overflow-hidden bg-paper text-ink">
+    <!-- 移动端抽屉遮罩 -->
+    <transition
+      enter-active-class="transition-opacity duration-200"
+      leave-active-class="transition-opacity duration-150"
+      enter-from-class="opacity-0"
+      leave-to-class="opacity-0"
+    >
+      <div v-if="mobileOpen" class="md:hidden fixed inset-0 z-40 bg-black/35" @click="mobileOpen = false" />
+    </transition>
 
-          <!-- 项目上下文 -->
-          <div v-if="projectId" class="flex items-center gap-2 min-w-0 text-sm text-slate-300">
-            <el-icon><FolderOpened /></el-icon>
-            <span class="truncate max-w-[16rem] font-medium" :title="projectName">{{ projectName || '未命名项目' }}</span>
-          </div>
-
-          <!-- 全局导航 -->
-          <nav class="flex items-center gap-1 text-sm font-medium">
-            <button
-              v-for="item in globalNav"
-              :key="item.name"
-              class="px-3 py-1.5 rounded-md transition whitespace-nowrap"
-              :class="isActive(item.name) ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white hover:bg-slate-800'"
-              @click="router.push(item.path)"
-            >
-              {{ item.label }}
-            </button>
-          </nav>
+    <!-- ======= 侧栏 ======= -->
+    <aside
+      class="fixed md:static inset-y-0 left-0 z-50 w-[252px] flex flex-col shrink-0 bg-sunken border-r border-line transition-[transform,width] duration-200 ease-out md:translate-x-0 md:shadow-none"
+      :class="[mobileOpen ? 'translate-x-0 shadow-float' : '-translate-x-full', collapsed ? 'md:w-[64px]' : 'md:w-[232px]']"
+    >
+      <!-- 品牌 -->
+      <div class="h-[60px] flex items-center gap-2.5 px-4 shrink-0" :class="collapsed ? 'md:justify-center md:px-0' : ''">
+        <button class="brand-btn" title="工作台" @click="go('/')"><BrandMark :size="32" /></button>
+        <div class="min-w-0 flex-1" :class="hideC">
+          <p class="text-[15px] font-semibold tracking-tight leading-none text-ink">EasyWrite</p>
+          <p class="text-2xs text-ink-3 mt-1.5 leading-none tracking-wider">技术标编纂台</p>
         </div>
-
-        <div class="flex items-center gap-3 text-xs shrink-0">
-          <button
-            class="flex items-center gap-1.5 px-2.5 py-1 rounded border border-slate-700 text-slate-300 hover:bg-slate-800 transition"
-            title="AI 模型状态"
-            @click="router.push('/settings')"
-          >
-            <span
-              class="w-2 h-2 rounded-full"
-              :class="ai.llmConfigured ? 'bg-emerald-400' : 'bg-amber-400'"
-            />
-            <span class="hidden lg:inline">{{ ai.llmConfigured ? ai.llmModel : '未配置模型' }}</span>
-          </button>
-          <button
-            v-if="exportEnabled"
-            class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-1.5 rounded shadow transition"
-            @click="exportWord"
-          >
-            导出标书 Word
-          </button>
-        </div>
+        <button class="icon-btn !w-7 !h-7 hidden md:inline-flex" :class="hideC" title="收起侧栏" @click="toggleCollapse">
+          <el-icon><Fold /></el-icon>
+        </button>
+        <button class="icon-btn !w-7 !h-7 md:hidden" @click="mobileOpen = false"><el-icon><Close /></el-icon></button>
       </div>
 
-      <!-- 项目子导航 -->
-      <div v-if="projectNav.length" class="bg-slate-800 border-t border-slate-700">
-        <div class="flex items-center gap-1 px-4 lg:px-6 h-10 text-sm">
+      <nav class="flex-1 overflow-y-auto overflow-x-hidden px-2.5 pt-1 pb-3">
+        <p class="nav-group mt-2" :class="hideC">工作区</p>
+        <div class="space-y-0.5">
           <button
-            v-for="item in projectNav"
+            v-for="item in globalNav"
             :key="item.name"
-            class="px-3 py-1 rounded-md transition font-medium"
-            :class="isActive(item.name) ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'"
-            @click="router.push(item.path)"
+            class="side-row w-full"
+            :class="[{ 'is-active': isActive(item.name) }, rowC]"
+            :title="item.label"
+            @click="go(item.path)"
           >
-            {{ item.label }}
+            <el-icon :size="17"><component :is="item.icon" /></el-icon>
+            <span :class="hideC">{{ item.label }}</span>
           </button>
         </div>
-      </div>
-    </header>
 
-    <!-- ======= 移动端顶部栏 ======= -->
-    <header class="bg-slate-900 text-white shadow-md z-30 shrink-0 md:hidden">
-      <div class="flex items-center justify-between px-3 h-12">
-        <button class="flex items-center gap-2" @click="router.push('/')">
-          <div class="w-7 h-7 rounded bg-blue-600 flex items-center justify-center font-bold text-sm">E</div>
-          <span class="font-bold text-sm">EasyWrite</span>
-          <span v-if="projectId" class="text-[11px] text-slate-400 truncate max-w-[10rem]">{{ projectName }}</span>
-        </button>
-        <div class="flex items-center gap-2">
-          <button
-            class="flex items-center gap-1 px-2 py-1 rounded border border-slate-700 text-[11px]"
-            @click="router.push('/settings')"
-          >
-            <span class="w-2 h-2 rounded-full" :class="ai.llmConfigured ? 'bg-emerald-400' : 'bg-amber-400'" />
-          </button>
+        <template v-if="projectId">
+          <div class="my-4 mx-2 border-t border-line" :class="collapsed ? 'hidden md:block' : 'hidden'" />
+          <p class="nav-group mt-6" :class="hideC">当前项目</p>
+          <div class="mx-0.5 mb-2 rounded-lg border border-line bg-surface/60 px-3 py-2.5" :class="hideC">
+            <p class="text-[13px] font-medium leading-snug line-clamp-2 text-ink" :title="projectName">{{ projectName || '加载中…' }}</p>
+            <template v-if="stage">
+              <div class="mt-2.5 flex items-center gap-1">
+                <span
+                  v-for="(s, i) in STAGES"
+                  :key="s.key"
+                  class="h-1 flex-1 rounded-full"
+                  :class="i <= stageIndex(stage) ? 'bg-accent' : 'bg-line-strong'"
+                  :title="s.label"
+                />
+              </div>
+              <p class="text-2xs text-ink-3 mt-1.5">{{ stageLabel(stage) }}</p>
+            </template>
+          </div>
+          <div class="space-y-0.5">
+            <button
+              v-for="item in projectNav"
+              :key="item.name"
+              class="side-row w-full"
+              :class="[{ 'is-active': isActive(item.name) }, rowC]"
+              :title="item.label"
+              @click="go(item.path)"
+            >
+              <el-icon :size="17"><component :is="item.icon" /></el-icon>
+              <span :class="hideC">{{ item.label }}</span>
+            </button>
+          </div>
           <button
             v-if="exportEnabled"
-            class="bg-emerald-600 text-white text-[11px] px-2 py-1 rounded"
-            @click="exportWord"
+            class="mt-3 w-full h-9 rounded-lg bg-accent text-white text-[13px] font-medium flex items-center justify-center gap-2 hover:opacity-90 transition shadow-sm"
+            title="导出标书 Word"
+            @click="openExport"
           >
-            导出
+            <el-icon :size="16"><Download /></el-icon>
+            <span :class="hideC">导出标书 Word</span>
           </button>
-        </div>
-      </div>
-    </header>
+        </template>
+      </nav>
 
-    <!-- ======= 内容区 ======= -->
-    <main class="flex-1 min-h-0 pb-14 md:pb-0">
-      <slot />
-    </main>
-
-    <!-- ======= 移动端底部标签栏 ======= -->
-    <nav class="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-slate-200 z-40">
-      <div class="grid" :style="{ gridTemplateColumns: `repeat(${mobileNav.length}, 1fr)` }">
-        <button
-          v-for="item in mobileNav"
-          :key="item.name"
-          class="flex flex-col items-center gap-0.5 py-1.5 text-[10px] transition"
-          :class="isActive(item.name) ? 'text-blue-600' : 'text-slate-500'"
-          @click="router.push(item.path)"
-        >
-          <el-icon :size="18"><component :is="item.icon" /></el-icon>
-          {{ item.label }}
+      <!-- 底部：任务 / 设置 / 外观 -->
+      <div class="shrink-0 border-t border-line px-2.5 py-2.5 space-y-0.5">
+        <TaskCenter :collapsed="collapsed" />
+        <button class="side-row w-full" :class="[{ 'is-active': isActive('settings') }, rowC]" title="系统设置 · 模型配置" @click="go('/settings')">
+          <span class="relative inline-flex">
+            <el-icon :size="17"><Setting /></el-icon>
+            <span
+              class="absolute -top-0.5 -right-1 w-2 h-2 rounded-full ring-2 ring-sunken"
+              :class="[ai.llmConfigured ? 'bg-ok' : 'bg-warn', collapsed ? 'hidden md:block' : 'hidden']"
+            />
+          </span>
+          <span class="flex-1 min-w-0 flex items-center justify-between gap-2" :class="hideC">
+            <span>设置</span>
+            <span class="chip max-w-[118px]" :class="ai.llmConfigured ? 'chip-ok' : 'chip-warn'">
+              <span class="dot" :class="ai.llmConfigured ? 'bg-ok' : 'bg-warn'" />
+              <span class="truncate">{{ ai.llmConfigured ? ai.llmModel : '未配置模型' }}</span>
+            </span>
+          </span>
+        </button>
+        <button class="side-row w-full" :class="rowC" :title="`外观：${themeMeta.label}（点击切换）`" @click="cycleTheme">
+          <el-icon :size="17"><component :is="themeMeta.icon" /></el-icon>
+          <span class="flex-1 text-left" :class="hideC">外观</span>
+          <span class="text-2xs text-ink-3" :class="hideC">{{ themeMeta.label }}</span>
+        </button>
+        <button class="side-row w-full" :class="[{ 'is-active': isActive('about') }, rowC]" title="关于 EasyWrite" @click="go('/about')">
+          <el-icon :size="17"><InfoFilled /></el-icon>
+          <span class="flex-1 text-left" :class="hideC">关于</span>
+        </button>
+        <button v-if="collapsed" class="side-row w-full hidden md:flex md:justify-center md:px-0" title="展开侧栏" @click="toggleCollapse">
+          <el-icon :size="17"><Expand /></el-icon>
         </button>
       </div>
-    </nav>
+    </aside>
+
+    <!-- ======= 主区 ======= -->
+    <div class="flex-1 min-w-0 flex flex-col">
+      <header class="md:hidden h-12 shrink-0 flex items-center gap-2 px-2 border-b border-line bg-surface">
+        <button class="icon-btn" aria-label="打开导航" @click="mobileOpen = true"><el-icon :size="18"><Operation /></el-icon></button>
+        <BrandMark :size="24" />
+        <span class="text-sm font-semibold truncate flex-1 min-w-0">{{ projectId ? (projectName || '项目') : (route.meta.title || 'EasyWrite') }}</span>
+        <span v-if="taskStore.activeCount" class="chip chip-accent"><el-icon class="animate-spin"><Loading /></el-icon>{{ taskStore.activeCount }}</span>
+        <button v-if="exportEnabled" class="h-8 px-3 rounded-lg bg-accent text-white text-xs font-medium" @click="openExport">导出</button>
+      </header>
+      <ModeBanner v-if="!['settings', 'about'].includes(route.name)" />
+      <main class="flex-1 min-h-0" :class="fill ? 'overflow-hidden' : 'overflow-y-auto'">
+        <slot />
+      </main>
+    </div>
+
+    <!-- ======= 导出模板选择 ======= -->
+    <el-dialog v-model="exportDialog" title="导出标书 Word" width="min(560px, 94vw)" align-center>
+      <p class="text-xs text-ink-2 -mt-2 mb-4">选择排版模板（字体、主题色、页边距与页眉），可在「排版模板」中自定义。导出含封面、目录域与页码。</p>
+      <div class="grid sm:grid-cols-2 gap-2.5 max-h-[52vh] overflow-auto p-0.5">
+        <button
+          v-for="t in templates"
+          :key="t.id"
+          class="text-left flex gap-3 p-2.5 rounded-xl border transition"
+          :class="templateId === t.id ? 'border-accent ring-2 ring-accent/20 bg-accent-soft/40' : 'border-line hover:border-line-strong bg-surface'"
+          @click="templateId = t.id"
+        >
+          <span class="w-11 h-[58px] shrink-0 rounded-[3px] bg-white border border-black/10 shadow-sm p-1.5 flex flex-col gap-[3px]">
+            <span class="h-[2px] w-full" :style="{ background: themeColor(t) }" />
+            <span class="h-[4px] w-3/4 mt-1 rounded-[1px]" :style="{ background: themeColor(t) }" />
+            <span v-for="n in 4" :key="n" class="h-[2px] rounded-[1px] bg-black/15" :class="n === 4 ? 'w-2/3' : 'w-full'" />
+          </span>
+          <span class="min-w-0">
+            <span class="block text-[13px] font-medium text-ink">{{ t.name }}</span>
+            <span v-if="t.description" class="block text-2xs text-ink-3 mt-1 leading-relaxed line-clamp-3">{{ t.description }}</span>
+          </span>
+        </button>
+      </div>
+      <template #footer>
+        <el-button :disabled="exporting" @click="exportDialog = false">取消</el-button>
+        <el-button type="primary" :disabled="!templateId" :loading="exporting" @click="exportWord">
+          {{ exporting ? exportProgress : '导出 Word' }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.brand-btn {
+  @apply flex shrink-0 rounded-lg select-none;
+  box-shadow: 0 1px 2px rgb(var(--c-shadow) / 0.18);
+}
+/* 悬停时朱砂方印"落一下" */
+.brand-btn:hover :deep(.brand-seal) {
+  transform: rotate(-16deg) scale(1.12);
+}
+.nav-group {
+  @apply px-2.5 mb-1.5 text-2xs font-semibold tracking-[0.16em] text-ink-3;
+}
+</style>

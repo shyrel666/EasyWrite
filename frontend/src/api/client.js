@@ -5,9 +5,12 @@
  * - streamSSE(): SSE 流式读取（章节生成打字机）
  * - pollTask(): 后台任务轮询（入库/拆标/合规/偏离表批量）
  */
+import { TERMINAL_STATUSES } from '@/utils/tasks'
+
 const BASE = '/api/v1'
 
-async function request(path, { method = 'GET', body, formData, signal } = {}) {
+// base：接口前缀；站点根路径的探针（/health）传空串
+async function request(path, { method = 'GET', body, formData, signal, base = BASE } = {}) {
   const opts = { method, signal, headers: {} }
   if (formData) {
     opts.body = formData
@@ -15,7 +18,7 @@ async function request(path, { method = 'GET', body, formData, signal } = {}) {
     opts.headers['Content-Type'] = 'application/json'
     opts.body = JSON.stringify(body)
   }
-  const res = await fetch(`${BASE}${path}`, opts)
+  const res = await fetch(`${base}${path}`, opts)
   if (!res.ok) {
     let detail = `HTTP ${res.status}`
     try {
@@ -38,9 +41,10 @@ function uploadFile(path, file, extra = {}) {
 
 /**
  * SSE 流式读取。onEvent(data) 收到每个解析后的 JSON 事件。
- * 返回 abort 函数。
+ * onClose() 在流结束、出错或被中止后调用（用于复位"生成中"状态）。
+ * 立即返回 abort 函数（流在后台继续读取）。
  */
-function streamSSE(path, body, onEvent, onError) {
+function streamSSE(path, body, onEvent, onError, onClose) {
   const controller = new AbortController()
   ;(async () => {
     try {
@@ -75,27 +79,97 @@ function streamSSE(path, body, onEvent, onError) {
       }
     } catch (e) {
       if (e.name !== 'AbortError' && onError) onError(e)
+    } finally {
+      if (onClose) onClose()
     }
   })()
   return () => controller.abort()
 }
 
 /**
- * 后台任务轮询，直到 completed/failed/cancelled。
- * onProgress(task) 每次收到状态回调；返回最终 task 对象。
+ * POST JSON 并把返回的文件下载到本地（文件名取自 Content-Disposition）。
  */
-async function pollTask(taskId, onProgress, intervalMs = 800) {
-  for (;;) {
-    const task = await request(`/tasks/${taskId}`)
-    if (onProgress) onProgress(task)
-    if (['completed', 'failed', 'cancelled'].includes(task.status)) return task
-    await new Promise((r) => setTimeout(r, intervalMs))
+async function downloadPost(path, body, fallbackName = 'download.docx') {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try { detail = (await res.json()).detail || detail } catch { /* */ }
+    throw new Error(detail)
   }
+  const disposition = res.headers.get('Content-Disposition') || ''
+  const star = disposition.match(/filename\*=(?:UTF-8|utf-8)''([^;]+)/)
+  const plain = disposition.match(/filename="?([^";]+)"?/)
+  const filename = star ? decodeURIComponent(star[1]) : (plain ? plain[1] : fallbackName)
+  const url = URL.createObjectURL(await res.blob())
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 10000)
+  return filename
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * 后台任务轮询，直到 completed/failed/cancelled/interrupted。
+ * onProgress(task) 每次收到状态回调；返回最终 task 对象。
+ * 服务重启期间连接失败或网关报错时继续等待（回调的 task 带 reconnecting: true），
+ * 恢复后读到的是落库的任务记录——重启前未跑完的任务状态为 interrupted（已中断）。
+ * signal 中止后停止轮询并抛出 AbortError（组件卸载时使用）。
+ */
+async function pollTask(taskId, onProgress, { intervalMs = 800, retryMs = 1500, maxFailures = 40, signal } = {}) {
+  let last = null
+  let failures = 0
+  for (;;) {
+    let task
+    try {
+      task = await request(`/tasks/${taskId}`, { signal })
+      failures = 0
+    } catch (e) {
+      if (e.name === 'AbortError') throw e
+      const transient = !e.status || e.status >= 500
+      if (!transient || ++failures > maxFailures) throw e
+      if (onProgress && last) onProgress({ ...last, reconnecting: true })
+      await sleep(retryMs)
+      if (signal?.aborted) throw new DOMException('轮询已中止', 'AbortError')
+      continue
+    }
+    last = task
+    if (onProgress) onProgress(task)
+    if (TERMINAL_STATUSES.includes(task.status)) return task
+    await sleep(intervalMs)
+    if (signal?.aborted) throw new DOMException('轮询已中止', 'AbortError')
+  }
+}
+
+/** 最近任务：{ projectId, type, active, withResult, limit } */
+function listTasks({ projectId, type, active, withResult, limit } = {}) {
+  const params = new URLSearchParams()
+  if (projectId !== undefined) params.set('project_id', projectId)
+  if (type) params.set('type', type)
+  if (active) params.set('active', 'true')
+  if (withResult) params.set('with_result', 'true')
+  if (limit) params.set('limit', String(limit))
+  const qs = params.toString()
+  return request(`/tasks${qs ? `?${qs}` : ''}`)
+}
+
+/** 某项目某类任务的最近一条（含结果），没有则返回 null */
+async function latestTask(projectId, type) {
+  const { tasks } = await listTasks({ projectId, type, withResult: true, limit: 1 })
+  return tasks[0] || null
 }
 
 export const api = {
   // 健康 & AI 状态
-  health: () => request('/../health'),
+  health: () => request('/health', { base: '' }),
   aiStatus: () => request('/ai/status'),
   getAiSettings: () => request('/ai/settings'),
   updateAiSettings: (data) => request('/ai/settings', { method: 'PUT', body: data }),
@@ -103,6 +177,12 @@ export const api = {
   fetchModels: (data) => request('/ai/models/fetch', { method: 'POST', body: data }),
   embeddingDescribe: () => request('/ai/embedding/describe'),
   testEmbedding: () => request('/ai/embedding/test', { method: 'POST' }),
+  // projectId：undefined 不筛选，'' 只看未归属项目的调用（知识库入库、连接测试等）
+  llmUsage: ({ days = 7, projectId } = {}) => {
+    const params = new URLSearchParams({ days: String(days) })
+    if (projectId !== undefined) params.set('project_id', projectId)
+    return request(`/ai/usage?${params}`)
+  },
 
   // 项目
   listProjects: () => request('/projects'),
@@ -116,7 +196,8 @@ export const api = {
     request(`/project/${id}/section/refs`, { method: 'PUT', body: { section_id: sectionId, pinned_refs: pinnedRefs, excluded_refs: excludedRefs } }),
 
   // 招标解析
-  analyzeTender: (file) => uploadFile('/tender/analyze', file),
+  // 传入 projectId 时招标原文随上传存档到项目（偏离表抽取 / 合规核查依据）
+  analyzeTender: (file, projectId) => uploadFile('/tender/analyze', file, projectId ? { project_id: projectId } : {}),
   analyzeTenderText: (text) => request('/tender/analyze/text', { method: 'POST', body: { text } }),
   applyTender: (id, analysis, tenderText) =>
     request(`/project/${id}/tender/apply`, { method: 'POST', body: { analysis, tender_text: tenderText } }),
@@ -131,7 +212,14 @@ export const api = {
   saveSection: (id, sectionId, content, status) =>
     request(`/project/${id}/section`, { method: 'PUT', body: { section_id: sectionId, content, status } }),
   polishSection: (id, payload) => request(`/project/${id}/section/polish`, { method: 'POST', body: payload }),
-  streamSection: (id, payload, onEvent, onError) => streamSSE(`/project/${id}/section/generate/stream`, payload, onEvent, onError),
+  generateBatch: (id, includeWritten = false) =>
+    request(`/project/${id}/sections/generate-batch`, { method: 'POST', body: { include_written: includeWritten } }),
+  listVersions: (id, sectionId) => request(`/project/${id}/section/${sectionId}/versions`),
+  getVersion: (id, sectionId, versionId) => request(`/project/${id}/section/${sectionId}/versions/${versionId}`),
+  restoreVersion: (id, sectionId, versionId) =>
+    request(`/project/${id}/section/${sectionId}/versions/${versionId}/restore`, { method: 'POST' }),
+  streamSection: (id, payload, onEvent, onError, onClose) =>
+    streamSSE(`/project/${id}/section/generate/stream`, payload, onEvent, onError, onClose),
 
   // 偏离表
   extractDeviations: (id) => request(`/project/${id}/deviation/extract`, { method: 'POST', body: {} }),
@@ -166,10 +254,17 @@ export const api = {
   // 模板与导出
   templates: () => request('/templates/list'),
   createTemplate: (data) => request('/templates/create', { method: 'POST', body: data }),
-  exportUrl: (id, templateId) => `${BASE}/project/${id}/export?template_id=${templateId || 'gov_standard'}`,
+  // diagrams：前端用 Mermaid 渲染好的架构图 [{code, image}]
+  exportBid: (id, templateId, diagrams) =>
+    downloadPost(`/project/${id}/export`, { template_id: templateId || 'gov_standard', diagrams }, '技术标书.docx'),
+  deviationExportUrl: (id, templateId) =>
+    `${BASE}/project/${id}/deviation/export?template_id=${templateId || 'gov_standard'}`,
 
   // 任务
   pollTask,
+  listTasks,
+  latestTask,
+  cancelTask: (taskId) => request(`/tasks/${taskId}/cancel`, { method: 'POST' }),
 }
 
 export default api

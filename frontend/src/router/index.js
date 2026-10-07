@@ -10,12 +10,15 @@ const routes = [
   { path: '/assets', name: 'assets', component: () => import('@/views/AssetsView.vue'), meta: { title: '企业资产' } },
   { path: '/templates', name: 'templates', component: () => import('@/views/TemplatesView.vue'), meta: { title: '模板中心' } },
   { path: '/settings', name: 'settings', component: () => import('@/views/SettingsView.vue'), meta: { title: '系统设置' } },
+  { path: '/about', name: 'about', component: () => import('@/views/AboutView.vue'), meta: { title: '关于' } },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 
 const router = createRouter({ history: createWebHistory(), routes })
 
-router.afterEach((to) => {
+router.afterEach((to, from, failure) => {
+  // 被守卫拦下的导航（如设置页有未保存修改时选择留下）不改标题
+  if (failure) return
   document.title = to.meta.title ? `${to.meta.title} · EasyWrite` : 'EasyWrite'
 })
 

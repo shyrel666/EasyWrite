@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 from typing import List, Dict, Any, Optional
 from app.core.config import settings
 from app.services.exporter.docx_generator import DocxStyleConfig
@@ -89,7 +88,7 @@ class TemplateManager:
         t_data = self.templates.get(template_id) or self.templates.get("gov_standard")
         if not t_data:
             return DocxStyleConfig()
-        
+
         rgb = tuple(t_data.get("theme_rgb", [0, 51, 102]))
         return DocxStyleConfig(
             template_name=t_data.get("name", "标准模板"),
@@ -106,7 +105,7 @@ class TemplateManager:
     def create_or_update_template(self, template_data: Dict[str, Any]) -> Dict[str, Any]:
         t_id = template_data.get("id") or f"tpl_{len(self.templates) + 1}"
         template_data["id"] = t_id
-        
+
         # 转换 HEX 为 RGB
         hex_col = template_data.get("theme_color", "#003366").lstrip("#")
         if len(hex_col) == 6:

@@ -5,8 +5,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent / "backend"
 sys.path.insert(0, str(BASE_DIR))
 
 from app.services.exporter.diagram_renderer import diagram_renderer
-from app.services.exporter.docx_generator import docx_exporter, DocxStyleConfig
-from app.models.schemas import OutlineNode, GlobalFacts
+from app.services.exporter.docx_generator import docx_exporter
+from app.models.schemas import OutlineNode
 
 def test_diagram_rendering_standalone():
     print("[1] 单元测试：离线高清晰度拓扑图渲染引擎...")

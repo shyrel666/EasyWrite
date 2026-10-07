@@ -7,12 +7,15 @@ SQLite 持久层（SQLModel）：
 import json
 import logging
 from contextlib import contextmanager
-from pathlib import Path
-from typing import Iterator, Optional
+from typing import TYPE_CHECKING, Iterator
 
+from sqlalchemy import inspect, text
 from sqlmodel import SQLModel, Session, create_engine, select
 
 from app.core.config import settings
+
+if TYPE_CHECKING:
+    from app.db.models import ProjectModel
 
 logger = logging.getLogger("easywrite.db")
 
@@ -43,6 +46,32 @@ def init_db() -> None:
     import app.db.models  # noqa: F401 确保模型注册
 
     SQLModel.metadata.create_all(engine)
+    _add_missing_columns()
+
+
+def _add_missing_columns() -> None:
+    """
+    轻量迁移：create_all 不会给已存在的表加列，模型新增字段时在此补齐（SQLite ADD COLUMN）。
+    非空列以模型默认值作为 DEFAULT，旧数据行自动获得该默认值。
+    """
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table in SQLModel.metadata.sorted_tables:
+            if not inspector.has_table(table.name):
+                continue
+            existing = {c["name"] for c in inspector.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in existing:
+                    continue
+                ddl = f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {col.type.compile(engine.dialect)}'
+                default = col.default.arg if col.default is not None and not callable(col.default.arg) else None
+                if default is not None:
+                    literal = str(default).replace("'", "''")
+                    ddl += f" DEFAULT '{literal}'" if isinstance(default, str) else f" DEFAULT {default}"
+                elif not col.nullable:
+                    ddl += " DEFAULT ''"
+                conn.execute(text(ddl))
+                logger.info("数据库迁移：%s 新增列 %s", table.name, col.name)
 
 
 def migrate_legacy_json() -> None:
