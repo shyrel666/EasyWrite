@@ -1,9 +1,9 @@
-<p>
+<p align="center">
   <a href="docs/assets/readme-header-light.svg#gh-light-mode-only">
-    <img src="docs/assets/readme-header-light.svg" width="440" height="96" alt="EasyWrite · 智能招投标技术标编纂系统">
+    <img src="docs/assets/readme-header-light.svg" width="320" height="96" alt="EasyWrite · 智能招投标技术标编纂系统">
   </a>
   <a href="docs/assets/readme-header-dark.svg#gh-dark-mode-only">
-    <img src="docs/assets/readme-header-dark.svg" width="440" height="96" alt="EasyWrite · 智能招投标技术标编纂系统">
+    <img src="docs/assets/readme-header-dark.svg" width="320" height="96" alt="EasyWrite · 智能招投标技术标编纂系统">
   </a>
 </p>
 
@@ -114,4 +114,4 @@ npm --prefix frontend test
 
 参考 [易标（OpenBidKit_Yibiao）](https://github.com/FB208/OpenBidKit_Yibiao) 的招标解析、全局事实约束、废标检查与知识库设计思路，感谢原作者的开源贡献。
 
-功能对比、近期修复与借鉴优先级见 [易标参考项目对比与借鉴建议](OPENBIDKIT_REFERENCE.md)；内置 Agent 的实施约束见 [Agent 设计方案](AGENT_DESIGN.md)。
+后续优化的实施路线与验收标准见 [改进计划](IMPROVEMENT_PLAN.md)。

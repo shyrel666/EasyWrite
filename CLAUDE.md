@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-EasyWrite: an AI copilot for writing Chinese government/enterprise technical bid documents (技术标书). FastAPI backend + Vue 3 SPA. Code comments, docstrings, UI strings, and docs are in Chinese — keep new ones in Chinese to match. `README.md` (usage, API table), `walkthrough.md` (design rationale), and `implementation_plan.md` (v0.2.0 refactor log) are the reference docs.
+EasyWrite: an AI copilot for writing Chinese government/enterprise technical bid documents (技术标书). FastAPI backend + Vue 3 SPA. Code comments, docstrings, UI strings, and docs are in Chinese — keep new ones in Chinese to match. `README.md` (setup and usage) and `IMPROVEMENT_PLAN.md` (development roadmap) are the reference docs.
 
 ## Commands
 
