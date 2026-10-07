@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime
 from typing import Callable, List, Optional, TypeVar
 
-from sqlmodel import select
+from sqlmodel import Session, select
 
 from app.db.database import get_session
 from app.db.models import ProjectModel
@@ -184,11 +184,15 @@ class ProjectStore:
             ))
         return project
 
-    def update(self, project_id: str, mutate: Callable[[Project], T]) -> T:
+    def update(
+        self, project_id: str, mutate: Callable[[Project], T],
+        also: Optional[Callable[[Session, T], None]] = None,
+    ) -> T:
         """
         原子更新：写锁 + 单事务内读取最新项目 → mutate 就地修改 → 写回，返回 mutate 的返回值。
         mutate 内只做内存修改；LLM 调用等耗时操作必须放在 update 之外，避免长时间占锁。
-        mutate 抛出异常时事务回滚、不写入。
+        also(session, result)：在同一事务内、提交前执行的附加写入（如章节历史版本）。
+        mutate 或 also 抛出异常时整个事务回滚、项目与附加写入都不落库。
         """
         with _write_lock, get_session() as session:
             row = session.get(ProjectModel, project_id)
@@ -198,6 +202,8 @@ class ProjectStore:
             result = mutate(project)
             self._apply_domain(row, project)
             session.add(row)
+            if also is not None:
+                also(session, result)
         return result
 
     def save(self, project: Project):

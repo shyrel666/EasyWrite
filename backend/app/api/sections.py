@@ -64,7 +64,8 @@ def _save_section_content(
 ) -> Optional[str]:
     """
     原子写回单个章节（重新读取最新项目，不覆盖其他章节的并发编辑），返回写入后的状态。
-    version_source：AI 生成/润色/批量/恢复等覆盖操作记录历史版本（人工自动保存不传）。
+    version_source：AI 生成/润色/批量/恢复等覆盖操作，在写回正文的同一事务内记录历史版本；
+    版本写入失败时正文一并回滚并抛出异常（人工自动保存不传，不留版）。
     expect_content：仅当章节正文仍等于该值时才写入（批量撰写期间用户改过的章节不覆盖），否则返回 None。
     """
     def mutate(project):
@@ -82,9 +83,14 @@ def _save_section_content(
             project.stage = "writing"
         return node.status, old
 
-    saved_status, old_content = project_store.update(project_id, mutate)
+    def snapshot(session, result):
+        saved, old = result
+        if saved is not None and version_source:
+            version_store.record_in(session, project_id, section_id, old or "", content, version_source)
+
+    saved_status, _ = project_store.update(project_id, mutate, also=snapshot)
     if saved_status is not None and version_source:
-        version_store.record(project_id, section_id, old_content or "", content, version_source)
+        version_store.prune(project_id, section_id)
     return saved_status
 
 
@@ -207,10 +213,15 @@ def generate_sections_batch(
                 # 模型调用失败退回了演示样例：不写入
                 failed.append({"id": sid, "title": node.title, "reason": "模型调用失败，未写入"})
                 continue
-            status = _save_section_content(
-                project_id, sid, result["generated_content"], "completed",
-                last_refs=result["references"], version_source="batch", expect_content=before,
-            )
+            try:
+                status = _save_section_content(
+                    project_id, sid, result["generated_content"], "completed",
+                    last_refs=result["references"], version_source="batch", expect_content=before,
+                )
+            except Exception as e:  # 正文与版本整体回滚：本节保持原样，继续写下一节
+                logger.exception("批量撰写保存失败 %s", sid)
+                failed.append({"id": sid, "title": node.title, "reason": f"保存失败，未写入：{str(e)[:80]}"})
+                continue
             if status is None:
                 skipped.append(sid)  # 生成期间用户改过该章节：保留用户内容
             else:

@@ -6,6 +6,8 @@
 """
 import time
 
+import pytest
+
 from app.core.llm_client import llm_client
 from app.services import version_store as vs_module
 from app.services.generator.section_generator import section_generator
@@ -74,6 +76,52 @@ def test_versions_pruned_per_section(project_id, monkeypatch):
     assert [v["preview"] for v in version_store.list(project_id, "sec_x")] == ["v5", "v4", "v3"]
 
 
+def test_version_failure_rolls_back_content(client, project_id, monkeypatch):
+    """历史版本写入失败：正文整体回滚、不产生新版本（被覆盖的人工稿不会无档可查）"""
+    from app.api.sections import _save_section_content
+    _setup(client, project_id)
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("版本表写入失败")
+
+    monkeypatch.setattr(version_store, "record_in", broken)
+    with pytest.raises(RuntimeError):
+        _save_section_content(project_id, "sec_1_2", "AI覆盖稿", "completed", version_source="ai_generate")
+    assert _content(project_id, "sec_1_2") == "已有人工稿"
+    assert version_store.list(project_id, "sec_1_2") == []
+
+    # 接口层：流式生成完成但保存失败时返回错误事件，正文不变
+    async def fake_stream(**kwargs):
+        yield {"refs": [], "retrieval_message": "", "mode": "llm"}
+        yield {"token": "AI覆盖稿"}
+
+    monkeypatch.setattr(section_generator, "draft_section_stream", fake_stream)
+    body = client.post(f"/api/v1/project/{project_id}/section/generate/stream",
+                       json={"project_id": project_id, "section_id": "sec_1_2", "section_title": "1.2 安全设计"}).text
+    assert "保存失败" in body and '"done": true' not in body
+    assert _content(project_id, "sec_1_2") == "已有人工稿"
+
+    # 人工保存不留版，不受影响
+    res = client.put(f"/api/v1/project/{project_id}/section",
+                     json={"project_id": project_id, "section_id": "sec_1_2", "content": "人工改稿", "status": "completed"})
+    assert res.status_code == 200 and _content(project_id, "sec_1_2") == "人工改稿"
+
+
+def test_prune_failure_keeps_committed_content(client, project_id, monkeypatch):
+    """超量版本清理在提交后单独执行：清理失败不影响已写入的正文与版本"""
+    from app.api.sections import _save_section_content
+    _setup(client, project_id)
+
+    def broken_session():
+        raise RuntimeError("清理失败")
+
+    monkeypatch.setattr(vs_module, "get_session", broken_session)
+    assert _save_section_content(project_id, "sec_1_2", "AI覆盖稿", "completed", version_source="ai_generate") == "completed"
+    monkeypatch.undo()
+    assert _content(project_id, "sec_1_2") == "AI覆盖稿"
+    assert [v["source"] for v in version_store.list(project_id, "sec_1_2")] == ["ai_generate", "manual"]
+
+
 def test_batch_requires_llm(client, project_id, monkeypatch):
     _setup(client, project_id)
     monkeypatch.setattr(llm_client, "is_configured", False)
@@ -110,6 +158,23 @@ def test_batch_writes_only_eligible_sections(client, project_id, monkeypatch):
     assert _content(project_id, "sec_1_3") == "已校审定稿"
     sources = [v["source"] for v in version_store.list(project_id, "sec_1_2")]
     assert sources == ["batch", "manual"]
+
+
+def test_batch_save_failure_is_reported_per_section(client, project_id, monkeypatch):
+    """批量撰写中某节保存（含版本）失败：该节正文不变、记为失败，任务继续完成"""
+    _setup(client, project_id)
+    _fake_llm(monkeypatch, lambda **kw: {"generated_content": "批量稿", "references": [], "mode": "llm"})
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("版本表写入失败")
+
+    monkeypatch.setattr(version_store, "record_in", broken)
+    res = client.post(f"/api/v1/project/{project_id}/sections/generate-batch", json={"include_written": True})
+    task = _wait(client, res.json()["task_id"])
+    assert task["status"] == "completed" and task["result"]["generated"] == []
+    assert sorted(f["id"] for f in task["result"]["failed"]) == ["sec_1_1", "sec_1_2"]
+    assert all("保存失败" in f["reason"] for f in task["result"]["failed"])
+    assert _content(project_id, "sec_1_1") == "" and _content(project_id, "sec_1_2") == "已有人工稿"
 
 
 def test_batch_keeps_user_edit_made_during_generation(client, project_id, monkeypatch):
