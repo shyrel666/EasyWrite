@@ -59,7 +59,7 @@ def ai_status():
         "llm_configured": llm_client.is_configured,
         "llm_model": llm_client.model if llm_client.is_configured else "",
         "llm_base_url": llm_client.base_url if llm_client.is_configured else "",
-        "last_mode": llm_client.get_mode(),
+        "last_mode": llm_client.last_mode(),  # 全局最近一次，不受某个请求上下文影响
         "embedding_available": embedding_client.is_available,
         "embedding_model": embedding_client.model if embedding_client.is_available else "",
     }

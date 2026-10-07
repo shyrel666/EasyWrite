@@ -3,6 +3,7 @@ import json
 import time
 import threading
 import logging
+import contextvars
 from typing import List, Dict, Any, Optional, Generator
 from openai import OpenAI, AsyncOpenAI, RateLimitError, APIConnectionError, BadRequestError
 
@@ -15,6 +16,10 @@ logger = logging.getLogger("easywrite.llm")
 # 推理模型（如 deepseek-flash / deepseek-v4-pro）的思考过程同样占用 max_tokens：
 # 输出被截断（finish_reason == "length"）时按以下倍数放大额度重试；超出模型上限时退一档
 ESCALATION_FACTORS = (4, 2)
+
+# 当前请求 / 后台任务上下文中最近一次调用的实际模式。同步接口与 task_manager 任务都在复制的上下文中执行，
+# 批量撰写与流式生成同时进行时各自读到自己的模式，不会互相串扰
+_context_mode: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("llm_context_mode", default=None)
 
 
 class LLMClient:
@@ -73,15 +78,25 @@ class LLMClient:
 
             # 新配置尚未执行生成；不能沿用旧配置的模拟结果，也不能默认成一次模拟调用。
             self._last_mode = None
+            _context_mode.set(None)
 
     # ---------------- 模式信号 ----------------
 
     def get_mode(self) -> Optional[str]:
-        """返回当前配置最近一次生成的实际模式；已配置但尚未生成时返回 None。"""
+        """
+        返回最近一次生成的实际模式：优先取当前请求/任务上下文中的调用结果，
+        本上下文还没有调用时取全局最近一次 last_mode()；已配置但尚未生成时返回 None。
+        """
+        mode = _context_mode.get() if self.is_configured else None
+        return mode if mode is not None else self.last_mode()
+
+    def last_mode(self) -> Optional[str]:
+        """全局最近一次生成的实际模式（不区分请求，状态接口用）；已配置但尚未生成时返回 None。"""
         with self._lock:
             return self._last_mode if self.is_configured else "mock"
 
     def _mark_mode(self, mode: str):
+        _context_mode.set(mode)
         with self._lock:
             self._last_mode = mode
 

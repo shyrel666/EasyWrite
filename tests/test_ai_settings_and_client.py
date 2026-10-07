@@ -158,3 +158,29 @@ def test_configured_model_fallback_still_reports_mock(monkeypatch):
     data = client.get("/api/v1/ai/status").json()
     assert data["llm_configured"] is True
     assert data["last_mode"] == "mock"
+
+
+def test_mode_is_tracked_per_thread_context(monkeypatch):
+    """两个线程分别以真实和离线模式调用，各自读到自己的模式（批量撰写与流式生成不再互相串扰）"""
+    import threading
+
+    monkeypatch.setattr(llm_client, "is_configured", True)
+    monkeypatch.setattr(llm_client, "client", object())
+    monkeypatch.setattr(llm_client, "_create_escalating",
+                        lambda *_a, **_k: "真实正文" if threading.current_thread().name == "real" else "")
+    barrier = threading.Barrier(2)
+    seen = {}
+
+    def worker():
+        llm_client.chat_completion("s", "u")
+        barrier.wait()  # 两边都写过全局值之后再读
+        seen[threading.current_thread().name] = llm_client.get_mode()
+
+    threads = [threading.Thread(target=worker, name=name) for name in ("real", "offline")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+    assert seen == {"real": "llm", "offline": "mock"}
+    # 本上下文没有调用过时（如状态接口）取全局最近一次
+    assert llm_client.get_mode() in ("llm", "mock")
