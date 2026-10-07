@@ -100,6 +100,9 @@ def test_commitment_suggestions_only_restate_tender():
         ("sla_commitment", "按招标要求，质保期为1年"),
     ]
     assert not any("7×24" in s.suggestion for s in items)
+    # 原文已是完整表述（如"…服务1年"）时直接沿用，不再套"工期为…"
+    item = suggest_commitments(TenderAnalysis18(duration_requirement="中标人在采购合同签订后服务1年"))[0]
+    assert item.suggestion == "按招标要求，中标人在采购合同签订后服务1年"
     assert suggest_commitments(TenderAnalysis18(duration_requirement=NOT_MENTIONED)) == []
     assert suggest_commitments(None) == []
 

@@ -10,7 +10,7 @@ from typing import List, Optional
 from app.models.schemas import NOT_MENTIONED, CommitmentSuggestion, TenderAnalysis18
 
 # 原文本身已是完整表述（含动作）时直接沿用，否则套用"X为…"的复述句式
-_SENTENCE_HINT = re.compile(r"完成|交付|上线|验收|竣工|提供|承担|负责|保修|维护|运维")
+_SENTENCE_HINT = re.compile(r"完成|交付|上线|验收|竣工|提供|承担|负责|保修|维护|运维|服务")
 
 # (拆标字段, 目标事实字段, 事实名称, 复述句式)
 COMMITMENT_RULES = (
