@@ -41,9 +41,10 @@ POLISH_PROMPT = """你是一名从业25年的国家级招投标评审专家兼�
 【润色黄金法则】：
 1. 【彻底斩断大模型套话】：坚决删除“众所周知”、“综上所述”、“在当今快速发展的时代”、“作为一家领先的”等廉价AI水词；
 2. 【公文严肃庄重】：采用严谨、权威、克制的中国政企招投标技术公文风格；
-3. 【工程参数落地】：将抽象描述具体化，强化技术选型、架构分层、参数标准（如 TPS、并发延时、RPO/RTO、国密算法）；
+3. 【工程表述落地】：把空泛描述改为具体的技术选型、架构分层与实施步骤；只能使用原文和企业全局事实中已有的参数与数值，不得新增 TPS、时延、RPO/RTO、响应时限等指标或承诺；
 4. 【事实硬约束】：文中提及企业时严格使用指定企业全称与产品型号；
-5. 【结构条理化】：多采用“1.1.1”、“（1）”、“（2）”或加粗关键指标。
+5. 【结构条理化】：多采用“1.1.1”、“（1）”、“（2）”或加粗关键指标；
+6. 【不改变响应程度】：原文中"部分满足""暂不支持"等表述保持原意，不得改写为完全满足或新的承诺；【待填写】【待核实】占位原样保留。
 
 请直接输出润色后的正式方案文本，不要包含任何寒暄解释。"""
 
@@ -320,7 +321,7 @@ class EightDimensionQualityInspector:
             if weak in all_text:
                 d8_score -= 15
                 d8_findings.append(f"检测到口语化或不庄重表述: '{weak}'")
-                d8_suggestions.append(f"将口语词 '{weak}' 替换为公文术语（如'承诺实现'、'严格保障'）")
+                d8_suggestions.append(f"将口语词 '{weak}' 改为准确的公文表述；涉及能否满足要求的，按企业实际情况写明满足程度")
 
         if d8_score >= 90:
             d8_findings.append("全书公文语气严肃、克制庄重，符合政府与大型国企招投标规范")
@@ -416,10 +417,10 @@ class EightDimensionQualityInspector:
                 stage1_text = re.sub(pat, "", stage1_text)
                 improvements.append(f"前置剔除 AI 虚浮套话（{fix_note}）")
 
+        # 口语或模糊表述只提示不改写：替换成"我方承诺"会把"基本上满足"变成企业未确认的承诺
         for weak in INFORMAL_OR_WEAK_PHRASES:
             if weak in stage1_text:
-                stage1_text = stage1_text.replace(weak, "我方承诺")
-                improvements.append(f"前置将口语词汇【{weak}】替换为庄重公文词")
+                improvements.append(f"发现口语或模糊表述【{weak}】，未自动改写，请按企业实际情况修改")
 
         # 阶段二：远端大模型深度句式升华与公文参数重构
         if self.llm.is_configured:
