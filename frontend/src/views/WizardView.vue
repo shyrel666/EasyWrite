@@ -70,6 +70,50 @@ const facts = ref({
   custom_facts: {},
 })
 
+// 承诺建议：拆标只给出复述招标要求的措辞，用户采纳后才写入全局事实（忽略记录只存在本浏览器）
+const suggestions = ref([])
+const savingSuggestion = ref('')
+const IGNORED_KEY = `ew-ignored-commitments:${projectId}`
+const ignoredSuggestions = ref(readIgnored())
+const suggestionKey = (s) => `${s.field}|${s.suggestion}`
+const visibleSuggestions = computed(() => suggestions.value.filter((s) => !ignoredSuggestions.value.includes(suggestionKey(s))))
+const pendingSuggestions = computed(() => visibleSuggestions.value.filter((s) => facts.value[s.field] !== s.suggestion))
+
+function readIgnored() {
+  try {
+    return JSON.parse(localStorage.getItem(IGNORED_KEY) || '[]')
+  } catch {
+    return []
+  }
+}
+
+async function loadSuggestions() {
+  try {
+    suggestions.value = (await api.commitmentSuggestions(projectId)).suggestions || []
+  } catch { /* 建议不可用时不影响填写全局事实 */ }
+}
+
+// 只写入被采纳的这一项，不顺带保存表单中其他尚未确认的修改
+async function adoptSuggestion(s) {
+  savingSuggestion.value = s.field
+  try {
+    await store.saveFacts({ ...store.project.facts, [s.field]: s.suggestion })
+    facts.value[s.field] = s.suggestion
+    ElMessage.success(`已采纳到全局事实：${s.field_label}`)
+  } catch (e) {
+    ElMessage.error('保存失败：' + e.message)
+  } finally {
+    savingSuggestion.value = ''
+  }
+}
+
+function ignoreSuggestion(s) {
+  ignoredSuggestions.value = [...ignoredSuggestions.value, suggestionKey(s)]
+  try {
+    localStorage.setItem(IGNORED_KEY, JSON.stringify(ignoredSuggestions.value))
+  } catch { /* 浏览器存储不可用时只在本次打开期间忽略 */ }
+}
+
 const FIELD_LABELS = {
   project_name: '项目名称', tender_number: '招标编号', purchaser_name: '采购人',
   budget_limit: '预算/最高限价', duration_requirement: '工期要求', warranty_period: '质保期',
@@ -179,7 +223,9 @@ function applyAnalysis() {
   const payload = { ...editableAnalysis.value }
   api.applyTender(projectId, payload, pasteText.value).then((res) => {
     store.project.stage = res.stage
-    ElMessage.success(`拆标已应用：提取 ${res.star_count} 条★号红线条款`)
+    suggestions.value = res.commitment_suggestions || []
+    const tip = suggestions.value.length ? `；${suggestions.value.length} 条承诺建议请在「全局事实」步骤确认` : ''
+    ElMessage.success(`拆标已应用：提取 ${res.star_count} 条★号红线条款${tip}`)
   }).catch((e) => ElMessage.error('应用失败：' + e.message))
 }
 
@@ -272,6 +318,7 @@ onMounted(async () => {
   if (p.tender_analysis) {
     analysis.value = { ...p.tender_analysis }
     editableAnalysis.value = { ...p.tender_analysis }
+    loadSuggestions()
   }
   if (p.outline && p.outline.length) {
     chapters.value = p.outline.map((n) => ({
@@ -631,6 +678,29 @@ async function restoreAnalyzeTask() {
             <div class="note note-info">
               <el-icon class="mt-0.5 text-accent-fg shrink-0"><Lock /></el-icon>
               <span>未填写的字段遵循"不编造"纪律：正文中保持模糊或以【待填写】占位，导出前便于定位补齐。</span>
+            </div>
+            <div v-if="visibleSuggestions.length" class="card p-5 sm:p-6">
+              <h3 class="text-sm font-semibold text-ink flex items-center gap-2">
+                承诺确认
+                <span v-if="pendingSuggestions.length" class="chip chip-warn num">{{ pendingSuggestions.length }} 条待确认</span>
+              </h3>
+              <p class="hint mt-1 mb-3">以下措辞只复述招标文件的要求。全局事实会作为硬约束写进每一章，确认企业能够做到再采纳。</p>
+              <ul class="divide-y divide-line">
+                <li v-for="s in visibleSuggestions" :key="s.field" class="py-3 first:pt-0 last:pb-0 flex gap-x-4 gap-y-2 items-start justify-between flex-wrap sm:flex-nowrap">
+                  <div class="min-w-0 space-y-1">
+                    <p class="text-xs text-ink-3">{{ s.field_label }} · 来自拆标「{{ FIELD_LABELS[s.source_field] || s.source_field }}」</p>
+                    <p class="text-sm text-ink leading-relaxed">{{ s.suggestion }}</p>
+                    <p v-if="facts[s.field] && facts[s.field] !== s.suggestion" class="text-xs text-ink-2">当前已填写：{{ facts[s.field] }}</p>
+                  </div>
+                  <span v-if="facts[s.field] === s.suggestion" class="chip chip-ok shrink-0">已采纳</span>
+                  <div v-else class="flex gap-1.5 shrink-0">
+                    <el-button size="small" @click="ignoreSuggestion(s)">忽略</el-button>
+                    <el-button size="small" type="primary" plain :loading="savingSuggestion === s.field" @click="adoptSuggestion(s)">
+                      {{ facts[s.field] ? '替换为建议' : '采纳到全局事实' }}
+                    </el-button>
+                  </div>
+                </li>
+              </ul>
             </div>
             <div class="card p-5 sm:p-6">
               <div class="grid sm:grid-cols-2 gap-x-4 gap-y-3.5">

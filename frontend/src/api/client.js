@@ -201,6 +201,8 @@ export const api = {
   analyzeTenderText: (text) => request('/tender/analyze/text', { method: 'POST', body: { text } }),
   applyTender: (id, analysis, tenderText) =>
     request(`/project/${id}/tender/apply`, { method: 'POST', body: { analysis, tender_text: tenderText } }),
+  // 承诺建议只复述招标要求，用户采纳后经 updateFacts 写入全局事实
+  commitmentSuggestions: (id) => request(`/project/${id}/tender/commitment-suggestions`),
 
   // 大纲
   draftLevel1: (id) => request(`/project/${id}/outline/draft-level1`, { method: 'POST', body: {} }),

@@ -60,17 +60,26 @@ def test_tender_apply_and_facts_linkage():
     assert res.json()["stage"] == "tender_analyzed"
     assert res.json()["star_count"] >= 3
 
-    # 联动：采购人回填 client_name、工期/质保联动全局事实（只补空字段）
+    # 联动：采购人回填 client_name；工期/质保只作为承诺建议返回，全局事实保持不变
     stored = project_store.get(pid)
     assert "水务环境集团" in stored.client_name
-    assert "120个日历日" in stored.facts.delivery_guarantee
-    assert "5年驻场质保" in stored.facts.sla_commitment
+    assert stored.facts.delivery_guarantee == ""
+    assert stored.facts.sla_commitment == ""
+    suggestions = {s["field"]: s for s in res.json()["commitment_suggestions"]}
+    assert "120个日历日" in suggestions["delivery_guarantee"]["suggestion"]
+    assert "5年驻场质保" in suggestions["sla_commitment"]["suggestion"]
+    # 建议措辞只复述招标原文
+    for s in suggestions.values():
+        assert s["requirement"] in TENDER_SAMPLE
+        assert s["suggestion"] == f"按招标要求，{s['requirement']}"
+    res = client.get(f"/api/v1/project/{pid}/tender/commitment-suggestions")
+    assert res.json()["suggestions"] == list(suggestions.values())
 
     # 招标正文存档（偏离表抽取数据源）
     tender_text = project_store.get_tender_text(pid)
     assert "SW-2026-ZB-088" in tender_text
 
-    # 用户已填的事实不被覆盖
+    # 用户已填的事实不被覆盖（再次应用也不改动全局事实）
     stored.facts.delivery_guarantee = "用户自定义工期承诺"
     project_store.save(stored)
     client.post(f"/api/v1/project/{pid}/tender/apply",
@@ -78,6 +87,21 @@ def test_tender_apply_and_facts_linkage():
     assert project_store.get(pid).facts.delivery_guarantee == "用户自定义工期承诺"
 
     client.delete(f"/api/v1/project/{pid}")
+
+
+def test_commitment_suggestions_only_restate_tender():
+    """建议只复述招标要求：不补出 7×24 等原文没有的承诺；未提及的要求不生成建议"""
+    from app.models.schemas import NOT_MENTIONED, TenderAnalysis18
+    from app.services.parser.commitments import suggest_commitments
+
+    items = suggest_commitments(TenderAnalysis18(duration_requirement="90日历天", warranty_period="1年"))
+    assert [(s.field, s.suggestion) for s in items] == [
+        ("delivery_guarantee", "按招标要求，工期为90日历天"),
+        ("sla_commitment", "按招标要求，质保期为1年"),
+    ]
+    assert not any("7×24" in s.suggestion for s in items)
+    assert suggest_commitments(TenderAnalysis18(duration_requirement=NOT_MENTIONED)) == []
+    assert suggest_commitments(None) == []
 
 
 def test_wizard_stage_machine():

@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Body
 from app.core.config import settings
 from app.core.task_manager import task_manager
 from app.models.schemas import TenderAnalysis18
+from app.services.parser.commitments import suggest_commitments
 from app.services.parser.document_parser import describe_source, parse_document, unsupported_reason
 from app.services.parser.tender_analyzer import tender_analyzer
 from app.services.project_store import project_store
@@ -63,19 +64,13 @@ def analyze_tender_text(text: str = Body(..., embed=True)):
     return analysis
 
 
-@router.post("/project/{project_id}/tender/apply", summary="将18项拆标结果应用到项目（联动事实/偏离表建议）")
+@router.post("/project/{project_id}/tender/apply", summary="将18项拆标结果应用到项目（返回承诺建议，不改动全局事实）")
 def apply_tender_analysis(project_id: str, analysis: TenderAnalysis18, tender_text: str = Body(default="", embed=True)):
     def mutate(project):
         project.tender_analysis = analysis
         if analysis.purchaser_name and not project.client_name:
             project.client_name = analysis.purchaser_name
-
-        # 联动填充全局事实（只补充空字段，不覆盖用户已填内容）
-        if analysis.duration_requirement and analysis.duration_requirement != "未提及" and not project.facts.delivery_guarantee:
-            project.facts.delivery_guarantee = f"承诺在【{analysis.duration_requirement}】内保质完成整体交付"
-        if analysis.warranty_period and analysis.warranty_period != "未提及" and not project.facts.sla_commitment:
-            project.facts.sla_commitment = f"承诺提供【{analysis.warranty_period}】及7×24小时全天候响应保障"
-
+        # 全局事实是企业承诺，不在这里自动填写：工期/质保等只作为 commitment_suggestions 返回，由用户采纳
         if project.stage == "created":
             project.stage = "tender_analyzed"
         return project
@@ -90,7 +85,16 @@ def apply_tender_analysis(project_id: str, analysis: TenderAnalysis18, tender_te
         "stage": project.stage,
         "facts": project.facts,
         "star_count": len(analysis.star_disqualification_items),
+        "commitment_suggestions": suggest_commitments(analysis),
     }
+
+
+@router.get("/project/{project_id}/tender/commitment-suggestions", summary="按已应用的拆标结果给出承诺建议（只复述招标要求，采纳后经 PUT facts 写入）")
+def get_commitment_suggestions(project_id: str):
+    project = project_store.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    return {"suggestions": suggest_commitments(project.tender_analysis)}
 
 
 @router.get("/project/{project_id}/tender/text", summary="获取项目已存档的招标文件正文")

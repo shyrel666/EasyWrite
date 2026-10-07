@@ -150,6 +150,15 @@ class TenderAnalysis18(BaseModel):
     source_note: str = Field(default="")
 
 
+class CommitmentSuggestion(BaseModel):
+    """拆标得到的承诺建议：措辞只复述招标要求；经用户采纳后才写入全局事实"""
+    field: str = Field(..., description="目标全局事实字段，如 delivery_guarantee")
+    field_label: str = Field(default="", description="目标事实名称")
+    source_field: str = Field(default="", description="来源拆标字段，如 duration_requirement")
+    requirement: str = Field(..., description="招标文件中的要求（拆标结果原文）")
+    suggestion: str = Field(..., description="建议写入全局事实的措辞")
+
+
 class DeviationItem(BaseModel):
     """技术规格与条款点对点偏离表项"""
     index: int
