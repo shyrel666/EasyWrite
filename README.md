@@ -1,5 +1,7 @@
 <div align="center">
 
+<p><img src="docs/assets/easywrite-logo.svg" width="96" height="96" alt="EasyWrite Logo"></p>
+
 <h1>EasyWrite</h1>
 <p><strong>智能招投标技术标编纂系统</strong></p>
 <p>面向政企信息化与软件工程项目的 AI 标书工作台。</p>

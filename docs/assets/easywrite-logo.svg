@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 48 48" role="img" aria-labelledby="easywrite-title">
+  <title id="easywrite-title">EasyWrite</title>
+  <defs>
+    <linearGradient id="easywrite-background" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2B4874" />
+      <stop offset="1" stop-color="#18294A" />
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="12" fill="url(#easywrite-background)" />
+  <rect x=".5" y=".5" width="47" height="47" rx="11.5" fill="none" stroke="#fff" stroke-opacity=".14" />
+  <g fill="#F8F4EA">
+    <rect x="13" y="12" width="4.8" height="24" rx="1.2" />
+    <rect x="13" y="12" width="18.5" height="4.8" rx="1.2" />
+    <rect x="13" y="21.6" width="13.5" height="4.8" rx="1.2" />
+    <rect x="13" y="31.2" width="13.5" height="4.8" rx="1.2" />
+  </g>
+  <g transform="rotate(-6 33 32.6)">
+    <rect x="29.4" y="29" width="7.2" height="7.2" rx="1.5" fill="#E0573C" />
+    <rect x="30.5" y="30.1" width="5" height="5" rx=".7" fill="none" stroke="#FFF1EC" stroke-width=".55" stroke-opacity=".85" />
+  </g>
+</svg>
