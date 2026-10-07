@@ -89,3 +89,21 @@ def test_latest_compliance_check_is_reported(client, project_id):
     client.put(f"/api/v1/project/{project_id}/facts", json={"company_name": "某公司"})
     _, checks = _preflight(client, project_id)
     assert checks["redlines"]["status"] == "unknown" and "重新核查" in checks["redlines"]["message"]
+
+
+def test_acceptance_missing_certificate_shows_in_quality_and_preflight(client, project_id):
+    """阶段 B 验收：评分项要求某资质、企业已录入但未上传证书 → 质检与导出前清单都显示"缺附件" """
+    analysis = {"scoring_items": [{"id": "s_iso", "name": "企业资质", "points": 2, "response_type": "evidence",
+                                   "criteria": "投标人具有ISO27001信息安全管理体系认证证书得2分"}]}
+    client.post(f"/api/v1/project/{project_id}/tender/apply", json={"analysis": analysis})
+    client.post("/api/v1/assets/qualifications", json={"id": "q_27001", "name": "ISO27001 信息安全管理体系认证",
+                                                       "cert_no": "ISMS-9", "issue_org": "某认证中心"})
+    sug = client.get(f"/api/v1/project/{project_id}/evidence/suggestions").json()["suggestions"]["s_iso"]
+    assert [c["key"] for c in sug] == ["qualifications:q_27001"]  # 示例资质不在建议中
+    client.put(f"/api/v1/project/{project_id}/evidence/s_iso", json={"asset_keys": ["qualifications:q_27001"]})
+
+    quality = client.post(f"/api/v1/project/{project_id}/quality/inspect").json()
+    assert next(c for c in quality["scoring_coverage"] if c["item_id"] == "s_iso")["material_status"] == "缺附件"
+    _, checks = _preflight(client, project_id)
+    assert checks["material"]["details"] == [
+        {"title": "企业资质", "detail": "缺附件：未上传证明附件", "section_id": ""}]
