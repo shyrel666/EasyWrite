@@ -1,43 +1,24 @@
-<div align="center">
-
-<p><img src="docs/assets/easywrite-logo.svg" width="96" height="96" alt="EasyWrite Logo"></p>
-
-<h1>EasyWrite</h1>
-<p><strong>智能招投标技术标编纂系统</strong></p>
-<p>面向政企信息化与软件工程项目的 AI 标书工作台。</p>
-
 <p>
-  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
-  <img src="https://img.shields.io/badge/Vue-3-4FC08D?logo=vuedotjs&logoColor=white" alt="Vue 3">
+  <a href="docs/assets/readme-header-light.svg#gh-light-mode-only">
+    <img src="docs/assets/readme-header-light.svg" width="440" height="96" alt="EasyWrite · 智能招投标技术标编纂系统">
+  </a>
+  <a href="docs/assets/readme-header-dark.svg#gh-dark-mode-only">
+    <img src="docs/assets/readme-header-dark.svg" width="440" height="96" alt="EasyWrite · 智能招投标技术标编纂系统">
+  </a>
 </p>
 
-<p>
-  <a href="#快速开始">快速开始</a> &middot;
-  <a href="#核心功能">核心功能</a> &middot;
-  <a href="#开发与测试">开发与测试</a> &middot;
-  <a href="#开源参考">开源参考</a>
-</p>
+面向政企信息化与软件工程项目的 AI 标书工作台。把招标要求、历史资料与企业资产组织成可核查、可导出的技术标书。
 
-<p>招标解析 &rarr; 大纲确认 &rarr; 章节撰写 &rarr; 核查整改 &rarr; Word 导出</p>
-
-</div>
+[快速开始](#快速开始) · [核心功能](#核心功能) · [开发与测试](#开发与测试) · [开源参考](#开源参考)
 
 ## 快速开始
 
-下载或克隆完整项目，在项目根目录启动，无需预装 Python 或 Node.js。
+下载或克隆完整项目，在项目根目录启动。无需预装 Python 或 Node.js。
 
-**Windows**：双击 `start.bat`，或在 PowerShell 中执行：
-
-```powershell
-.\start.bat
-```
-
-**macOS / Linux**：
-
-```bash
-sh start.sh
-```
+| 平台 | 启动方式 |
+| --- | --- |
+| Windows | 双击 `start.bat`，或在 PowerShell 执行 `.\start.bat` |
+| macOS / Linux | 在终端执行 `sh start.sh` |
 
 首次运行需联网，使用国内镜像自动准备 Python 3.12 与依赖，保存在项目的 `.runtime/` 目录中，后续启动复用缓存。仓库已附带前端构建产物。
 
@@ -70,6 +51,8 @@ AI 设置保存于 `backend/data/ai_settings.json`；也可使用 `backend/.env`
 
 ## 核心功能
 
+**招标解析 → 大纲确认 → 章节撰写 → 核查整改 → Word 导出**
+
 | 功能 | 说明 |
 | --- | --- |
 | 招标解析 | 解析 `.docx` / 文字型 `.pdf`，提取 18 项核心要素、★条款与评分办法 |
@@ -82,6 +65,10 @@ AI 设置保存于 `backend/data/ai_settings.json`；也可使用 `backend/.env`
 暂不支持扫描件、加密或无法提取文本的 PDF，`.doc` 请先转为 `.docx`。导出后在 Word 中更新目录域。
 
 ## 技术栈
+
+![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![Vue 3](https://img.shields.io/badge/Vue-3-4FC08D?logo=vuedotjs&logoColor=white)
 
 | 层级 | 技术 |
 | --- | --- |
