@@ -11,6 +11,9 @@ venv/
 
 # EasyWrite Runtime Data（SQLite 数据库与用户配置为运行时产物）
 backend/data/ai_settings.json
+# 企业资料可能含用户录入的真实企业信息（仓库公开）；预设示例在代码 DEFAULT_* 中，首次启动自动生成
+backend/data/enterprise_assets.json
+backend/data/*.tmp
 backend/data/*.db
 backend/data/*.db-wal
 backend/data/*.db-shm

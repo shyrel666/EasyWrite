@@ -73,6 +73,70 @@ def test_asset_api_integration():
     assert del_res.status_code == 200
     print("    -> 企业中台资产管理接口全套验证通过！")
 
+def test_missing_file_seeds_examples_once(tmp_path):
+    """资料文件不存在（首次启动）时才写入预设示例"""
+    from app.services.assets.asset_manager import EnterpriseAssetManager
+    path = tmp_path / "enterprise_assets.json"
+    manager = EnterpriseAssetManager(path)
+    assert path.exists()
+    assert len(manager.qualifications) == len(EnterpriseAssetManager.DEFAULT_QUALIFICATIONS)
+    # 示例条目是深拷贝：修改实例数据不能污染代码中的预设常量
+    manager.personnel[0]["name"] = "改名"
+    assert EnterpriseAssetManager.DEFAULT_PERSONNEL[0]["name"] != "改名"
+
+
+def test_emptied_category_survives_restart(tmp_path):
+    """某一类被删空后重启：该类保持为空，其他类（含用户录入）不被示例重置"""
+    from app.models.schemas import PersonnelAsset
+    from app.services.assets.asset_manager import EnterpriseAssetManager
+    path = tmp_path / "enterprise_assets.json"
+    manager = EnterpriseAssetManager(path)
+    manager.add_personnel(PersonnelAsset(id="person_user", name="王工", role="项目经理"))
+    for q in list(manager.qualifications):
+        assert manager.delete_qualification(q["id"])
+    assert manager.qualifications == []
+
+    reloaded = EnterpriseAssetManager(path)
+    assert reloaded.qualifications == []
+    assert any(p["id"] == "person_user" for p in reloaded.personnel)
+    assert len(reloaded.cases) == len(EnterpriseAssetManager.DEFAULT_CASES)
+
+
+def test_corrupt_file_is_backed_up_not_reset(tmp_path):
+    """文件损坏：原文件备份，资料库以空库启动，不用示例覆盖；之后重启也不补入示例"""
+    from app.services.assets.asset_manager import EnterpriseAssetManager
+    path = tmp_path / "enterprise_assets.json"
+    path.write_text('{"qualifications": [{"id": "q1"', encoding="utf-8")
+    manager = EnterpriseAssetManager(path)
+    assert manager.get_stats() == {"total_qualifications": 0, "total_personnel": 0,
+                                   "total_cases": 0, "total_components": 0}
+    backups = list(tmp_path.glob("enterprise_assets.json.corrupt-*.bak"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == '{"qualifications": [{"id": "q1"'
+    assert EnterpriseAssetManager(path).get_stats()["total_qualifications"] == 0
+
+
+def test_failed_save_keeps_memory_and_file_consistent(tmp_path, monkeypatch):
+    """写盘失败：抛出异常，内存回到原状态，文件保持原内容"""
+    import pytest
+    from app.models.schemas import CaseContract
+    from app.services.assets import asset_manager as module
+    path = tmp_path / "enterprise_assets.json"
+    manager = module.EnterpriseAssetManager(path)
+    before_file = path.read_text(encoding="utf-8")
+    before_cases = list(manager.cases)
+
+    def broken_replace(*_args, **_kwargs):
+        raise OSError("磁盘已满")
+
+    monkeypatch.setattr(module.os, "replace", broken_replace)
+    with pytest.raises(OSError):
+        manager.add_case(CaseContract(id="case_x", project_name="某项目", client_name="某单位", contract_amount="10 万元"))
+    assert manager.cases == before_cases
+    assert path.read_text(encoding="utf-8") == before_file
+    assert not list(tmp_path.glob("*.tmp"))
+
+
 if __name__ == "__main__":
     if sys.platform == "win32":
         import io

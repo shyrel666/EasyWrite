@@ -1,10 +1,21 @@
+import copy
 import json
+import logging
+import os
+import threading
 import uuid
+from datetime import datetime
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from app.core.config import settings
 from app.models.schemas import (
     CompanyQualification, PersonnelAsset, CaseContract, SolutionComponent
 )
+
+logger = logging.getLogger("easywrite.assets")
+
+ASSET_KINDS = ("qualifications", "personnel", "cases", "components")
+
 
 class EnterpriseAssetManager:
     """
@@ -251,8 +262,9 @@ class EnterpriseAssetManager:
         }
     ]
 
-    def __init__(self):
-        self.storage_file = settings.DATA_DIR / "enterprise_assets.json"
+    def __init__(self, storage_file: Optional[Path] = None):
+        self.storage_file = storage_file or settings.DATA_DIR / "enterprise_assets.json"
+        self._lock = threading.RLock()
         self.qualifications: List[Dict[str, Any]] = []
         self.personnel: List[Dict[str, Any]] = []
         self.cases: List[Dict[str, Any]] = []
@@ -260,38 +272,72 @@ class EnterpriseAssetManager:
         self._load_or_init()
 
     def _load_or_init(self):
-        if self.storage_file.exists():
-            try:
-                with open(self.storage_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self.qualifications = data.get("qualifications", [])
-                    self.personnel = data.get("personnel", [])
-                    self.cases = data.get("cases", [])
-                    self.components = data.get("components", [])
-                    if self.qualifications:
-                        return
-            except Exception as e:
-                print(f"[AssetManager] 加载资产失败: {e}，使用初始预设资产")
+        """
+        读取资料文件。只有文件不存在（首次启动）时才写入预设示例；
+        文件存在时某一类为空就保持为空——用户删空的资料不能在重启后被示例补回或连带重置其他类。
+        文件损坏时先把原文件备份为 *.corrupt-时间.bak，再以空库启动，不用示例覆盖。
+        """
+        with self._lock:
+            if not self.storage_file.exists():
+                self.qualifications = copy.deepcopy(self.DEFAULT_QUALIFICATIONS)
+                self.personnel = copy.deepcopy(self.DEFAULT_PERSONNEL)
+                self.cases = copy.deepcopy(self.DEFAULT_CASES)
+                self.components = copy.deepcopy(self.DEFAULT_COMPONENTS)
+                self._save()
+                return
 
-        # 初始化预设资产
-        self.qualifications = list(self.DEFAULT_QUALIFICATIONS)
-        self.personnel = list(self.DEFAULT_PERSONNEL)
-        self.cases = list(self.DEFAULT_CASES)
-        self.components = list(self.DEFAULT_COMPONENTS)
-        self._save()
+            try:
+                data = json.loads(self.storage_file.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    raise ValueError("资料文件顶层不是 JSON 对象")
+            except Exception:
+                stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                backup = self.storage_file.with_name(f"{self.storage_file.name}.corrupt-{stamp}.bak")
+                logger.exception("企业资料文件无法解析，已备份为 %s，资料库以空库启动", backup.name)
+                os.replace(self.storage_file, backup)
+                data = {}
+
+            for kind in ASSET_KINDS:
+                items = data.get(kind)
+                setattr(self, kind, list(items) if isinstance(items, list) else [])
+            if not data:
+                self._save()  # 损坏文件已备份：写回空库，避免下次启动因文件缺失而补入示例
 
     def _save(self):
+        """先写临时文件再原子替换，写到一半中断也不会留下截断的资料文件；失败时抛出异常"""
+        payload = {kind: getattr(self, kind) for kind in ASSET_KINDS}
+        tmp = self.storage_file.with_name(f"{self.storage_file.name}.tmp")
         try:
-            payload = {
-                "qualifications": self.qualifications,
-                "personnel": self.personnel,
-                "cases": self.cases,
-                "components": self.components
-            }
-            with open(self.storage_file, "w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"[AssetManager] 保存资产持久化文件失败: {e}")
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(tmp, self.storage_file)
+        except Exception:
+            logger.exception("保存企业资料文件失败")
+            tmp.unlink(missing_ok=True)
+            raise
+
+    def _commit(self, kind: str, items: List[Dict[str, Any]]):
+        """替换某一类资料并落盘；写盘失败时恢复内存中的原列表，保证内存与文件一致"""
+        with self._lock:
+            previous = getattr(self, kind)
+            setattr(self, kind, items)
+            try:
+                self._save()
+            except Exception:
+                setattr(self, kind, previous)
+                raise
+
+    def _add(self, kind: str, item: Dict[str, Any]):
+        with self._lock:
+            self._commit(kind, getattr(self, kind) + [item])
+
+    def _delete(self, kind: str, item_id: str) -> bool:
+        with self._lock:
+            current = getattr(self, kind)
+            remaining = [x for x in current if x.get("id") != item_id]
+            if len(remaining) == len(current):
+                return False
+            self._commit(kind, remaining)
+            return True
 
     # ==================== 1. 资质库 CRUD ====================
 
@@ -307,17 +353,11 @@ class EnterpriseAssetManager:
     def add_qualification(self, qual: CompanyQualification) -> CompanyQualification:
         if not qual.id:
             qual.id = f"qual_{uuid.uuid4().hex[:8]}"
-        self.qualifications.append(qual.model_dump())
-        self._save()
+        self._add("qualifications", qual.model_dump())
         return qual
 
     def delete_qualification(self, qual_id: str) -> bool:
-        init_len = len(self.qualifications)
-        self.qualifications = [q for q in self.qualifications if q.get("id") != qual_id]
-        if len(self.qualifications) != init_len:
-            self._save()
-            return True
-        return False
+        return self._delete("qualifications", qual_id)
 
     # ==================== 2. 人员证书库 CRUD ====================
 
@@ -333,17 +373,11 @@ class EnterpriseAssetManager:
     def add_personnel(self, person: PersonnelAsset) -> PersonnelAsset:
         if not person.id:
             person.id = f"person_{uuid.uuid4().hex[:8]}"
-        self.personnel.append(person.model_dump())
-        self._save()
+        self._add("personnel", person.model_dump())
         return person
 
     def delete_personnel(self, person_id: str) -> bool:
-        init_len = len(self.personnel)
-        self.personnel = [p for p in self.personnel if p.get("id") != person_id]
-        if len(self.personnel) != init_len:
-            self._save()
-            return True
-        return False
+        return self._delete("personnel", person_id)
 
     # ==================== 3. 历史同类业绩库 CRUD ====================
 
@@ -359,17 +393,11 @@ class EnterpriseAssetManager:
     def add_case(self, case_item: CaseContract) -> CaseContract:
         if not case_item.id:
             case_item.id = f"case_{uuid.uuid4().hex[:8]}"
-        self.cases.append(case_item.model_dump())
-        self._save()
+        self._add("cases", case_item.model_dump())
         return case_item
 
     def delete_case(self, case_id: str) -> bool:
-        init_len = len(self.cases)
-        self.cases = [c for c in self.cases if c.get("id") != case_id]
-        if len(self.cases) != init_len:
-            self._save()
-            return True
-        return False
+        return self._delete("cases", case_id)
 
     # ==================== 4. 方案组件库 CRUD ====================
 
@@ -385,17 +413,11 @@ class EnterpriseAssetManager:
     def add_component(self, comp: SolutionComponent) -> SolutionComponent:
         if not comp.id:
             comp.id = f"comp_{uuid.uuid4().hex[:8]}"
-        self.components.append(comp.model_dump())
-        self._save()
+        self._add("components", comp.model_dump())
         return comp
 
     def delete_component(self, comp_id: str) -> bool:
-        init_len = len(self.components)
-        self.components = [c for c in self.components if c.get("id") != comp_id]
-        if len(self.components) != init_len:
-            self._save()
-            return True
-        return False
+        return self._delete("components", comp_id)
 
     # ==================== 5. 智能撰写资产关联匹配 ====================
 
