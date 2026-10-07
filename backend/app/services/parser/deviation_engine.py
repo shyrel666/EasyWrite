@@ -266,7 +266,7 @@ class DeviationEngine:
                 f"【条款等级】：{LEVEL_LABELS.get(item.level, '一般条款')}"
                 f"{'（绝不可产生负偏离）' if item.level == 'redline' else ''}\n"
                 f"【我司全局事实】：{self._facts_text(facts)}\n"
-                f"【企业中台可用资产】：{comp_context or '无匹配资产'}\n"
+                f"【企业资料（用户录入）】：{comp_context or '无匹配资料'}\n"
                 f"【历史标书参考】：{ref_context or '无'}\n\n"
                 f"请以 JSON 格式输出：\n"
                 f'{{"response_status": "完全满足" 或 "正偏离", "response_detail": "点对点具体技术佐证阐述（50~120字）"}}'

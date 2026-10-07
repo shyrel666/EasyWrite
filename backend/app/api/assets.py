@@ -16,6 +16,11 @@ def get_assets_stats():
     return asset_manager.get_stats()
 
 
+@router.delete("/examples", summary="清除全部预设示例资料（四类资料中 status=example 的条目）")
+def clear_example_assets():
+    return {"status": "success", "removed": asset_manager.clear_examples()}
+
+
 @router.get("/qualifications", response_model=List[CompanyQualification], summary="查询企业资质认证列表")
 def list_company_qualifications(category: Optional[str] = None, search: Optional[str] = None):
     return asset_manager.list_qualifications(category, search)

@@ -251,6 +251,7 @@ export const api = {
     list: (type, params = '') => request(`/assets/${type}${params}`),
     add: (type, body) => request(`/assets/${type}`, { method: 'POST', body }),
     remove: (type, id) => request(`/assets/${type}/${id}`, { method: 'DELETE' }),
+    clearExamples: () => request('/assets/examples', { method: 'DELETE' }),
   },
 
   // 模板与导出

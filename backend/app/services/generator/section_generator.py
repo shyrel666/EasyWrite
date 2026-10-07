@@ -138,10 +138,10 @@ class SectionGenerator:
         refs = retrieval["refs"]
         reference_context = retrieval_service.build_reference_prompt(refs)
 
-        # ---- 企业中台资产匹配 ----
+        # ---- 企业资料匹配（只用用户录入的资料，示例资料不进入提示词） ----
         matched_asset = asset_manager.match_assets_for_section(section_title, requirements)
         asset_context = (
-            f"\n【企业中台权威资产库（优先复用与论述）】：\n{matched_asset['context_text']}"
+            f"\n【企业资料（用户录入）】：\n{matched_asset['context_text']}"
             if matched_asset.get("context_text") else ""
         )
 
@@ -182,7 +182,7 @@ class SectionGenerator:
 {reference_context if reference_context else '（知识库无高置信参考，请基于业界顶级规范自主设计，严禁套用无关领域方案）'}
 
 【编写任务】：
-请针对上述章节，融合可用的参考资料与企业资产中的成熟经验，输出详尽、专业的技术标书正文。
+请针对上述章节，融合可用的参考资料与企业资料，输出详尽、专业的技术标书正文；企业资质、人员、业绩等事实只能取自上面的企业资料与全局事实。
 要求：
 1. 方案行文中体现投标主体与核心产品的具体应用与保障（以全局事实为准）；
 2. 如涉及架构设计或流转机制，附带一段规范的 ```mermaid 架构图；

@@ -61,7 +61,7 @@
 | `UV_PYTHON_INSTALL_MIRROR` | Python 运行时 | `https://registry.npmmirror.com/-/binary/python-build-standalone` |
 | `EASYWRITE_UV_MIRROR` | uv 启动工具 | `https://pypi.tuna.tsinghua.edu.cn` |
 
-AI 设置保存于 `backend/data/ai_settings.json`；也可使用 `backend/.env`，配置项见 [环境变量示例](backend/.env.example)。这两个配置文件均由 Git 忽略。
+AI 设置保存于 `backend/data/ai_settings.json`；也可使用 `backend/.env`，配置项见 [环境变量示例](backend/.env.example)。这两个配置文件均由 Git 忽略。企业资料保存于 `backend/data/enterprise_assets.json`，同样由 Git 忽略；首次启动生成的示例资料不会写入标书，可在「企业资产」页一键清除。
 
 </details>
 

@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, Any
+from typing import List, Literal, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 # 哨兵值：字段未在招标文件中出现时的显式占位（绝不静默编造默认值）
@@ -246,6 +246,11 @@ class OutlineUpdateRequest(BaseModel):
 
 # ==================== 企业集中中台资产模型 (借鉴 Yibiao-Web) ====================
 
+# 企业资料状态：example 预设示例（只展示格式，不进入撰写）/ unverified 待核实 / confirmed 用户确认
+AssetStatus = Literal["example", "unverified", "confirmed"]
+ASSET_STATUS_FIELD = dict(default="confirmed", description="资料状态：example 预设示例 / unverified 待核实 / confirmed 用户确认")
+
+
 class CompanyQualification(BaseModel):
     """企业法定与行业资质资产（如涉密、CMMI、ISO、高新等）"""
     id: str
@@ -258,6 +263,7 @@ class CompanyQualification(BaseModel):
     expiry_date: str = Field(default="", description="有效期截止日期")
     summary: str = Field(default="", description="资质适用投标场景与得分说明")
     proof_doc: str = Field(default="", description="证明附件文件或索引编号")
+    status: AssetStatus = Field(**ASSET_STATUS_FIELD)
 
 
 class PersonnelAsset(BaseModel):
@@ -265,12 +271,14 @@ class PersonnelAsset(BaseModel):
     id: str
     name: str = Field(..., description="人员姓名")
     role: str = Field(..., description="标书拟任岗位: 项目经理/技术总监/架构师/安全专家/实施工程师")
-    years_of_experience: int = Field(default=8, description="相关行业从业年限")
-    education: str = Field(default="大学本科", description="最高学历与毕业院校专业")
-    professional_title: str = Field(default="高级工程师", description="技术职称与执业资格")
+    # 未填写的履历字段留空，不用"8年/大学本科/高级工程师"之类的默认值代替企业事实
+    years_of_experience: Optional[int] = Field(default=None, description="相关行业从业年限")
+    education: str = Field(default="", description="最高学历与毕业院校专业")
+    professional_title: str = Field(default="", description="技术职称与执业资格")
     certificates: List[str] = Field(default_factory=list, description="持证清单: 如 PMP/CISP/软考高项/ITIL等")
     representative_projects: List[str] = Field(default_factory=list, description="曾担任核心负责人的代表性中标业绩")
     intro: str = Field(default="", description="个人专业能力综合述评（直接用于标书人员简历章节）")
+    status: AssetStatus = Field(**ASSET_STATUS_FIELD)
 
 
 class CaseContract(BaseModel):
@@ -282,8 +290,9 @@ class CaseContract(BaseModel):
     sign_date: str = Field(default="", description="合同签约时间")
     contract_category: str = Field(default="政企软件", description="业务领域分类")
     key_deliverables: List[str] = Field(default_factory=list, description="核心交付模块与技术亮点")
-    acceptance_status: str = Field(default="已完成终验并平稳运行", description="履约验收结论")
+    acceptance_status: str = Field(default="", description="履约验收结论")
     summary: str = Field(default="", description="项目背景与成效总结（可直接插入标书业绩章节）")
+    status: AssetStatus = Field(**ASSET_STATUS_FIELD)
 
 
 class SolutionComponent(BaseModel):
@@ -294,6 +303,7 @@ class SolutionComponent(BaseModel):
     tags: List[str] = Field(default_factory=list, description="技术标签")
     summary: str = Field(default="", description="方案组件架构设计概述")
     content: str = Field(..., description="经过实战检验的标准技术方案正文（含架构描述与表格）")
+    status: AssetStatus = Field(**ASSET_STATUS_FIELD)
 
 
 # ==================== 八维质检与降AI味模型 (借鉴 YuduBid) ====================

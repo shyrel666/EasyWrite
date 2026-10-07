@@ -15,6 +15,7 @@ from app.models.schemas import (
 logger = logging.getLogger("easywrite.assets")
 
 ASSET_KINDS = ("qualifications", "personnel", "cases", "components")
+ASSET_STATUSES = ("example", "unverified", "confirmed")
 
 
 class EnterpriseAssetManager:
@@ -271,18 +272,21 @@ class EnterpriseAssetManager:
         self.components: List[Dict[str, Any]] = []
         self._load_or_init()
 
+    def _defaults(self, kind: str) -> List[Dict[str, Any]]:
+        """预设示例（深拷贝，标记为 example：只展示录入格式，不进入撰写提示词）"""
+        return [dict(item, status="example") for item in copy.deepcopy(getattr(self, f"DEFAULT_{kind.upper()}"))]
+
     def _load_or_init(self):
         """
         读取资料文件。只有文件不存在（首次启动）时才写入预设示例；
         文件存在时某一类为空就保持为空——用户删空的资料不能在重启后被示例补回或连带重置其他类。
         文件损坏时先把原文件备份为 *.corrupt-时间.bak，再以空库启动，不用示例覆盖。
+        旧数据没有 status：ID 属于预设示例的标为 example，其余视为用户录入、标为 confirmed，并写回文件。
         """
         with self._lock:
             if not self.storage_file.exists():
-                self.qualifications = copy.deepcopy(self.DEFAULT_QUALIFICATIONS)
-                self.personnel = copy.deepcopy(self.DEFAULT_PERSONNEL)
-                self.cases = copy.deepcopy(self.DEFAULT_CASES)
-                self.components = copy.deepcopy(self.DEFAULT_COMPONENTS)
+                for kind in ASSET_KINDS:
+                    setattr(self, kind, self._defaults(kind))
                 self._save()
                 return
 
@@ -297,11 +301,18 @@ class EnterpriseAssetManager:
                 os.replace(self.storage_file, backup)
                 data = {}
 
+            migrated = False
             for kind in ASSET_KINDS:
                 items = data.get(kind)
-                setattr(self, kind, list(items) if isinstance(items, list) else [])
-            if not data:
-                self._save()  # 损坏文件已备份：写回空库，避免下次启动因文件缺失而补入示例
+                items = [x for x in items if isinstance(x, dict)] if isinstance(items, list) else []
+                example_ids = {x["id"] for x in getattr(self, f"DEFAULT_{kind.upper()}")}
+                for item in items:
+                    if item.get("status") not in ASSET_STATUSES:
+                        item["status"] = "example" if item.get("id") in example_ids else "confirmed"
+                        migrated = True
+                setattr(self, kind, items)
+            if migrated or not data:
+                self._save()  # 写回迁移后的状态；损坏文件已备份时写回空库，避免下次启动补入示例
 
     def _save(self):
         """先写临时文件再原子替换，写到一半中断也不会留下截断的资料文件；失败时抛出异常"""
@@ -315,20 +326,28 @@ class EnterpriseAssetManager:
             tmp.unlink(missing_ok=True)
             raise
 
-    def _commit(self, kind: str, items: List[Dict[str, Any]]):
-        """替换某一类资料并落盘；写盘失败时恢复内存中的原列表，保证内存与文件一致"""
+    def _commit(self, updates: Dict[str, List[Dict[str, Any]]]):
+        """替换一类或多类资料并落盘；写盘失败时恢复内存中的原列表，保证内存与文件一致"""
         with self._lock:
-            previous = getattr(self, kind)
-            setattr(self, kind, items)
+            previous = {kind: getattr(self, kind) for kind in updates}
+            for kind, items in updates.items():
+                setattr(self, kind, items)
             try:
                 self._save()
             except Exception:
-                setattr(self, kind, previous)
+                for kind, items in previous.items():
+                    setattr(self, kind, items)
                 raise
 
     def _add(self, kind: str, item: Dict[str, Any]):
+        """新增或更新：ID 已存在时原位替换（编辑资料），否则追加"""
         with self._lock:
-            self._commit(kind, getattr(self, kind) + [item])
+            current = getattr(self, kind)
+            if any(x.get("id") == item["id"] for x in current):
+                items = [item if x.get("id") == item["id"] else x for x in current]
+            else:
+                items = current + [item]
+            self._commit({kind: items})
 
     def _delete(self, kind: str, item_id: str) -> bool:
         with self._lock:
@@ -336,8 +355,22 @@ class EnterpriseAssetManager:
             remaining = [x for x in current if x.get("id") != item_id]
             if len(remaining) == len(current):
                 return False
-            self._commit(kind, remaining)
+            self._commit({kind: remaining})
             return True
+
+    def clear_examples(self) -> Dict[str, int]:
+        """一次性删除四类资料中的全部预设示例，返回各类删除条数"""
+        with self._lock:
+            updates, removed = {}, {}
+            for kind in ASSET_KINDS:
+                current = getattr(self, kind)
+                kept = [x for x in current if x.get("status") != "example"]
+                removed[kind] = len(current) - len(kept)
+                if removed[kind]:
+                    updates[kind] = kept
+            if updates:
+                self._commit(updates)
+            return removed
 
     # ==================== 1. 资质库 CRUD ====================
 
@@ -419,11 +452,21 @@ class EnterpriseAssetManager:
     def delete_component(self, comp_id: str) -> bool:
         return self._delete("components", comp_id)
 
-    # ==================== 5. 智能撰写资产关联匹配 ====================
+    # ==================== 5. 撰写时的资料匹配 ====================
+
+    @staticmethod
+    def _mark(item) -> str:
+        return "（待核实：未经企业确认，正文中只能写作【待核实：…】）" if item.status == "unverified" else ""
+
+    @staticmethod
+    def _usable(items: list) -> list:
+        """预设示例只用于展示录入格式，绝不进入撰写"""
+        return [x for x in items if x.status != "example"]
 
     def match_assets_for_section(self, section_title: str, requirements: List[str]) -> Dict[str, Any]:
         """
-        根据当前撰写章节的主题，智能匹配企业中台最相关的资产
+        根据当前撰写章节的主题匹配企业资料（只用用户录入的资料，排除预设示例）。
+        团队/资质/业绩类章节没有可用资料时返回"未录入"说明，提示模型按事实完备纪律处理、不得编造。
         """
         text = f"{section_title} {' '.join(requirements)}"
         matched = {
@@ -433,52 +476,65 @@ class EnterpriseAssetManager:
             "items": []
         }
 
+        def fill(kind: str, title: str, items: list, header: str, lines: List[str], missing: str):
+            matched.update(type=kind, title=title, items=[x.model_dump() for x in items])
+            matched["context_text"] = "\n".join([header] + lines) if items else missing
+            return matched
+
         # 1. 团队人员/组织架构章节
         if any(kw in text for kw in ["实施团队", "人员配置", "项目团队", "项目经理", "架构师", "技术人员"]):
-            personnel = self.list_personnel()
-            lines = ["【企业中台推荐拟任核心团队配置】："]
+            personnel = self._usable(self.list_personnel())
+            lines = []
             for p in personnel:
-                certs = "、".join(p.certificates) if p.certificates else "相关专业技术认证"
-                lines.append(f"- **{p.role}**：{p.name}（{p.education}，从业{p.years_of_experience}年，技术职称：{p.professional_title}，持有证书：{certs}）\n  述评：{p.intro}")
-            matched["type"] = "personnel"
-            matched["title"] = "企业核心技术团队资产"
-            matched["context_text"] = "\n".join(lines)
-            matched["items"] = [p.model_dump() for p in personnel]
-            return matched
+                details = "，".join(x for x in [
+                    p.education,
+                    f"从业{p.years_of_experience}年" if p.years_of_experience is not None else "",
+                    f"职称：{p.professional_title}" if p.professional_title else "",
+                    f"持有证书：{'、'.join(p.certificates)}" if p.certificates else "",
+                ] if x)
+                lines.append(f"- **{p.role}**：{p.name}（{details or '履历未填写'}）{self._mark(p)}"
+                             + (f"\n  简介：{p.intro}" if p.intro else ""))
+            return fill("personnel", "企业资料：拟任团队人员", personnel,
+                        "【拟任团队人员（用户录入，人员事实只能取自以下条目）】：", lines,
+                        "【拟任团队人员】企业尚未录入人员资料：人员姓名、证书、从业年限按事实完备纪律处理，不得编造。")
 
         # 2. 资质资信/合规准入章节
         if any(kw in text for kw in ["资质", "准入", "CMMI", "ISO", "高新", "涉密", "信用"]):
-            quals = self.list_qualifications()
-            lines = ["【企业中台已认证核心资质清单】："]
+            quals = self._usable(self.list_qualifications())
+            lines = []
             for q in quals:
-                lines.append(f"- **{q.name}**（级别：{q.level or '合格'}，证书号：{q.cert_no}，发证机关：{q.issue_org}，有效期至：{q.expiry_date}）\n  响应说明：{q.summary}")
-            matched["type"] = "qualification"
-            matched["title"] = "企业合规资质资产"
-            matched["context_text"] = "\n".join(lines)
-            matched["items"] = [q.model_dump() for q in quals]
-            return matched
+                details = "，".join(x for x in [
+                    f"级别：{q.level}" if q.level else "",
+                    f"证书号：{q.cert_no}" if q.cert_no else "",
+                    f"发证机关：{q.issue_org}" if q.issue_org else "",
+                    f"有效期至：{q.expiry_date}" if q.expiry_date else "",
+                ] if x)
+                lines.append(f"- **{q.name}**（{details}）{self._mark(q)}" + (f"\n  说明：{q.summary}" if q.summary else ""))
+            return fill("qualification", "企业资料：资质证书", quals,
+                        "【资质证书（用户录入，资质事实只能取自以下条目）】：", lines,
+                        "【资质证书】企业尚未录入资质资料：不得声称持有任何具体资质或证书编号，按事实完备纪律处理。")
 
         # 3. 类似业绩/成功案例章节
         if any(kw in text for kw in ["业绩", "案例", "项目经历", "类似项目", "成功案例"]):
-            cases = self.list_cases()
-            lines = ["【企业中台同类标杆中标案例清单】："]
+            cases = self._usable(self.list_cases())
+            lines = []
             for c in cases:
-                lines.append(f"- **{c.project_name}**（客户：{c.client_name}，合同额：{c.contract_amount}，签约时间：{c.sign_date}，结论：{c.acceptance_status}）\n  亮点总结：{c.summary}")
-            matched["type"] = "case"
-            matched["title"] = "同类重大中标业绩案例"
-            matched["context_text"] = "\n".join(lines)
-            matched["items"] = [c.model_dump() for c in cases]
-            return matched
+                details = "，".join(x for x in [
+                    f"客户：{c.client_name}" if c.client_name else "",
+                    f"合同额：{c.contract_amount}" if c.contract_amount else "",
+                    f"签约时间：{c.sign_date}" if c.sign_date else "",
+                    f"验收结论：{c.acceptance_status}" if c.acceptance_status else "",
+                ] if x)
+                lines.append(f"- **{c.project_name}**（{details}）{self._mark(c)}" + (f"\n  概述：{c.summary}" if c.summary else ""))
+            return fill("case", "企业资料：类似项目业绩", cases,
+                        "【类似项目业绩（用户录入，业绩事实只能取自以下条目）】：", lines,
+                        "【类似项目业绩】企业尚未录入业绩资料：不得编造项目名称、客户与合同金额，按事实完备纪律处理。")
 
-        # 4. 技术方案组件匹配 (双活/安全等保/信创/运维SLA)
-        for comp in self.components:
-            tags = comp.get("tags", [])
-            cat = comp.get("category", "")
-            if cat in text or any(t in text for t in tags):
-                matched["type"] = "component"
-                matched["title"] = f"企业标准方案组件：{comp['name']}"
-                matched["context_text"] = f"【企业标准方案组件参考 - {comp['name']}】：\n{comp['content']}"
-                matched["items"] = [comp]
+        # 4. 技术方案组件匹配（按分类/标签）
+        for comp in self._usable(self.list_components()):
+            if comp.category in text or any(t in text for t in comp.tags):
+                matched.update(type="component", title=f"企业资料：方案组件 {comp.name}", items=[comp.model_dump()])
+                matched["context_text"] = f"【企业方案组件（用户录入）- {comp.name}】{self._mark(comp)}：\n{comp.content}"
                 return matched
 
         return matched
@@ -488,7 +544,8 @@ class EnterpriseAssetManager:
             "total_qualifications": len(self.qualifications),
             "total_personnel": len(self.personnel),
             "total_cases": len(self.cases),
-            "total_components": len(self.components)
+            "total_components": len(self.components),
+            "total_examples": sum(1 for kind in ASSET_KINDS for x in getattr(self, kind) if x.get("status") == "example"),
         }
 
 asset_manager = EnterpriseAssetManager()

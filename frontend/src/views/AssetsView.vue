@@ -45,6 +45,13 @@ const TYPES = [
   ]},
 ]
 
+// 资料状态：示例只展示录入格式、不参与撰写；待核实资料在正文中以【待核实】标注
+const STATUS = {
+  confirmed: { label: '已确认', hint: '可作为企业事实写入标书' },
+  unverified: { label: '待核实', hint: '撰写时正文以【待核实：…】标注', chip: 'chip-warn' },
+  example: { label: '示例', hint: '预设示例，不参与撰写', chip: 'chip-mute' },
+}
+
 const activeType = ref('qualifications')
 const currentType = computed(() => TYPES.find((t) => t.key === activeType.value))
 
@@ -58,16 +65,13 @@ const list = ref([])
 const stats = ref({})
 const dialogVisible = ref(false)
 const editing = ref(null)
+const editingStatus = ref('')
 
+// 不预填学历、职称、从业年限等履历：留空就是未提供，不能用默认值代替企业事实
 const blankForm = () => {
-  const form = { id: '' }
+  const form = { id: '', status: 'confirmed' }
   const t = TYPES.find((t) => t.key === activeType.value)
-  for (const f of t.fields) form[f.k] = f.area ? '' : ''
-  if (activeType.value === 'personnel') {
-    form.years_of_experience = 8
-    form.education = '大学本科'
-    form.professional_title = '高级工程师'
-  }
+  for (const f of t.fields) form[f.k] = ''
   return form
 }
 
@@ -82,13 +86,37 @@ async function load() {
 function openAdd() {
   Object.assign(form, blankForm())
   editing.value = null
+  editingStatus.value = ''
   dialogVisible.value = true
 }
 
 function openEdit(item) {
-  Object.assign(form, blankForm(), JSON.parse(JSON.stringify(item)))
+  const data = JSON.parse(JSON.stringify(item))
+  for (const k of ['certificates', 'key_deliverables', 'tags']) {
+    if (Array.isArray(data[k])) data[k] = data[k].join('、')
+  }
+  if (data.years_of_experience == null) data.years_of_experience = ''
+  Object.assign(form, blankForm(), data)
   editing.value = item.id
+  editingStatus.value = item.status
   dialogVisible.value = true
+}
+
+// 示例条目编辑时保留"示例"选项，需用户明确改为已确认或待核实才会参与撰写
+const statusOptions = computed(() => Object.keys(STATUS).filter((k) => k !== 'example' || editingStatus.value === 'example'))
+const exampleCount = computed(() => stats.value.total_examples || 0)
+
+async function clearExamples() {
+  try {
+    await ElMessageBox.confirm(`删除全部 ${exampleCount.value} 条预设示例资料？用户录入的资料不受影响。`, '清除示例资料', { type: 'warning' })
+  } catch { return }
+  try {
+    await api.assets.clearExamples()
+    ElMessage.success('示例资料已清除')
+    load()
+  } catch (e) {
+    ElMessage.error('清除失败：' + e.message)
+  }
 }
 
 async function save() {
@@ -106,7 +134,10 @@ async function save() {
       payload[f.k] = String(payload[f.k] || '').split(/[、,]/).map((s) => s.trim()).filter(Boolean)
     }
   }
-  if (activeType.value === 'personnel') payload.years_of_experience = Number(payload.years_of_experience) || 0
+  if (activeType.value === 'personnel') {
+    const years = String(payload.years_of_experience ?? '').trim()
+    payload.years_of_experience = years === '' || Number.isNaN(Number(years)) ? null : Number(years)
+  }
   try {
     await api.assets.add(activeType.value, payload)
     ElMessage.success(editing.value ? '已更新' : '已新增')
@@ -134,10 +165,10 @@ function cardTitle(item) {
   return item.name || item.project_name || item.id
 }
 function cardSub(item) {
-  const t = TYPES.find((t) => t.key === activeType.value)
-  if (activeType.value === 'qualifications') return `${item.level || ''} · ${item.issue_org}`
-  if (activeType.value === 'personnel') return `${item.role} · ${item.years_of_experience}年经验`
-  if (activeType.value === 'cases') return `${item.client_name} · ${item.contract_amount}`
+  const join = (parts) => parts.filter(Boolean).join(' · ')
+  if (activeType.value === 'qualifications') return join([item.level, item.issue_org])
+  if (activeType.value === 'personnel') return join([item.role, item.years_of_experience != null && `${item.years_of_experience}年经验`])
+  if (activeType.value === 'cases') return join([item.client_name, item.contract_amount])
   return item.category || item.tags?.join(' / ') || ''
 }
 
@@ -158,7 +189,7 @@ onMounted(load)
       <PageHeader
         eyebrow="企业资产"
         title="企业资产中台"
-        description="资质、人员、业绩与方案组件在章节撰写时自动匹配注入；组件正文可直接作为可复用的方案段落。"
+        description="已确认和待核实的资质、人员、业绩与方案组件在章节撰写时按主题匹配引用；示例资料只展示录入格式，不会写入标书。"
       >
         <template #actions>
           <el-button type="primary" @click="openAdd"><el-icon class="mr-1.5"><Plus /></el-icon>录入{{ currentType.label }}</el-button>
@@ -178,7 +209,13 @@ onMounted(load)
         </button>
       </div>
 
-      <EmptyState v-if="!list.length" :icon="currentType.icon" :title="`暂无${currentType.label}`" description="录入后在标书生成时自动匹配引用。">
+      <div v-if="exampleCount" class="note note-warn mb-5 items-center flex-wrap">
+        <el-icon class="text-warn shrink-0"><WarningFilled /></el-icon>
+        <span class="flex-1 min-w-[14rem]">资料库中有 <b class="num">{{ exampleCount }}</b> 条预设示例（人员、证书编号、业绩均为虚构），只用于展示录入格式，不会写入标书。录入企业真实资料后可一键清除。</span>
+        <el-button size="small" @click="clearExamples">清除全部示例资料</el-button>
+      </div>
+
+      <EmptyState v-if="!list.length" :icon="currentType.icon" :title="`暂无${currentType.label}`" description="录入后在撰写相关章节时引用；未录入时正文以【待填写】占位，不会使用示例资料。">
         <el-button @click="openAdd">录入第一条</el-button>
       </EmptyState>
 
@@ -198,7 +235,9 @@ onMounted(load)
               <el-icon :size="18"><component :is="currentType.icon" /></el-icon>
             </span>
             <div class="min-w-0 flex-1">
-              <p class="text-sm font-semibold text-ink leading-snug line-clamp-2">{{ cardTitle(item) }}</p>
+              <p class="text-sm font-semibold text-ink leading-snug line-clamp-2">
+                <span v-if="STATUS[item.status]?.chip" class="chip mr-1 align-[1px]" :class="STATUS[item.status].chip" :title="STATUS[item.status].hint">{{ STATUS[item.status].label }}</span>{{ cardTitle(item) }}
+              </p>
               <p class="text-xs text-ink-2 mt-1 line-clamp-1">{{ cardSub(item) }}</p>
             </div>
             <div class="flex shrink-0 -mr-1.5 -mt-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition">
@@ -217,6 +256,11 @@ onMounted(load)
       <el-dialog v-model="dialogVisible" :title="`${editing ? '编辑' : '录入'}${currentType.label}`" width="min(620px, 94vw)">
         <el-form label-position="top" @submit.prevent>
           <div class="grid sm:grid-cols-2 gap-x-4">
+            <el-form-item label="资料状态" class="sm:col-span-2">
+              <el-select v-model="form.status" class="w-full">
+                <el-option v-for="k in statusOptions" :key="k" :label="`${STATUS[k].label} · ${STATUS[k].hint}`" :value="k" />
+              </el-select>
+            </el-form-item>
             <el-form-item
               v-for="f in currentType.fields"
               :key="f.k"
