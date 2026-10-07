@@ -244,11 +244,13 @@ class DeviationEngine:
         return "（投标主体事实未配置——请给出通用但具体的技术路径表述，不得提及具体公司名）"
 
     @staticmethod
-    def _item_context(item: DeviationItem) -> Tuple[str, str]:
+    def _item_context(item: DeviationItem, exclude=None) -> Tuple[str, str]:
+        """exclude：资料排除规则（evidence.generation_filter），证书过期、主体不符的资料不进入应答提示词"""
         retrieval = retrieval_service.retrieve(query=item.clause_title, top_k=2, rerank=False)
         ref_context = retrieval["refs"][0]["content"][:250] if retrieval["refs"] else ""
         from app.services.assets.asset_manager import asset_manager
-        comp_context = asset_manager.match_assets_for_section(item.clause_title, []).get("context_text", "")[:250]
+        comp_context = asset_manager.match_assets_for_section(
+            item.clause_title, [], exclude=exclude).get("context_text", "")[:250]
         return ref_context, comp_context
 
     @staticmethod
@@ -257,10 +259,10 @@ class DeviationEngine:
         item.response_detail = detail.strip()[:300]
         item.response_source = "ai"
 
-    def generate_response_for_item(self, item: DeviationItem, facts: GlobalFacts) -> DeviationItem:
+    def generate_response_for_item(self, item: DeviationItem, facts: GlobalFacts, exclude=None) -> DeviationItem:
         """针对单个指标生成点对点应答（LLM 不可用时留空待生成，不编造）"""
         if self.llm.is_configured:
-            ref_context, comp_context = self._item_context(item)
+            ref_context, comp_context = self._item_context(item, exclude)
             user_prompt = (
                 f"【招标文件要求】：{item.clause_title}\n"
                 f"【条款等级】：{LEVEL_LABELS.get(item.level, '一般条款')}"
@@ -290,11 +292,11 @@ class DeviationEngine:
         item.response_detail = ""
         return item
 
-    def _generate_batch(self, batch: List[DeviationItem], facts: GlobalFacts) -> List[DeviationItem]:
+    def _generate_batch(self, batch: List[DeviationItem], facts: GlobalFacts, exclude=None) -> List[DeviationItem]:
         """一次调用响应多条；返回未能成功响应的条目（由调用方逐条重试）"""
         blocks = []
         for i, item in enumerate(batch, 1):
-            ref_context, comp_context = self._item_context(item)
+            ref_context, comp_context = self._item_context(item, exclude)
             blocks.append(
                 f"[{i}] 等级：{LEVEL_LABELS.get(item.level, '一般条款')}"
                 f"{'（绝不可负偏离）' if item.level == 'redline' else ''}\n"
@@ -326,9 +328,9 @@ class DeviationEngine:
         return failed
 
     def batch_generate_responses(
-        self, items: List[DeviationItem], facts: GlobalFacts, progress=None
+        self, items: List[DeviationItem], facts: GlobalFacts, progress=None, exclude=None
     ) -> List[DeviationItem]:
-        """批量生成技术偏离响应：每次调用 8 条，失败条目逐条重试（支持进度上报与取消）"""
+        """批量生成技术偏离响应：每次调用 8 条，失败条目逐条重试（支持进度上报与取消）；exclude 见 _item_context"""
         total = len(items)
         if not self.llm.is_configured:
             for item in items:
@@ -339,10 +341,10 @@ class DeviationEngine:
             if progress and progress.cancelled():
                 break
             batch = items[start:start + BATCH_SIZE]
-            for item in self._generate_batch(batch, facts):
+            for item in self._generate_batch(batch, facts, exclude):
                 if progress and progress.cancelled():
                     break
-                self.generate_response_for_item(item, facts)
+                self.generate_response_for_item(item, facts, exclude)
             done += len(batch)
             if progress:
                 progress.report(int(done / max(total, 1) * 100), f"点对点响应 {done}/{total}")

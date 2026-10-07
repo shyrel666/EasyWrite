@@ -47,9 +47,10 @@ async function loadEvidence() {
 
 const nodeEvidence = computed(() => (props.node?.scoring_item_ids || []).map((id) => evidence.value[id]).filter(Boolean))
 
-// last_refs：知识库片段（ref_type 缺省或 kb）与本次撰写用到的企业资料（ref_type=asset）
-const kbRefs = computed(() => (props.node?.last_refs || []).filter((r) => r.ref_type !== 'asset'))
+// last_refs：知识库片段（ref_type 缺省或 kb）、本次撰写用到的企业资料（asset）、因过期或主体不符被排除的资料（asset_excluded）
+const kbRefs = computed(() => (props.node?.last_refs || []).filter((r) => !r.ref_type || r.ref_type === 'kb'))
 const assetRefs = computed(() => (props.node?.last_refs || []).filter((r) => r.ref_type === 'asset'))
+const excludedRefs = computed(() => (props.node?.last_refs || []).filter((r) => r.ref_type === 'asset_excluded'))
 const ASSET_KIND = { qualifications: '资质', personnel: '人员', cases: '业绩', components: '方案组件' }
 const ASSET_STATUS = { confirmed: { label: '已确认', chip: 'chip-ok' }, unverified: { label: '待核实', chip: 'chip-warn' } }
 watch(() => props.node?.id, loadEvidence)
@@ -182,8 +183,9 @@ function saveInstruction() {
             </button>
           </div>
         </section>
-        <section v-if="assetRefs.length" class="rounded-lg border border-line p-3 text-xs">
+        <section v-if="assetRefs.length || excludedRefs.length" class="rounded-lg border border-line p-3 text-xs">
           <p class="font-semibold text-ink flex items-center gap-1.5 mb-2"><el-icon><Suitcase /></el-icon>本次用到的企业资料</p>
+          <p v-if="!assetRefs.length" class="text-ink-3">没有可用的企业资料</p>
           <ul class="space-y-1.5">
             <li v-for="a in assetRefs" :key="`${a.kind}:${a.asset_id}`" class="flex items-center gap-1.5">
               <span class="chip chip-mute shrink-0">{{ ASSET_KIND[a.kind] || a.kind }}</span>
@@ -193,6 +195,16 @@ function saveInstruction() {
             </li>
           </ul>
           <p v-if="assetRefs.some((a) => a.status === 'unverified')" class="hint mt-2">待核实资料在正文中应以【待核实：…】标注，核实后到「企业资产」改为已确认。</p>
+          <template v-if="excludedRefs.length">
+            <p class="font-medium text-ink-2 mt-3 mb-1.5">已排除，未写入正文</p>
+            <ul class="space-y-1.5">
+              <li v-for="a in excludedRefs" :key="`x:${a.kind}:${a.asset_id}`" class="leading-relaxed">
+                <span class="chip chip-mute mr-1">{{ ASSET_KIND[a.kind] || a.kind }}</span>
+                <span class="text-ink-2 line-through decoration-ink-3/60">{{ a.name }}</span>
+                <span class="block text-2xs text-bad mt-0.5">{{ a.reason }}</span>
+              </li>
+            </ul>
+          </template>
         </section>
         <div v-if="!kbRefs.length" class="text-xs text-ink-3 py-12 px-4 text-center leading-relaxed">
           <el-icon :size="22" class="text-line-strong mb-2"><Collection /></el-icon>

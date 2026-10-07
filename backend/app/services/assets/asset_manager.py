@@ -685,26 +685,56 @@ class EnterpriseAssetManager:
         hits = [x for s, x in scored if s >= self.RELEVANCE[kind]]
         return (hits or list(items))[: self.MAX_MATCHED]
 
-    def linked_context(self, pairs: List[Tuple[str, Dict[str, Any]]]) -> Tuple[str, List[Tuple[str, Any]]]:
+    @staticmethod
+    def _split_excluded(kind: str, items: list, exclude) -> Tuple[list, List[Dict[str, Any]]]:
+        """按 exclude(kind, 资料字典) 拆成 (可用, 排除记录)；排除记录为 {kind, item, reason}"""
+        if exclude is None:
+            return list(items), []
+        kept, dropped = [], []
+        for x in items:
+            reason = exclude(kind, x.model_dump())
+            if reason:
+                dropped.append({"kind": kind, "item": x.model_dump(), "reason": reason})
+            else:
+                kept.append(x)
+        return kept, dropped
+
+    @staticmethod
+    def _excluded_note(label: str, count: int) -> str:
+        return (f"【{label}】相关的 {count} 条企业资料因证书过期或所属主体与投标人不一致已排除，不得写入正文；"
+                "相应内容按事实完备纪律处理，不得编造。")
+
+    def linked_context(
+        self, pairs: List[Tuple[str, Dict[str, Any]]], exclude=None,
+    ) -> Tuple[str, List[Tuple[str, Any]], List[Dict[str, Any]]]:
         """
-        本节评分项已关联的资料（用户确认）→ (提示词文本, [(kind, 资料模型)])。示例资料不进入撰写。
+        本节评分项已关联的资料（用户确认）→ (提示词文本, [(kind, 资料模型)], 排除记录)。
+        示例资料不进入撰写；exclude 判定为过期、主体不符的资料不进入提示词，只说明已排除。
         """
-        models = [(kind, ASSET_MODELS[kind](**item)) for kind, item in pairs if item.get("status") != "example"]
+        models, excluded = [], []
+        for kind, item in pairs:
+            if item.get("status") == "example":
+                continue
+            kept, dropped = self._split_excluded(kind, [ASSET_MODELS[kind](**item)], exclude)
+            models += [(kind, m) for m in kept]
+            excluded += dropped
         if not models:
-            return "", []
+            return (self._excluded_note("本节评分项关联的企业资料", len(excluded)) if excluded else ""), [], excluded
         lines = ["【本节评分项关联的企业资料（用户确认关联；资质、人员、业绩等事实只能取自以下条目）】："]
         for kind in MATERIAL_KINDS:
             group = [m for k, m in models if k == kind]
             if group:
                 lines.append(f"{self.KIND_TITLES[kind]}：")
                 lines.extend(self.asset_line(kind, m) for m in group)
-        return "\n".join(lines), models
+        return "\n".join(lines), models, excluded
 
-    def match_assets_for_section(self, section_title: str, requirements: List[str]) -> Dict[str, Any]:
+    def match_assets_for_section(self, section_title: str, requirements: List[str], exclude=None) -> Dict[str, Any]:
         """
         根据当前撰写章节的主题匹配企业资料：只用用户录入的资料（排除预设示例），只取与本章相关的条目。
         团队/资质/业绩类章节没有可用资料时返回"未录入"说明，提示模型按事实完备纪律处理、不得编造。
-        返回 {type, kind, title, context_text, items}；kind 为资料类别（personnel / qualifications / cases / components）。
+        exclude(kind, 资料字典) 返回排除原因时（证书过期、主体不符），该条目不进入提示词：先按相关度选，再排除，
+        相关条目全被排除时不改用其他条目，只说明已排除。
+        返回 {type, kind, title, context_text, items, excluded}；kind 为资料类别（personnel / qualifications / cases / components）。
         """
         text = f"{section_title} {' '.join(requirements)}"
         matched = {
@@ -712,14 +742,19 @@ class EnterpriseAssetManager:
             "kind": "",
             "title": "",
             "context_text": "",
-            "items": []
+            "items": [],
+            "excluded": [],
         }
 
         def fill(kind: str, legacy: str, title: str, items: list, missing: str):
-            items = self.select_relevant(kind, items, text) if items else []
-            matched.update(type=legacy, kind=kind, title=title, items=[x.model_dump() for x in items])
+            chosen = self.select_relevant(kind, items, text) if items else []
+            kept, dropped = self._split_excluded(kind, chosen, exclude)
+            matched.update(type=legacy, kind=kind, title=title, items=[x.model_dump() for x in kept], excluded=dropped)
             header = f"【{self.KIND_TITLES[kind]}（用户录入，相关事实只能取自以下条目）】："
-            matched["context_text"] = "\n".join([header] + [self.asset_line(kind, x) for x in items]) if items else missing
+            if kept:
+                matched["context_text"] = "\n".join([header] + [self.asset_line(kind, x) for x in kept])
+            else:
+                matched["context_text"] = self._excluded_note(self.KIND_TITLES[kind], len(dropped)) if dropped else missing
             return matched
 
         # 1. 团队人员/组织架构章节

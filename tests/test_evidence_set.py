@@ -121,3 +121,62 @@ def test_stream_selects_evidence_once_and_saves_asset_refs(client, project_id, m
     node = client.get(f"/api/v1/project/{project_id}").json()["outline"][0]
     assert node["last_refs"] == [{"kind": "personnel", "asset_id": "p_x", "name": "王工", "status": "unverified",
                                   "source": "matched", "ref_type": "asset"}]
+
+
+def test_expired_or_foreign_assets_are_excluded_from_prompts(no_retrieval):
+    """证书过期（含投标截止日前到期）、所属主体与投标人不一致的资料不进入提示词，记为已排除"""
+    from app.models.schemas import CompanyQualification
+    asset_manager.add_qualification(CompanyQualification(
+        id="q_old", name="ISO9001 质量管理体系认证", cert_no="OLD-1", issue_org="某认证中心", expiry_date="2020-01-01"))
+    asset_manager.add_qualification(CompanyQualification(
+        id="q_soon", name="ISO20000 信息技术服务管理体系认证", cert_no="SOON-1", issue_org="某认证中心",
+        expiry_date="2026-10-15"))
+    asset_manager.add_qualification(CompanyQualification(
+        id="q_ok", name="ISO27001 信息安全管理体系认证", cert_no="OK-1", issue_org="某认证中心",
+        status="unverified"))  # 待核实、无附件：仍可使用（以【待核实】标注）
+    asset_manager.add_personnel(PersonnelAsset(id="p_other", name="赵工", role="项目经理", holder="别家公司"))
+
+    node = OutlineNode(id="sec_q", title="5.1 企业资质证书")
+    project = _project(node).model_copy(update={
+        "facts": GlobalFacts(company_name="重庆某某科技有限公司"),
+        "tender_analysis": TenderAnalysis18(submission_deadline="2026年10月20日09:30"),
+    })
+    evidence = select_evidence(project, node)
+    assert [a["asset_id"] for a in evidence.assets] == ["q_ok"]
+    assert {a["asset_id"] for a in evidence.excluded_assets} == {"q_old", "q_soon"}
+    assert "OLD-1" not in evidence.asset_context and "SOON-1" not in evidence.asset_context
+    reasons = {a["asset_id"]: a["reason"] for a in evidence.excluded_assets}
+    assert "早于投标截止日 2026-10-20" in reasons["q_soon"]
+    assert [r["ref_type"] for r in evidence.ref_records()] == ["asset", "asset_excluded", "asset_excluded"]
+
+    # 相关条目全被排除时不改用其他人员，只说明已排除
+    pm = OutlineNode(id="sec_pm", title="3.1 项目经理")
+    evidence = select_evidence(project.model_copy(update={"outline": [pm]}), pm)
+    assert evidence.assets == [] and evidence.excluded_assets[0]["asset_id"] == "p_other"
+    assert "已排除" in evidence.asset_context and "赵工" not in evidence.asset_context
+    assert "主体" in evidence.excluded_assets[0]["reason"]
+
+    # 用户关联的资料同样排除，且不改用未关联的资料
+    linked_node = OutlineNode(id="sec_l", title="5.2 资质", scoring_item_ids=["s_q"])
+    scoring = [{"id": "s_q", "name": "企业资质", "points": 2, "response_type": "evidence", "criteria": "ISO9001"}]
+    linked = project.model_copy(update={
+        "outline": [linked_node], "evidence_links": {"s_q": ["qualifications:q_old"]},
+        "tender_analysis": TenderAnalysis18(submission_deadline="2026年10月20日", scoring_items=scoring),
+    })
+    evidence = select_evidence(linked, linked_node)
+    assert evidence.assets == [] and [a["source"] for a in evidence.excluded_assets] == ["linked"]
+    assert "已排除" in evidence.asset_context and "q_ok" not in str(evidence.assets)
+
+
+def test_deviation_context_excludes_expired_assets():
+    from app.models.schemas import CompanyQualification, DeviationItem
+    from app.services.assets.material_check import blocking_filter
+    from app.services.parser.deviation_engine import deviation_engine
+    from datetime import date
+    asset_manager.add_qualification(CompanyQualification(
+        id="q_old2", name="涉密信息系统集成资质", cert_no="SM-OLD", issue_org="某局", expiry_date="2021-01-01"))
+    item = DeviationItem(index=1, clause_title="投标人须具备涉密信息系统集成资质")
+    _, plain = deviation_engine._item_context(item)
+    assert "SM-OLD" in plain
+    _, filtered = deviation_engine._item_context(item, blocking_filter(GlobalFacts(), date(2026, 10, 7)))
+    assert "SM-OLD" not in filtered and "已排除" in filtered

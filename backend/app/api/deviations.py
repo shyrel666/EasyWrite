@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Body
 
 from app.core.task_manager import task_manager
 from app.models.schemas import DeviationItem
+from app.services.assets.evidence import generation_filter
 from app.services.project_store import project_store, find_node
 from app.services.parser.deviation_engine import deviation_engine
 
@@ -84,7 +85,8 @@ def generate_project_deviations(project_id: str):
         raise HTTPException(status_code=400, detail="没有“待生成”的条目；如需重写某条响应，请先将其状态改为“待生成”")
 
     def _run(ctx):
-        answered = deviation_engine.batch_generate_responses(pending, project.facts, progress=ctx)
+        answered = deviation_engine.batch_generate_responses(
+            pending, project.facts, progress=ctx, exclude=generation_filter(project))
         by_clause = {it.clause_title: it for it in answered if it.response_status != "待生成"}
 
         def merge(latest):

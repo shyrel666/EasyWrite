@@ -13,7 +13,7 @@ from app.models.schemas import MaterialCheck, Project, ScoringItem
 from app.services.assets.asset_manager import asset_manager
 from app.services.assets.matching import best_match
 from app.services.assets.material_check import (
-    MATERIAL_KINDS, NOT_LINKED, asset_name, bid_deadline, check_material, worst_status,
+    MATERIAL_KINDS, NOT_LINKED, asset_name, bid_deadline, blocking_filter, check_material, worst_status,
 )
 from app.services.generator import rubric_planner as rp
 
@@ -97,6 +97,12 @@ def suggest_links(project: Project) -> Dict[str, List[Dict[str, Any]]]:
             c["linked"] = c["key"] in linked
         out[item.id] = candidates[:MAX_SUGGESTIONS]
     return out
+
+
+def generation_filter(project: Project):
+    """撰写与偏离表应答用的排除规则：证书过期（含投标截止日前到期）、所属主体与投标人不一致的资料不进入提示词"""
+    deadline, _ = bid_deadline(project.tender_analysis)
+    return blocking_filter(project.facts, deadline)
 
 
 def resolve_links(keys: List[str]) -> Tuple[List[Tuple[str, Dict[str, Any]]], List[str]]:

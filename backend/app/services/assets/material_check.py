@@ -7,7 +7,7 @@
 import calendar
 import re
 from datetime import date
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.models.schemas import NOT_MENTIONED, GlobalFacts, MaterialCheck, MaterialProblem, TenderAnalysis18
 
@@ -124,6 +124,22 @@ def check_material(
         problems=problems,
         attachment_count=len(attachments),
     )
+
+
+# 生成时直接排除的问题：证书已过期 / 投标截止日前到期、所属主体与投标人不一致（这类资料写进标书就是错的）；
+# 待核实、无附件、有效期无法识别的资料仍可使用（待核实以【待核实】标注，材料缺口在质检与导出清单中提示）
+BLOCKING_CODES = {"expired", "expiring", "holder_mismatch"}
+
+
+def blocking_filter(facts: Optional[GlobalFacts], deadline: date) -> Callable[[str, Dict[str, Any]], Optional[str]]:
+    """返回 exclude(kind, 资料字典) → 排除原因（不排除时为 None）；方案组件不做证明材料检查"""
+    def exclude(kind: str, asset: Dict[str, Any]) -> Optional[str]:
+        if kind not in MATERIAL_KINDS:
+            return None
+        blocking = [p.message for p in check_material(kind, asset, facts, deadline).problems if p.code in BLOCKING_CODES]
+        return "；".join(blocking) or None
+
+    return exclude
 
 
 def worst_status(statuses) -> str:
