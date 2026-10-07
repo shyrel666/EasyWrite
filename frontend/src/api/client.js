@@ -252,6 +252,12 @@ export const api = {
     add: (type, body) => request(`/assets/${type}`, { method: 'POST', body }),
     remove: (type, id) => request(`/assets/${type}/${id}`, { method: 'DELETE' }),
     clearExamples: () => request('/assets/examples', { method: 'DELETE' }),
+    // 证明附件（资质 / 人员 / 业绩）
+    uploadAttachment: (type, id, file) => uploadFile(`/assets/${type}/${id}/attachments`, file),
+    removeAttachment: (type, id, fileId) => request(`/assets/${type}/${id}/attachments/${fileId}`, { method: 'DELETE' }),
+    attachmentUrl: (type, id, fileId) => `${BASE}/assets/${type}/${id}/attachments/${fileId}`,
+    // 证明材料检查：传 projectId 时按该项目的投标截止时间与投标人全称核对
+    materialCheck: (projectId) => request(`/assets/material-check${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
   },
 
   // 模板与导出

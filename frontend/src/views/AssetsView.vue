@@ -5,6 +5,7 @@ import api from '@/api/client'
 import AppShell from '@/components/layout/AppShell.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import { ATTACHMENT_ACCEPT, MATERIAL_KINDS, formatSize, materialChip } from '@/utils/material'
 
 const TYPES = [
   { key: 'qualifications', label: '资质认证', icon: 'Medal', fields: [
@@ -15,6 +16,7 @@ const TYPES = [
     { k: 'issue_org', l: '发证机构', required: true },
     { k: 'issue_date', l: '发证日期' },
     { k: 'expiry_date', l: '有效期截止' },
+    { k: 'holder', l: '证书持有主体（留空 = 投标人本身）' },
     { k: 'summary', l: '投标适用说明', area: true },
   ]},
   { key: 'personnel', label: '核心人员', icon: 'User', fields: [
@@ -24,6 +26,7 @@ const TYPES = [
     { k: 'education', l: '学历院校' },
     { k: 'professional_title', l: '职称' },
     { k: 'certificates', l: '持证清单（用、分隔）' },
+    { k: 'holder', l: '所属单位（留空 = 投标人本身）' },
     { k: 'intro', l: '能力述评', area: true },
   ]},
   { key: 'cases', label: '中标业绩', icon: 'Trophy', fields: [
@@ -34,6 +37,7 @@ const TYPES = [
     { k: 'contract_category', l: '业务领域' },
     { k: 'key_deliverables', l: '核心交付（用、分隔）' },
     { k: 'acceptance_status', l: '验收结论' },
+    { k: 'holder', l: '合同签订主体（留空 = 投标人本身）' },
     { k: 'summary', l: '成效总结', area: true },
   ]},
   { key: 'components', label: '方案组件', icon: 'Grid', fields: [
@@ -77,10 +81,102 @@ const blankForm = () => {
 
 const form = reactive(blankForm())
 
+const isMaterial = computed(() => MATERIAL_KINDS.includes(activeType.value))
+
 async function load() {
   const res = await api.assets.list(activeType.value)
   list.value = res
   stats.value = await api.assets.stats()
+  if (isMaterial.value) loadChecks()
+}
+
+// ---- 证明材料检查：默认以当天为准；选择项目后按其投标截止时间与投标人全称核对 ----
+const CHECK_PROJECT_KEY = 'easywrite.assetCheckProject'
+const projects = ref([])
+const checkProject = ref(readCheckProject())
+const checks = ref({})
+const checkRef = ref(null)
+
+function readCheckProject() {
+  try {
+    return localStorage.getItem(CHECK_PROJECT_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+async function loadChecks() {
+  try {
+    const res = await api.assets.materialCheck(checkProject.value)
+    checks.value = Object.fromEntries(res.checks.map((c) => [`${c.kind}:${c.asset_id}`, c]))
+    checkRef.value = res
+  } catch (e) {
+    if (e.status === 404 && checkProject.value) {
+      setCheckProject('') // 所选项目已删除
+      return
+    }
+    checks.value = {}
+  }
+}
+
+function setCheckProject(id) {
+  checkProject.value = id
+  try {
+    localStorage.setItem(CHECK_PROJECT_KEY, id)
+  } catch { /* 忽略 */ }
+  loadChecks()
+}
+
+function checkOf(item) {
+  return checks.value[`${activeType.value}:${item.id}`] || null
+}
+
+// ---- 证明附件 ----
+const attachOpen = ref(false)
+const attachItem = ref(null)
+const uploading = ref(false)
+const fileInput = ref(null)
+
+function openAttachments(item) {
+  attachItem.value = item
+  attachOpen.value = true
+}
+
+async function refreshAttachItem() {
+  await load()
+  attachItem.value = list.value.find((x) => x.id === attachItem.value?.id) || null
+}
+
+async function onFilesPicked(event) {
+  const files = [...(event.target.files || [])]
+  event.target.value = ''
+  if (!files.length || !attachItem.value) return
+  uploading.value = true
+  let ok = 0
+  for (const file of files) {
+    try {
+      await api.assets.uploadAttachment(activeType.value, attachItem.value.id, file)
+      ok += 1
+    } catch (e) {
+      ElMessage.error(`「${file.name}」上传失败：${e.message}`)
+    }
+  }
+  uploading.value = false
+  if (ok) ElMessage.success(`已上传 ${ok} 个附件`)
+  await refreshAttachItem()
+}
+
+async function removeAttachment(att) {
+  try {
+    await ElMessageBox.confirm(`删除附件「${att.filename}」？`, '删除附件', { type: 'warning' })
+  } catch { return }
+  try {
+    await api.assets.removeAttachment(activeType.value, attachItem.value.id, att.id)
+    ElMessage.success('附件已删除')
+    await refreshAttachItem()
+  } catch (e) {
+    ElMessage.error('删除失败：' + e.message)
+  }
 }
 
 function openAdd() {
@@ -180,7 +276,12 @@ function cardTags(item) {
   return (Array.isArray(tags) ? tags : []).filter(Boolean)
 }
 
-onMounted(load)
+onMounted(async () => {
+  load()
+  try {
+    projects.value = await api.listProjects()
+  } catch { /* 项目列表仅用于选择核对依据 */ }
+})
 </script>
 
 <template>
@@ -196,18 +297,30 @@ onMounted(load)
         </template>
       </PageHeader>
 
-      <div class="seg mb-5 overflow-x-auto max-w-full">
-        <button
-          v-for="t in TYPES"
-          :key="t.key"
-          class="seg-item !px-3.5 !py-1.5 flex items-center gap-1.5"
-          :class="{ 'is-active': activeType === t.key }"
-          @click="switchType(t.key)"
-        >
-          <el-icon><component :is="t.icon" /></el-icon>{{ t.label }}
-          <span class="num text-ink-3">{{ stats[`total_${t.key}`] ?? '' }}</span>
-        </button>
+      <div class="flex items-center gap-3 flex-wrap mb-5">
+        <div class="seg overflow-x-auto max-w-full">
+          <button
+            v-for="t in TYPES"
+            :key="t.key"
+            class="seg-item !px-3.5 !py-1.5 flex items-center gap-1.5"
+            :class="{ 'is-active': activeType === t.key }"
+            @click="switchType(t.key)"
+          >
+            <el-icon><component :is="t.icon" /></el-icon>{{ t.label }}
+            <span class="num text-ink-3">{{ stats[`total_${t.key}`] ?? '' }}</span>
+          </button>
+        </div>
+        <label v-if="isMaterial" class="sm:ml-auto flex items-center gap-2 text-xs text-ink-2">
+          <span class="shrink-0">证明材料核对依据</span>
+          <el-select :model-value="checkProject" size="small" class="!w-56" placeholder="当天（不核对所属主体）" @change="setCheckProject">
+            <el-option label="当天（不核对所属主体）" value="" />
+            <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
+          </el-select>
+        </label>
       </div>
+      <p v-if="isMaterial && checkRef" class="hint -mt-2 mb-5">
+        有效期核对日 <span class="num">{{ checkRef.reference_date }}</span>（{{ checkRef.reference_source }}）<template v-if="checkRef.company_name">；所属主体与投标人「{{ checkRef.company_name }}」核对</template><template v-else-if="checkProject">；该项目未填写投标人全称，未核对所属主体</template>。
+      </p>
 
       <div v-if="exampleCount" class="note note-warn mb-5 items-center flex-wrap">
         <el-icon class="text-warn shrink-0"><WarningFilled /></el-icon>
@@ -250,8 +363,72 @@ onMounted(load)
             <span v-for="tag in cardTags(item).slice(0, 4)" :key="tag" class="chip chip-mute max-w-full truncate">{{ tag }}</span>
             <span v-if="cardTags(item).length > 4" class="chip chip-mute num">+{{ cardTags(item).length - 4 }}</span>
           </div>
+          <div
+            v-if="isMaterial"
+            class="flex items-center gap-2 pt-3 border-t border-line"
+            :class="cardTags(item).length ? 'mt-4' : 'mt-auto'"
+          >
+            <span
+              v-if="checkOf(item)"
+              class="chip"
+              :class="materialChip(checkOf(item).status)"
+              :title="checkOf(item).problems.map((p) => p.message).join('；') || '附件、有效期与所属主体均已核对'"
+            >证明材料 · {{ checkOf(item).status }}</span>
+            <button
+              class="ml-auto text-2xs text-ink-2 hover:text-accent-fg inline-flex items-center gap-1 rounded px-1.5 py-1 -mr-1.5"
+              @click="openAttachments(item)"
+            >
+              <el-icon><Paperclip /></el-icon>附件 <span class="num">{{ item.attachments?.length || 0 }}</span>
+            </button>
+          </div>
         </article>
       </div>
+
+      <el-dialog v-model="attachOpen" :title="`证明附件 · ${attachItem ? cardTitle(attachItem) : ''}`" width="min(560px, 94vw)">
+        <template v-if="attachItem">
+          <div
+            v-if="checkOf(attachItem)"
+            class="note mb-4"
+            :class="checkOf(attachItem).status === '齐备' ? 'note-ok' : 'note-warn'"
+          >
+            <el-icon class="mt-0.5 shrink-0" :class="checkOf(attachItem).status === '齐备' ? 'text-ok' : 'text-warn'">
+              <component :is="checkOf(attachItem).status === '齐备' ? 'CircleCheckFilled' : 'WarningFilled'" />
+            </el-icon>
+            <div class="min-w-0">
+              <p class="font-medium">证明材料：{{ checkOf(attachItem).status }}</p>
+              <ul v-if="checkOf(attachItem).problems.length" class="mt-1 space-y-0.5 text-xs text-ink-2">
+                <li v-for="pr in checkOf(attachItem).problems" :key="pr.code">· {{ pr.message }}</li>
+              </ul>
+            </div>
+          </div>
+          <p v-if="attachItem.status === 'confirmed' && attachItem.confirmed_at" class="hint mb-3">资料已于 <span class="num">{{ attachItem.confirmed_at }}</span> 确认</p>
+          <ul v-if="attachItem.attachments?.length" class="border border-line rounded-lg divide-y divide-line">
+            <li v-for="att in attachItem.attachments" :key="att.id" class="flex items-center gap-3 px-3 py-2.5">
+              <el-icon class="text-ink-3 shrink-0"><Document /></el-icon>
+              <div class="min-w-0 flex-1">
+                <a
+                  :href="api.assets.attachmentUrl(activeType, attachItem.id, att.id)"
+                  target="_blank"
+                  rel="noopener"
+                  class="block text-sm text-ink hover:text-accent-fg truncate"
+                  :title="`查看 ${att.filename}`"
+                >{{ att.filename }}</a>
+                <p class="text-2xs text-ink-3 num">{{ formatSize(att.size) }} · {{ att.uploaded_at }}</p>
+              </div>
+              <button class="icon-btn !w-7 !h-7 hover:!text-bad shrink-0" title="删除附件" @click="removeAttachment(att)"><el-icon><Delete /></el-icon></button>
+            </li>
+          </ul>
+          <p v-else class="text-sm text-ink-3 py-6 text-center">尚未上传证明附件</p>
+          <p class="hint mt-3">证书扫描件、合同关键页、中标通知书等；支持 PDF 与图片，单个不超过 20MB。</p>
+          <input ref="fileInput" type="file" class="hidden" multiple :accept="ATTACHMENT_ACCEPT" @change="onFilesPicked">
+        </template>
+        <template #footer>
+          <el-button @click="attachOpen = false">关闭</el-button>
+          <el-button type="primary" :loading="uploading" @click="fileInput?.click()">
+            <el-icon class="mr-1.5"><Upload /></el-icon>上传附件
+          </el-button>
+        </template>
+      </el-dialog>
 
       <el-dialog v-model="dialogVisible" :title="`${editing ? '编辑' : '录入'}${currentType.label}`" width="min(620px, 94vw)">
         <el-form label-position="top" @submit.prevent>

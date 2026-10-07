@@ -251,6 +251,23 @@ AssetStatus = Literal["example", "unverified", "confirmed"]
 ASSET_STATUS_FIELD = dict(default="confirmed", description="资料状态：example 预设示例 / unverified 待核实 / confirmed 用户确认")
 
 
+class AssetAttachment(BaseModel):
+    """证明附件（证书扫描件、合同、中标通知书等）：文件存放在 DATA_DIR/asset_files/<资料ID>/"""
+    id: str
+    filename: str = Field(..., description="上传时的原始文件名")
+    size: int = 0
+    sha256: str = ""
+    content_type: str = ""
+    uploaded_at: str = ""
+
+
+# 资质、人员、业绩三类资料的证明字段：附件、所属主体、确认时间。
+# attachments 只经附件接口增删，保存资料时服务端保留原值；confirmed_at 由服务端在资料改为"已确认"时记录
+ATTACHMENTS_FIELD = dict(default_factory=list, description="证明附件（只经附件接口增删）")
+HOLDER_FIELD = dict(default="", description="证书/业绩的所属主体；留空表示投标人本身")
+CONFIRMED_AT_FIELD = dict(default="", description="用户确认时间（服务端记录）")
+
+
 class CompanyQualification(BaseModel):
     """企业法定与行业资质资产（如涉密、CMMI、ISO、高新等）"""
     id: str
@@ -264,6 +281,9 @@ class CompanyQualification(BaseModel):
     summary: str = Field(default="", description="资质适用投标场景与得分说明")
     proof_doc: str = Field(default="", description="证明附件文件或索引编号")
     status: AssetStatus = Field(**ASSET_STATUS_FIELD)
+    holder: str = Field(**HOLDER_FIELD)
+    attachments: List[AssetAttachment] = Field(**ATTACHMENTS_FIELD)
+    confirmed_at: str = Field(**CONFIRMED_AT_FIELD)
 
 
 class PersonnelAsset(BaseModel):
@@ -279,6 +299,9 @@ class PersonnelAsset(BaseModel):
     representative_projects: List[str] = Field(default_factory=list, description="曾担任核心负责人的代表性中标业绩")
     intro: str = Field(default="", description="个人专业能力综合述评（直接用于标书人员简历章节）")
     status: AssetStatus = Field(**ASSET_STATUS_FIELD)
+    holder: str = Field(**HOLDER_FIELD)
+    attachments: List[AssetAttachment] = Field(**ATTACHMENTS_FIELD)
+    confirmed_at: str = Field(**CONFIRMED_AT_FIELD)
 
 
 class CaseContract(BaseModel):
@@ -293,6 +316,9 @@ class CaseContract(BaseModel):
     acceptance_status: str = Field(default="", description="履约验收结论")
     summary: str = Field(default="", description="项目背景与成效总结（可直接插入标书业绩章节）")
     status: AssetStatus = Field(**ASSET_STATUS_FIELD)
+    holder: str = Field(**HOLDER_FIELD)
+    attachments: List[AssetAttachment] = Field(**ATTACHMENTS_FIELD)
+    confirmed_at: str = Field(**CONFIRMED_AT_FIELD)
 
 
 class SolutionComponent(BaseModel):
@@ -304,6 +330,24 @@ class SolutionComponent(BaseModel):
     summary: str = Field(default="", description="方案组件架构设计概述")
     content: str = Field(..., description="经过实战检验的标准技术方案正文（含架构描述与表格）")
     status: AssetStatus = Field(**ASSET_STATUS_FIELD)
+
+
+class MaterialProblem(BaseModel):
+    """证明材料问题：example 示例资料 / unverified 待核实 / no_attachment 无附件 / expired 已过期 /
+    expiring 投标截止日前过期 / expiry_unknown 有效期无法识别 / holder_mismatch 所属主体不符"""
+    code: str
+    message: str
+
+
+class MaterialCheck(BaseModel):
+    """一条资料作为证明材料的检查结果（规则，离线可用）"""
+    kind: str = Field(..., description="qualifications / personnel / cases")
+    asset_id: str
+    name: str = ""
+    asset_status: str = Field(default="confirmed", description="资料状态 example/unverified/confirmed")
+    status: str = Field(..., description="齐备 / 示例资料 / 过期 / 主体不符 / 缺附件 / 待核实")
+    problems: List[MaterialProblem] = Field(default_factory=list)
+    attachment_count: int = 0
 
 
 # ==================== 八维质检与降AI味模型 (借鉴 YuduBid) ====================

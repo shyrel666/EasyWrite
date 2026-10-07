@@ -13,6 +13,8 @@ venv/
 backend/data/ai_settings.json
 # 企业资料可能含用户录入的真实企业信息（仓库公开）；预设示例在代码 DEFAULT_* 中，首次启动自动生成
 backend/data/enterprise_assets.json
+# 资质证书、合同等证明附件（企业真实材料）
+backend/data/asset_files/
 backend/data/*.tmp
 backend/data/*.db
 backend/data/*.db-wal

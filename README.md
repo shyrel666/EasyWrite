@@ -61,7 +61,7 @@
 | `UV_PYTHON_INSTALL_MIRROR` | Python 运行时 | `https://registry.npmmirror.com/-/binary/python-build-standalone` |
 | `EASYWRITE_UV_MIRROR` | uv 启动工具 | `https://pypi.tuna.tsinghua.edu.cn` |
 
-AI 设置保存于 `backend/data/ai_settings.json`；也可使用 `backend/.env`，配置项见 [环境变量示例](backend/.env.example)。这两个配置文件均由 Git 忽略。企业资料保存于 `backend/data/enterprise_assets.json`，同样由 Git 忽略；首次启动生成的示例资料不会写入标书，可在「企业资产」页一键清除。
+AI 设置保存于 `backend/data/ai_settings.json`；也可使用 `backend/.env`，配置项见 [环境变量示例](backend/.env.example)。这两个配置文件均由 Git 忽略。企业资料保存于 `backend/data/enterprise_assets.json`，证明附件保存于 `backend/data/asset_files/`，同样由 Git 忽略；首次启动生成的示例资料不会写入标书，可在「企业资产」页一键清除。
 
 </details>
 
@@ -76,7 +76,7 @@ AI 设置保存于 `backend/data/ai_settings.json`；也可使用 `backend/.env`
 | 招标解析 | 解析 `.docx` / 文字型 `.pdf`，提取 18 项核心要素、★条款与评分办法 |
 | 大纲规划 | 对齐评分项、分配字数预算，一级大纲经人工确认后展开 |
 | 章节撰写 | 流式生成、跨章上下文与全局事实约束，支持人工编辑 |
-| 知识与资产 | 历史标书混合检索、引用溯源与锁定/排除，复用资质、人员、业绩和方案组件 |
+| 知识与资产 | 历史标书混合检索、引用溯源与锁定/排除，复用资质、人员、业绩和方案组件；资料可附证明附件，按核实状态、有效期与所属主体检查材料是否齐备 |
 | 核查整改 | 技术偏离表逐项应答、废标条款核查与八维质检 |
 | Word 导出 | 多套模板、原生目录/页码/表格与 Mermaid 图，偏离表可单独导出 |
 

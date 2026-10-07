@@ -1,21 +1,72 @@
 import copy
+import hashlib
 import json
 import logging
 import os
+import re
+import shutil
 import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from app.core.config import settings
 from app.models.schemas import (
-    CompanyQualification, PersonnelAsset, CaseContract, SolutionComponent
+    AssetAttachment, CompanyQualification, PersonnelAsset, CaseContract, SolutionComponent, MaterialCheck,
 )
+from app.services.assets.material_check import MATERIAL_KINDS, check_material
 
 logger = logging.getLogger("easywrite.assets")
 
 ASSET_KINDS = ("qualifications", "personnel", "cases", "components")
 ASSET_STATUSES = ("example", "unverified", "confirmed")
+ASSET_MODELS = {
+    "qualifications": CompanyQualification,
+    "personnel": PersonnelAsset,
+    "cases": CaseContract,
+    "components": SolutionComponent,
+}
+
+# 证明附件：只接受 PDF 与常见图片（按文件头识别，不信任扩展名），单个不超过 20MB
+MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
+ATTACHMENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+    ".webp": "image/webp",
+    ".tif": "image/tiff",
+    ".tiff": "image/tiff",
+}
+
+
+class AttachmentError(ValueError):
+    """附件不合法（类型、大小、所属资料），消息可直接展示给用户"""
+
+
+def sniff_attachment_type(data: bytes) -> Optional[str]:
+    """按文件头识别附件类型，返回 MIME；不是 PDF/图片时返回 None"""
+    if data.startswith(b"%PDF-"):
+        return "application/pdf"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data.startswith(b"BM"):
+        return "image/bmp"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data[:4] in (b"II*\x00", b"MM\x00*"):
+        return "image/tiff"
+    return None
+
+
+def _now() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 class EnterpriseAssetManager:
@@ -265,6 +316,7 @@ class EnterpriseAssetManager:
 
     def __init__(self, storage_file: Optional[Path] = None):
         self.storage_file = storage_file or settings.DATA_DIR / "enterprise_assets.json"
+        self.files_dir = self.storage_file.parent / "asset_files"
         self._lock = threading.RLock()
         self.qualifications: List[Dict[str, Any]] = []
         self.personnel: List[Dict[str, Any]] = []
@@ -339,15 +391,30 @@ class EnterpriseAssetManager:
                     setattr(self, kind, items)
                 raise
 
-    def _add(self, kind: str, item: Dict[str, Any]):
-        """新增或更新：ID 已存在时原位替换（编辑资料），否则追加"""
+    def _add(self, kind: str, item: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        新增或更新：ID 已存在时原位替换（编辑资料），否则追加；返回实际保存的条目。
+        证明附件只经附件接口增删：编辑时保留服务端已有的附件，新建时忽略客户端提交的附件。
+        确认时间由服务端记录：改为"已确认"时记下当前时间，已确认的条目保留原时间，其他状态清空。
+        """
         with self._lock:
             current = getattr(self, kind)
-            if any(x.get("id") == item["id"] for x in current):
+            previous = next((x for x in current if x.get("id") == item["id"]), None)
+            if kind in MATERIAL_KINDS:
+                item["attachments"] = copy.deepcopy((previous or {}).get("attachments", []))
+                was_confirmed = previous is not None and previous.get("status") == "confirmed"
+                if item.get("status") != "confirmed":
+                    item["confirmed_at"] = ""
+                elif was_confirmed and previous.get("confirmed_at"):
+                    item["confirmed_at"] = previous["confirmed_at"]
+                else:
+                    item["confirmed_at"] = _now()
+            if previous is not None:
                 items = [item if x.get("id") == item["id"] else x for x in current]
             else:
                 items = current + [item]
             self._commit({kind: items})
+            return item
 
     def _delete(self, kind: str, item_id: str) -> bool:
         with self._lock:
@@ -356,21 +423,126 @@ class EnterpriseAssetManager:
             if len(remaining) == len(current):
                 return False
             self._commit({kind: remaining})
-            return True
+        self._remove_files(item_id)
+        return True
+
+    # ==================== 证明附件 ====================
+
+    def _asset_dir(self, asset_id: str) -> Path:
+        """资料的附件目录；ID 含路径字符时改用其摘要作目录名，保证不越出 asset_files"""
+        if re.fullmatch(r"[A-Za-z0-9_-]{1,80}", asset_id):
+            return self.files_dir / asset_id
+        return self.files_dir / ("id_" + hashlib.sha1(asset_id.encode("utf-8")).hexdigest()[:16])
+
+    def _remove_files(self, asset_id: str):
+        folder = self._asset_dir(asset_id)
+        if folder.exists():
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def get_asset(self, kind: str, asset_id: str) -> Optional[Dict[str, Any]]:
+        """按类别与 ID 取资料（字典副本）；不存在时返回 None"""
+        if kind not in ASSET_KINDS:
+            return None
+        return next((copy.deepcopy(x) for x in getattr(self, kind) if x.get("id") == asset_id), None)
+
+    def _require_material(self, kind: str, asset_id: str) -> Dict[str, Any]:
+        if kind not in MATERIAL_KINDS:
+            raise AttachmentError("只有资质、人员、业绩资料可以上传证明附件")
+        item = self.get_asset(kind, asset_id)
+        if item is None:
+            raise KeyError(asset_id)
+        return item
+
+    def list_attachments(self, kind: str, asset_id: str) -> List[AssetAttachment]:
+        item = self._require_material(kind, asset_id)
+        return [AssetAttachment(**a) for a in item.get("attachments", [])]
+
+    def add_attachment(self, kind: str, asset_id: str, filename: str, data: bytes) -> AssetAttachment:
+        """保存证明附件：先写文件再登记到资料；登记失败（含上传期间资料被删除）时删除已写入的文件"""
+        self._require_material(kind, asset_id)
+        ext = Path(filename or "").suffix.lower()
+        if ext not in ATTACHMENT_TYPES:
+            raise AttachmentError("证明附件只支持 PDF 与图片（png / jpg / gif / bmp / webp / tif）")
+        if not data:
+            raise AttachmentError("附件为空文件")
+        if len(data) > MAX_ATTACHMENT_BYTES:
+            raise AttachmentError("单个附件不能超过 20MB")
+        sniffed = sniff_attachment_type(data)
+        if sniffed is None or sniffed != ATTACHMENT_TYPES[ext]:
+            raise AttachmentError("文件内容与扩展名不符，或不是 PDF / 图片文件")
+
+        meta = AssetAttachment(
+            id=f"att_{uuid.uuid4().hex[:12]}",
+            filename=Path(filename).name[:200],
+            size=len(data),
+            sha256=hashlib.sha256(data).hexdigest(),
+            content_type=sniffed,
+            uploaded_at=_now(),
+        )
+        folder = self._asset_dir(asset_id)
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{meta.id}{ext}"
+        path.write_bytes(data)
+        try:
+            with self._lock:
+                current = getattr(self, kind)
+                if not any(x.get("id") == asset_id for x in current):
+                    raise KeyError(asset_id)
+                items = [
+                    dict(x, attachments=list(x.get("attachments", [])) + [meta.model_dump()])
+                    if x.get("id") == asset_id else x
+                    for x in current
+                ]
+                self._commit({kind: items})
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        return meta
+
+    def attachment_file(self, kind: str, asset_id: str, file_id: str) -> Tuple[Path, AssetAttachment]:
+        """返回附件文件路径与登记信息；不存在时抛出 KeyError"""
+        for att in self.list_attachments(kind, asset_id):
+            if att.id == file_id:
+                path = self._asset_dir(asset_id) / f"{att.id}{Path(att.filename).suffix.lower()}"
+                if not path.exists():
+                    raise KeyError(file_id)
+                return path, att
+        raise KeyError(file_id)
+
+    def delete_attachment(self, kind: str, asset_id: str, file_id: str) -> bool:
+        """先注销登记再删文件：登记写盘失败时文件仍在，资料与文件保持一致"""
+        self._require_material(kind, asset_id)
+        with self._lock:
+            current = getattr(self, kind)
+            target = next((x for x in current if x.get("id") == asset_id), {})
+            atts = target.get("attachments", [])
+            removed = next((a for a in atts if a.get("id") == file_id), None)
+            if removed is None:
+                return False
+            items = [
+                dict(x, attachments=[a for a in atts if a.get("id") != file_id]) if x.get("id") == asset_id else x
+                for x in current
+            ]
+            self._commit({kind: items})
+        (self._asset_dir(asset_id) / f"{file_id}{Path(removed.get('filename', '')).suffix.lower()}").unlink(missing_ok=True)
+        return True
 
     def clear_examples(self) -> Dict[str, int]:
         """一次性删除四类资料中的全部预设示例，返回各类删除条数"""
         with self._lock:
-            updates, removed = {}, {}
+            updates, removed, removed_ids = {}, {}, []
             for kind in ASSET_KINDS:
                 current = getattr(self, kind)
                 kept = [x for x in current if x.get("status") != "example"]
                 removed[kind] = len(current) - len(kept)
+                removed_ids += [x.get("id", "") for x in current if x.get("status") == "example"]
                 if removed[kind]:
                     updates[kind] = kept
             if updates:
                 self._commit(updates)
-            return removed
+        for item_id in removed_ids:
+            self._remove_files(item_id)
+        return removed
 
     # ==================== 1. 资质库 CRUD ====================
 
@@ -386,8 +558,7 @@ class EnterpriseAssetManager:
     def add_qualification(self, qual: CompanyQualification) -> CompanyQualification:
         if not qual.id:
             qual.id = f"qual_{uuid.uuid4().hex[:8]}"
-        self._add("qualifications", qual.model_dump())
-        return qual
+        return CompanyQualification(**self._add("qualifications", qual.model_dump()))
 
     def delete_qualification(self, qual_id: str) -> bool:
         return self._delete("qualifications", qual_id)
@@ -406,8 +577,7 @@ class EnterpriseAssetManager:
     def add_personnel(self, person: PersonnelAsset) -> PersonnelAsset:
         if not person.id:
             person.id = f"person_{uuid.uuid4().hex[:8]}"
-        self._add("personnel", person.model_dump())
-        return person
+        return PersonnelAsset(**self._add("personnel", person.model_dump()))
 
     def delete_personnel(self, person_id: str) -> bool:
         return self._delete("personnel", person_id)
@@ -426,8 +596,7 @@ class EnterpriseAssetManager:
     def add_case(self, case_item: CaseContract) -> CaseContract:
         if not case_item.id:
             case_item.id = f"case_{uuid.uuid4().hex[:8]}"
-        self._add("cases", case_item.model_dump())
-        return case_item
+        return CaseContract(**self._add("cases", case_item.model_dump()))
 
     def delete_case(self, case_id: str) -> bool:
         return self._delete("cases", case_id)
@@ -446,8 +615,7 @@ class EnterpriseAssetManager:
     def add_component(self, comp: SolutionComponent) -> SolutionComponent:
         if not comp.id:
             comp.id = f"comp_{uuid.uuid4().hex[:8]}"
-        self._add("components", comp.model_dump())
-        return comp
+        return SolutionComponent(**self._add("components", comp.model_dump()))
 
     def delete_component(self, comp_id: str) -> bool:
         return self._delete("components", comp_id)
@@ -547,5 +715,12 @@ class EnterpriseAssetManager:
             "total_components": len(self.components),
             "total_examples": sum(1 for kind in ASSET_KINDS for x in getattr(self, kind) if x.get("status") == "example"),
         }
+
+    def check_materials(self, facts=None, deadline=None) -> List[MaterialCheck]:
+        """资质、人员、业绩三类资料逐条做证明材料检查（见 material_check.check_material）"""
+        with self._lock:
+            snapshot = {kind: copy.deepcopy(getattr(self, kind)) for kind in MATERIAL_KINDS}
+        return [check_material(kind, item, facts, deadline) for kind in MATERIAL_KINDS for item in snapshot[kind]]
+
 
 asset_manager = EnterpriseAssetManager()
