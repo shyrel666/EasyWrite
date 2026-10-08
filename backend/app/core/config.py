@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     RAG_RERANK_THRESHOLD: float = 6.0       # LLM 重排 0-10 分阈值，低于则不注入
     RAG_CONTEXTUAL_SUMMARIES: bool = False  # 入库时是否用 LLM 为每块生成一句话定位摘要
 
+    # 智能完善（单章节写—查—改闭环）的运行预算：每次运行的模型请求次数与时长上限
+    REFINE_MAX_CALLS: int = 15
+    REFINE_MAX_SECONDS: int = 600
+
     # Storage Paths
     DATA_DIR: Path = BASE_DIR / "data"
     UPLOAD_DIR: Path = DATA_DIR / "uploads"

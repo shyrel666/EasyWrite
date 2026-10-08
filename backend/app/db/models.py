@@ -116,6 +116,8 @@ class TaskModel(SQLModel, table=True):
     updated_at: str = ""
     # 提交时间戳（秒，排序用；created_at 只精确到秒）
     created_ts: float = Field(default=0.0, index=True)
+    # 任务附加信息（JSON），如所属章节 {"section_id": …}：页面据此重新挂接进行中的任务
+    meta_json: str = ""
     scope: str = "local"
 
 
@@ -144,6 +146,8 @@ class LLMCallLog(SQLModel, table=True):
     max_tokens: int = 0
     finish_reason: str = ""
     error: str = ""
+    # 所属运行（后台任务 ID，如智能完善、批量撰写）；请求内的直接调用为空
+    run_id: str = ""
 
 
 class SectionVersion(SQLModel, table=True):
@@ -175,8 +179,10 @@ class SectionProposal(SQLModel, table=True):
     parent_id: str = ""
     # 产生该候选稿的后台任务
     task_id: str = ""
-    # 来源：batch 批量撰写重写已有正文 / revise 基于当前正文定向修订
+    # 来源：batch 批量撰写重写已有正文 / revise 基于当前正文定向修订 / refine_draft 智能完善起草 / refine 智能完善修订
     origin: str = ""
+    # 智能完善的轮次信息（JSON）：{round, max_rounds, mode, instruction, apply_if_blank, base}；继续执行时据此计算已用轮数
+    refine_json: str = ""
     content: str = ""
     base_revision: int = 0
     input_manifest_json: str = "{}"

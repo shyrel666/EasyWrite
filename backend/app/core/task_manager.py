@@ -6,7 +6,9 @@
 - ThreadPoolExecutor 限制并发（LLM 调用天然串行友好）
 - 运行中的任务以内存记录为准（轮询不查库）；提交、开始、结束时写入 tasks 表，进度节流落库
 - 服务重启后库里仍为 pending/running 的任务标记为 interrupted（"已中断"），历史任务与结果可查
-- 任务函数在提交时的上下文副本中运行：所属项目等请求上下文随任务进入工作线程
+- 任务函数在提交时的上下文副本中运行：所属项目等请求上下文随任务进入工作线程；current_task_id 设为任务 ID
+  （模型调用记录的 run_id）
+- meta 为任务附加信息（如所属章节），页面据此重新挂接进行中的任务
 - progress 0-100 + message 中文进度描述 + result/error 载荷
 """
 import contextvars
@@ -23,7 +25,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from sqlmodel import col, delete, select
 
-from app.core.request_context import current_project_id
+from app.core.request_context import current_project_id, current_task_id
 from app.db.database import get_session
 from app.db.models import TaskModel
 
@@ -61,6 +63,7 @@ class TaskRecord:
     message: str = ""
     result: Any = None
     error: str = ""
+    meta: Dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
     created_ts: float = field(default_factory=time.time)
@@ -77,6 +80,7 @@ class TaskRecord:
             "message": self.message,
             "result": self.result,
             "error": self.error,
+            "meta": self.meta,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -86,17 +90,20 @@ class TaskRecord:
             id=self.id, type=self.type, title=self.title, project_id=self.project_id,
             status=self.status, progress=self.progress, message=self.message,
             result_json=_dump_result(self.result), error=self.error,
+            meta_json=_dump_result(self.meta) if self.meta else "",
             created_at=self.created_at, updated_at=self.updated_at, created_ts=self.created_ts,
         )
 
 
+def _loads(raw: str) -> Any:
+    try:
+        return json.loads(raw) if raw else None
+    except json.JSONDecodeError:
+        return None
+
+
 def _row_to_dict(row: TaskModel, with_result: bool = True) -> Dict[str, Any]:
-    result = None
-    if with_result and row.result_json:
-        try:
-            result = json.loads(row.result_json)
-        except json.JSONDecodeError:
-            result = None
+    result = _loads(row.result_json) if with_result else None
     return {
         "id": row.id,
         "type": row.type,
@@ -107,6 +114,7 @@ def _row_to_dict(row: TaskModel, with_result: bool = True) -> Dict[str, Any]:
         "message": row.message,
         "result": result,
         "error": row.error,
+        "meta": _loads(row.meta_json) or {},
         "created_at": row.created_at,
         "updated_at": row.updated_at,
     }
@@ -158,16 +166,17 @@ class TaskManager:
         fn: Callable[[TaskContext], Any],
         description: str = "",
         project_id: Optional[str] = None,
+        meta: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         提交后台任务，立即返回 task_id。fn 接收 TaskContext，返回值作为 result。
-        project_id 缺省时取当前请求所属项目（URL 中的 /project/{id}）。
+        project_id 缺省时取当前请求所属项目（URL 中的 /project/{id}）；meta 为附加信息（如 {"section_id": …}）。
         """
         task_id = f"task_{uuid.uuid4().hex[:12]}"
         record = TaskRecord(
             id=task_id, type=task_type, title=description,
             project_id=project_id if project_id is not None else current_project_id.get(),
-            message=description or "任务已提交",
+            message=description or "任务已提交", meta=dict(meta or {}),
         )
         cancel_event = threading.Event()
         with self._lock:
@@ -181,6 +190,7 @@ class TaskManager:
         def _run():
             if record.project_id:
                 current_project_id.set(record.project_id)
+            current_task_id.set(task_id)
             record.status = "running"
             record.updated_at = _now()
             self._persist(record, force=True)

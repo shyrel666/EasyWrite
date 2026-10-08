@@ -7,9 +7,10 @@ import contextvars
 from typing import List, Dict, Any, Optional, Generator
 from openai import OpenAI, AsyncOpenAI, RateLimitError, APIConnectionError, BadRequestError
 
-from app.core import llm_usage
+from app.core import llm_usage, run_budget
 from app.core.config import settings
 from app.core.ai_settings_manager import ai_settings_manager
+from app.core.run_budget import BudgetExceeded
 
 logger = logging.getLogger("easywrite.llm")
 
@@ -32,6 +33,8 @@ class LLMClient:
     5. 无 Key 时降级为离线模拟器，并通过 get_mode() 显式暴露真实模式，
        所有上层接口将 mode 透传给前端，杜绝"真假难辨"
     6. 每次真实请求写入调用记录（llm_usage：耗时、用量、用途），purpose 标明调用用途
+    7. 处于某次运行中（run_budget.current_run）时，每次真实请求前计入运行预算；超限抛 BudgetExceeded，
+       不当作普通失败（不退回离线演示），交给运行方结束
     """
 
     def __init__(self):
@@ -103,7 +106,8 @@ class LLMClient:
     # ---------------- 同步调用 ----------------
 
     def _create(self, purpose: str, messages: List[Dict[str, str]], temperature: float, tokens: int, **extra):
-        """一次非流式模型请求，记录耗时、用量与结束原因"""
+        """一次非流式模型请求，记录耗时、用量与结束原因（发起前先计入运行预算）"""
+        run_budget.charge(purpose)
         started = time.perf_counter()
         try:
             response = self.client.chat.completions.create(
@@ -163,6 +167,8 @@ class LLMClient:
                     if content:
                         self._mark_mode("llm")
                         return content.strip()
+                except BudgetExceeded:
+                    raise
                 except RateLimitError:
                     logger.warning("LLM 限流，退避重试 (第%d次)", attempt + 1)
                     time.sleep(2 ** attempt)
@@ -191,6 +197,7 @@ class LLMClient:
         if self.is_configured and self.client:
             produced = False
             try:
+                run_budget.charge(purpose)
                 meter = llm_usage.StreamMeter(purpose, self.model, tokens)
                 try:
                     stream = self.client.chat.completions.create(
@@ -215,6 +222,8 @@ class LLMClient:
                 meter.finish()
                 if produced:
                     return
+            except BudgetExceeded:
+                raise
             except Exception as e:
                 if produced:
                     # 已输出部分真实内容：不得拼接模拟文本冒充完整结果，交由调用方按失败处理
@@ -240,6 +249,7 @@ class LLMClient:
             return await self.async_client.chat.completions.create(**kwargs, stream_options={"include_usage": True})
         except BadRequestError as e:
             llm_usage.record(purpose=purpose, kind="stream", model=self.model, started=started, max_tokens=budget, error=e)
+        run_budget.charge(purpose)  # 去掉 include_usage 重试是另一次请求
         stream = await self.async_client.chat.completions.create(**kwargs)
         logger.info("服务商不支持 stream_options.include_usage，流式调用不再统计用量")
         self._stream_usage = False
@@ -266,9 +276,12 @@ class LLMClient:
             ]
             try:
                 for budget in budgets:
+                    run_budget.charge(purpose)
                     meter = llm_usage.StreamMeter(purpose, self.model, budget)
                     try:
                         stream = await self._open_stream_async(purpose, messages, temp, budget)
+                    except BudgetExceeded:
+                        raise
                     except BadRequestError as e:
                         meter.finish(error=e)
                         if budget == tokens:
@@ -297,6 +310,8 @@ class LLMClient:
                     if meter.finish_reason != "length":
                         break
                     logger.warning("思考过程耗尽 max_tokens=%d、未产出正文，放大额度重试", budget)
+            except BudgetExceeded:
+                raise
             except Exception as e:
                 if produced:
                     raise RuntimeError(f"模型流式输出中断：{e}") from e
@@ -324,6 +339,7 @@ class LLMClient:
         tokens = max_tokens if max_tokens is not None else self.max_tokens
 
         if self.is_configured and self.async_client:
+            run_budget.charge(purpose)
             started = time.perf_counter()
             try:
                 try:
@@ -389,6 +405,8 @@ class LLMClient:
             ).strip()
             self._mark_mode("llm")
             return self._parse_json_loose(raw)
+        except BudgetExceeded:
+            raise
         except Exception:
             # json_object 模式不被支持时退回普通文本 + 正则提取
             try:
@@ -396,6 +414,8 @@ class LLMClient:
                 m = re.search(r"\{.*\}", raw_text, re.DOTALL)
                 if m:
                     return self._parse_json_loose(m.group(0))
+            except BudgetExceeded:
+                raise
             except Exception as ex:
                 logger.error("LLM 结构化输出解析失败: %s", ex)
         return None

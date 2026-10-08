@@ -65,6 +65,7 @@ def ai_status():
     }
 
 
-@router.get("/usage", summary="模型调用记录汇总：次数、用量、耗时（按用途/模型/日期），可按项目筛选")
-def llm_usage_summary(days: int = 7, project_id: Optional[str] = None, recent: int = 30):
-    return llm_usage.summarize(days=max(1, min(days, 180)), project_id=project_id, recent_limit=max(0, min(recent, 200)))
+@router.get("/usage", summary="模型调用记录汇总：次数、用量、耗时（按用途/模型/日期/运行），可按项目或运行筛选")
+def llm_usage_summary(days: int = 7, project_id: Optional[str] = None, recent: int = 30, run_id: Optional[str] = None):
+    return llm_usage.summarize(days=max(1, min(days, 180)), project_id=project_id,
+                               recent_limit=max(0, min(recent, 200)), run_id=run_id)

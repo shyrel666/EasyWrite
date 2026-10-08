@@ -14,9 +14,9 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import case, func
 from sqlmodel import col, delete, select
 
-from app.core.request_context import current_project_id
+from app.core.request_context import current_project_id, current_task_id
 from app.db.database import get_session
-from app.db.models import LLMCallLog
+from app.db.models import LLMCallLog, TaskModel
 
 logger = logging.getLogger("easywrite.llm.usage")
 
@@ -83,6 +83,7 @@ def record(
         max_tokens=int(max_tokens or 0),
         finish_reason=finish_reason or "",
         error=(f"{type(error).__name__}: {error}"[:ERROR_MAX_CHARS] if status == "error" else ""),
+        run_id=current_task_id.get(),
         **usage_fields(usage),
     )
     try:
@@ -133,10 +134,12 @@ class StreamMeter:
 
 # ---------------- 统计查询 ----------------
 
-def _filters(since: str, project_id: Optional[str]):
+def _filters(since: str, project_id: Optional[str], run_id: Optional[str] = None):
     conds = [col(LLMCallLog.created_at) >= since]
     if project_id is not None:
         conds.append(LLMCallLog.project_id == project_id)
+    if run_id is not None:
+        conds.append(LLMCallLog.run_id == run_id)
     return conds
 
 
@@ -159,11 +162,68 @@ def _group_rows(session, key, conds) -> List[Dict[str, Any]]:
     ]
 
 
-def summarize(days: int = 7, project_id: Optional[str] = None, recent_limit: int = 30) -> Dict[str, Any]:
-    """最近 days 天的调用汇总：总量、按状态/用途/模型/日期分组、p95 耗时与最近调用明细"""
+def _by_run(session, conds, limit: int) -> List[Dict[str, Any]]:
+    """按运行（后台任务）汇总，最近的在前；附任务类型、标题与状态（任务记录已清理时为空）"""
+    stmt = (
+        select(
+            LLMCallLog.run_id,
+            func.count(),
+            func.sum(case((LLMCallLog.status == "error", 1), else_=0)),
+            func.sum(LLMCallLog.total_tokens),
+            func.sum(case((col(LLMCallLog.total_tokens).is_(None), 1), else_=0)),
+            func.sum(LLMCallLog.latency_ms),
+            func.min(LLMCallLog.created_at),
+            func.max(LLMCallLog.created_at),
+        )
+        .where(*conds, LLMCallLog.run_id != "")
+        .group_by(LLMCallLog.run_id)
+        .order_by(func.max(LLMCallLog.id).desc())
+        .limit(limit)
+    )
+    rows = session.exec(stmt).all()
+    tasks = {t.id: t for t in session.exec(
+        select(TaskModel).where(col(TaskModel.id).in_([r[0] for r in rows]))
+    ).all()} if rows else {}
+    out = []
+    for run_id, n, err, tok, no_usage, latency, first, last in rows:
+        task = tasks.get(run_id)
+        out.append({
+            "run_id": run_id, "type": task.type if task else "", "title": task.title if task else "",
+            "status": task.status if task else "", "project_id": task.project_id if task else "",
+            "calls": n, "errors": int(err or 0), "total_tokens": int(tok or 0),
+            "calls_without_usage": int(no_usage or 0), "latency_ms": int(latency or 0),
+            "started_at": first, "ended_at": last,
+        })
+    return out
+
+
+def run_totals(run_id: str) -> Dict[str, Any]:
+    """一次运行的实际请求数与服务商返回的用量（未返回用量的请求单独计数，不估算）"""
+    with get_session() as session:
+        calls, err, prompt, completion, total, no_usage, latency = session.exec(
+            select(
+                func.count(),
+                func.sum(case((LLMCallLog.status == "error", 1), else_=0)),
+                func.sum(LLMCallLog.prompt_tokens),
+                func.sum(LLMCallLog.completion_tokens),
+                func.sum(LLMCallLog.total_tokens),
+                func.sum(case((col(LLMCallLog.total_tokens).is_(None), 1), else_=0)),
+                func.sum(LLMCallLog.latency_ms),
+            ).where(LLMCallLog.run_id == run_id)
+        ).one()
+    return {"calls": calls, "errors": int(err or 0), "prompt_tokens": int(prompt or 0),
+            "completion_tokens": int(completion or 0), "total_tokens": int(total or 0),
+            "calls_without_usage": int(no_usage or 0), "latency_ms": int(latency or 0)}
+
+
+def summarize(
+    days: int = 7, project_id: Optional[str] = None, recent_limit: int = 30,
+    run_id: Optional[str] = None, run_limit: int = 20,
+) -> Dict[str, Any]:
+    """最近 days 天的调用汇总：总量、按状态/用途/模型/日期/运行分组、p95 耗时与最近调用明细"""
     since_day = (datetime.now() - timedelta(days=max(1, days) - 1)).strftime("%Y-%m-%d")
     since = f"{since_day} 00:00:00"
-    conds = _filters(since, project_id)
+    conds = _filters(since, project_id, run_id)
     with get_session() as session:
         calls, prompt, completion, reasoning, total, avg_latency, no_usage = session.exec(
             select(
@@ -194,6 +254,7 @@ def summarize(days: int = 7, project_id: Optional[str] = None, recent_limit: int
         ]
         by_purpose = [{"purpose": r.pop("key"), **r} for r in _group_rows(session, LLMCallLog.purpose, conds)]
         by_model = [{"model": r.pop("key"), **r} for r in _group_rows(session, LLMCallLog.model, conds)]
+        by_run = _by_run(session, conds, run_limit)
         recent = [
             row.model_dump() for row in session.exec(
                 select(LLMCallLog).where(*conds).order_by(col(LLMCallLog.id).desc()).limit(recent_limit)
@@ -203,6 +264,7 @@ def summarize(days: int = 7, project_id: Optional[str] = None, recent_limit: int
         "days": days,
         "since": since,
         "project_id": project_id,
+        "run_id": run_id,
         "totals": {
             "calls": calls,
             "errors": by_status.get("error", 0),
@@ -218,6 +280,7 @@ def summarize(days: int = 7, project_id: Optional[str] = None, recent_limit: int
         "by_purpose": by_purpose,
         "by_model": by_model,
         "by_day": by_day,
+        "by_run": by_run,
         "recent": recent,
     }
 
