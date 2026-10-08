@@ -42,7 +42,7 @@ class FakeModel:
         self.calls.append((kind, kw))
         queue = self.queues[kind]
         item = queue.pop(0) if len(queue) > 1 else queue[0]
-        if isinstance(item, Exception):
+        if isinstance(item, BaseException):
             raise item
         content, finish = item if isinstance(item, tuple) else (item, "stop")
         return SimpleNamespace(choices=[SimpleNamespace(finish_reason=finish, message=SimpleNamespace(content=content))],
