@@ -62,6 +62,7 @@ onMounted(async () => {
     selectedId.value = firstLeaf?.id || p.outline[0].id
   }
   rightRef.value?.open()
+  store.loadProposalCounts()
   // 刷新页面或从其他页面回来时，接管仍在进行的批量撰写
   try {
     const { tasks } = await api.listTasks({ projectId, type: 'section_batch', active: true, limit: 1 })
@@ -123,6 +124,7 @@ async function startBatch() {
 async function onBatchDone(task) {
   batchTaskId.value = ''
   await store.load(projectId, true)
+  await store.loadProposalCounts()
   editorKey.value += 1 // 重新挂载编辑器，载入新正文
   const r = task.result || {}
   if (task.status === 'completed') {
@@ -191,7 +193,7 @@ const progress = computed(() => {
           </div>
         </div>
         <div class="flex-1 overflow-auto py-2">
-          <OutlineTree :nodes="store.outline" :selected-id="selectedId" @select="selectNode" />
+          <OutlineTree :nodes="store.outline" :selected-id="selectedId" :marks="store.proposalCounts" @select="selectNode" />
           <p v-if="!store.outline.length && !store.loading" class="px-4 py-8 text-xs text-ink-3 text-center">尚未规划大纲，请先完成项目向导。</p>
         </div>
       </aside>
@@ -203,6 +205,7 @@ const progress = computed(() => {
           :node="selectedNode"
           :project-id="projectId"
           @refs-updated="onRefsUpdated"
+          @proposals-changed="store.loadProposalCounts()"
         >
           <template #toolbar-start>
             <button class="icon-btn shrink-0" :class="{ 'is-active': leftOpen }" title="大纲" @click="leftOpen = !leftOpen">

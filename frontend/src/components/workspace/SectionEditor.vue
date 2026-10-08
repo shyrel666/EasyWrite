@@ -7,6 +7,7 @@ import { useProjectStore } from '@/stores/project'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import CheckReport from '@/components/workspace/CheckReport.vue'
+import ProposalPanel from '@/components/workspace/ProposalPanel.vue'
 import { sectionStatus } from '@/utils/project'
 import { locateExcerpt } from '@/utils/sectionCheck'
 
@@ -14,7 +15,7 @@ const props = defineProps({
   node: { type: Object, default: null },
   projectId: { type: String, required: true },
 })
-const emit = defineEmits(['refs-updated'])
+const emit = defineEmits(['refs-updated', 'proposals-changed'])
 
 const ai = useAiStore()
 const projectStore = useProjectStore()
@@ -231,6 +232,53 @@ function locate(item) {
   }, 0)
 }
 
+// ---------- 候选稿：AI 对已有正文的改动，查看差异后采纳 ----------
+const proposalOpen = ref(false)
+const proposalId = ref('')
+const proposalTask = ref('')
+const pendingProposals = computed(() => projectStore.proposalCounts[props.node?.id] || 0)
+
+async function openProposals() {
+  if (!props.node) return
+  if (dirty.value) await autosave()
+  try {
+    const { items } = await api.sectionProposals(props.projectId, props.node.id)
+    const open = items.find((p) => ['draft', 'checked'].includes(p.status))
+    if (!open) {
+      ElMessage.info('本节没有待处理的候选稿')
+      emit('proposals-changed')
+      return
+    }
+    proposalTask.value = ''
+    proposalId.value = open.id
+    proposalOpen.value = true
+  } catch (e) {
+    ElMessage.error('候选稿加载失败：' + e.message)
+  }
+}
+
+// 按检查结果定向修订：先保存当前正文，修订结果是候选稿，不直接写入
+async function reviseFromCheck() {
+  if (!props.node) return
+  if (dirty.value) await autosave()
+  if (dirty.value) return
+  try {
+    const res = await api.reviseSection(props.projectId, props.node.id)
+    checkOpen.value = false
+    proposalId.value = ''
+    proposalTask.value = res.task_id
+    proposalOpen.value = true
+  } catch (e) {
+    ElMessage.warning(e.message)
+  }
+}
+
+function onProposalApplied({ content: text, status }) {
+  clearSaveTimer()
+  content.value = text
+  markSaved(props.node.id, text, status)
+}
+
 // ---------- 历史版本 ----------
 const VERSION_SOURCE = { manual: '人工稿（覆盖前快照）', ai_generate: 'AI 撰写', polish: '降AI味润色', batch: '批量撰写', restore: '恢复', deviation: '偏离表回填', proposal: '采纳候选稿' }
 const versionsOpen = ref(false)
@@ -354,6 +402,14 @@ onBeforeUnmount(() => {
       <span v-if="generationMode === 'mock' || (ai.isMockMode && content)" class="chip chip-warn shrink-0">演示内容</span>
     </div>
 
+    <div v-if="pendingProposals" class="shrink-0 px-2 sm:px-4 py-2 border-b border-line bg-surface">
+      <p class="note note-info !py-2 items-center">
+        <el-icon class="text-accent-fg shrink-0"><DocumentCopy /></el-icon>
+        <span class="flex-1">本节有 {{ pendingProposals }} 份候选稿待处理：AI 的改动经你查看差异并采纳后才会写入正文。</span>
+        <el-button size="small" type="primary" plain :disabled="generating" @click="openProposals">查看候选稿</el-button>
+      </p>
+    </div>
+
     <!-- 编辑 / 预览 -->
     <div class="flex-1 min-h-0 doc-desk">
       <div v-if="viewMode === 'edit'" class="h-full max-w-[880px] mx-auto px-2 py-3 sm:px-6 sm:py-6">
@@ -398,7 +454,28 @@ onBeforeUnmount(() => {
           <el-button size="small" :loading="checking" @click="runCheck">重新检查</el-button>
         </div>
         <CheckReport :report="checkReport" locatable @locate="locate" />
+        <div v-if="checkReport && checkReport.issues.some((i) => i.source === 'rule')" class="mt-5 pt-4 border-t border-line">
+          <el-tooltip :content="ai.llmConfigured ? '按上述规则问题定向修订已保存的正文，结果是候选稿，查看差异后再采纳' : '定向修订需要先配置大模型'" placement="top">
+            <span>
+              <el-button size="small" :disabled="!ai.llmConfigured || generating" @click="reviseFromCheck">
+                <el-icon class="mr-1"><EditPen /></el-icon>按检查结果修订（生成候选稿）
+              </el-button>
+            </span>
+          </el-tooltip>
+        </div>
       </div>
+    </el-drawer>
+
+    <el-drawer v-model="proposalOpen" :title="`候选稿 · ${node.title}`" size="min(760px, 96vw)" destroy-on-close>
+      <ProposalPanel
+        v-if="proposalOpen"
+        :project-id="projectId"
+        :section-id="node.id"
+        :proposal-id="proposalId"
+        :task-id="proposalTask"
+        @applied="onProposalApplied"
+        @changed="emit('proposals-changed')"
+      />
     </el-drawer>
 
     <el-drawer v-model="versionsOpen" :title="`历史版本 · ${node.title}`" size="min(600px, 94vw)">

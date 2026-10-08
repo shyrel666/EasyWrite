@@ -20,13 +20,18 @@ async function request(path, { method = 'GET', body, formData, signal, base = BA
   }
   const res = await fetch(`${base}${path}`, opts)
   if (!res.ok) {
-    let detail = `HTTP ${res.status}`
+    let message = `HTTP ${res.status}`
+    let detail = null
     try {
       const data = await res.json()
-      detail = data.detail || JSON.stringify(data)
+      detail = data.detail ?? null
+      // 结构化错误（如候选稿采纳的 409：{reason, message, …}）取其 message，完整内容放在 err.detail
+      if (detail && typeof detail === 'object' && !Array.isArray(detail)) message = detail.message || JSON.stringify(detail)
+      else message = detail || JSON.stringify(data)
     } catch { /* ignore */ }
-    const err = new Error(detail)
+    const err = new Error(message)
     err.status = res.status
+    err.detail = detail
     throw err
   }
   return res.json()
@@ -224,6 +229,17 @@ export const api = {
   // 章节检查：content 不传时检查已保存的正文；llmReview 加做模型评审（产生一次模型调用）
   checkSection: (id, sectionId, content, llmReview = false) =>
     request(`/project/${id}/section/${sectionId}/check`, { method: 'POST', body: { content, llm_review: llmReview } }),
+  // 候选稿：AI 对已有正文的改动先成为候选稿，查看差异后采纳（409：正文或依据已变化，err.detail.reason）
+  projectProposals: (id, open = true) => request(`/project/${id}/proposals?open=${open}`),
+  sectionProposals: (id, sectionId) => request(`/project/${id}/section/${sectionId}/proposals`),
+  getProposal: (id, sectionId, proposalId) => request(`/project/${id}/section/${sectionId}/proposals/${proposalId}`),
+  applyProposal: (id, sectionId, proposalId) =>
+    request(`/project/${id}/section/${sectionId}/proposals/${proposalId}/apply`, { method: 'POST' }),
+  rejectProposal: (id, sectionId, proposalId) =>
+    request(`/project/${id}/section/${sectionId}/proposals/${proposalId}/reject`, { method: 'POST' }),
+  // 基于当前正文定向修订（后台任务，需配置模型），结果为候选稿
+  reviseSection: (id, sectionId, { parentId = '', instruction = '' } = {}) =>
+    request(`/project/${id}/section/${sectionId}/revise`, { method: 'POST', body: { parent_id: parentId, instruction } }),
   listVersions: (id, sectionId) => request(`/project/${id}/section/${sectionId}/versions`),
   getVersion: (id, sectionId, versionId) => request(`/project/${id}/section/${sectionId}/versions/${versionId}`),
   restoreVersion: (id, sectionId, versionId) =>

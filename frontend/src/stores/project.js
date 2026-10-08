@@ -7,6 +7,8 @@ export const useProjectStore = defineStore('project', {
     id: '',
     project: null,
     loading: false,
+    // 各章节待处理的候选稿数 {sectionId: n}（大纲树标记）
+    proposalCounts: {},
   }),
   getters: {
     outline: (s) => s.project?.outline || [],
@@ -24,6 +26,15 @@ export const useProjectStore = defineStore('project', {
       } finally {
         this.loading = false
       }
+    },
+    async loadProposalCounts() {
+      if (!this.id) return {}
+      try {
+        this.proposalCounts = (await api.projectProposals(this.id)).counts || {}
+      } catch {
+        this.proposalCounts = {}
+      }
+      return this.proposalCounts
     },
     async saveFacts(facts) {
       const res = await api.updateFacts(this.id, facts)

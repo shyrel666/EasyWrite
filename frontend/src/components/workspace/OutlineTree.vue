@@ -6,6 +6,8 @@ defineProps({
   nodes: { type: Array, required: true },
   selectedId: { type: String, default: '' },
   defaultExpand: { type: Boolean, default: true },
+  // 有待处理候选稿的章节 {sectionId: n}
+  marks: { type: Object, default: () => ({}) },
 })
 const emit = defineEmits(['select'])
 
@@ -46,7 +48,12 @@ function toggle(node) {
         />
         <span class="flex-1 truncate leading-5" :class="{ 'font-medium': node.level === 1 }" :title="node.title">{{ node.title }}</span>
         <span
-          v-if="node.word_budget"
+          v-if="marks[node.id]"
+          class="chip chip-accent shrink-0 !px-1.5"
+          :title="`${marks[node.id]} 份候选稿待处理`"
+        >候选</span>
+        <span
+          v-else-if="node.word_budget"
           class="text-2xs text-ink-3 shrink-0 hidden group-hover:inline num"
         >{{ node.word_budget }}字</span>
       </div>
@@ -54,6 +61,7 @@ function toggle(node) {
         <OutlineTree
           :nodes="node.children"
           :selected-id="selectedId"
+          :marks="marks"
           @select="emit('select', $event)"
         />
       </div>

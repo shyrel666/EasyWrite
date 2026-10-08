@@ -6,6 +6,8 @@ const props = defineProps({
   report: { type: Object, default: null },
   // 可定位：点击原文片段时发出 locate（编辑器据此选中正文）
   locatable: { type: Boolean, default: false },
+  // 候选稿面板把待核实事项单独成栏，这里不重复显示
+  showVerify: { type: Boolean, default: true },
 })
 const emit = defineEmits(['locate'])
 
@@ -69,7 +71,7 @@ const missingPoints = computed(() => (props.report?.points || []).filter((p) => 
     </section>
 
     <!-- 待核实事项 -->
-    <section>
+    <section v-if="showVerify">
       <p class="font-semibold text-ink mb-1.5">
         待核实事项<span class="num text-ink-3 font-normal ml-1">{{ report.pending_verification.length }}</span>
       </p>

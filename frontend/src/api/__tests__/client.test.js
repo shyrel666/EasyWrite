@@ -120,3 +120,25 @@ describe('health', () => {
     expect(fetchMock).toHaveBeenCalledWith('/health', expect.objectContaining({ method: 'GET' }))
   })
 })
+
+describe('request errors', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('结构化 detail（候选稿 409）：message 取 detail.message，完整内容在 err.detail', async () => {
+    const detail = { reason: 'content_changed', message: '正文已变化', current_content: '新正文' }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ detail }, 409)))
+    const err = await api.applyProposal('p1', 's1', 'prop_1').catch((e) => e)
+    expect(err.message).toBe('正文已变化')
+    expect(err.status).toBe(409)
+    expect(err.detail).toEqual(detail)
+  })
+
+  it('字符串 detail 原样作为 message', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ detail: '项目不存在' }, 404)))
+    const err = await api.getProject('x').catch((e) => e)
+    expect(err.message).toBe('项目不存在')
+    expect(err.detail).toBe('项目不存在')
+  })
+})
