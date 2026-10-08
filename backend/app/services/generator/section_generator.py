@@ -12,10 +12,10 @@
 """
 import re
 import logging
-from typing import Dict, Any, List, Optional, AsyncGenerator
+from typing import Dict, Any, List, Optional, AsyncGenerator, Tuple
 
 from app.core.llm_client import llm_client
-from app.models.schemas import OutlineNode, GlobalFacts
+from app.models.schemas import OutlineNode, GlobalFacts, Project
 from app.services.generator.evidence_set import EvidenceSet
 
 logger = logging.getLogger("easywrite.section")
@@ -37,6 +37,14 @@ CHAPTER_SPECIALIZED_PROMPTS = {
     "arch": "你是一名资深云原生与信创分布式架构师。请针对架构设计章节，侧重微服务治理、容器弹性调度、高可用与容灾、信创适配、数据加密等设计，必须输出规范的 ```mermaid 架构拓扑图。操作系统、数据库、中间件等选型以全局事实为准，未指定时不替企业选定具体产品；性能与容灾指标不自行给出数值。语言必须严密、权威、杜绝AI空话。",
     "team": "你是一名资深国家注册 PMP 高级项目经理与人社部高级工程师。请针对团队配置章节，侧重岗位设置与职责、项目经理与核心成员的资质要求、驻场保障、知识转移与人员考核制度，以专业规范的表格和严谨公文体裁论述。人员姓名、证书、从业年限与驻场人数只能来自企业资料或全局事实，未提供时按事实完备纪律处理。",
     "maintenance": "你是一名资深 ITIL/ITSS 运维保障专家。请针对售后运维保障章节，侧重服务组织与流程、故障分级与响应机制、驻场与巡检安排、重大活动保障方案。响应时限、驻场人数、巡检频率等量化指标以全局事实为准；全局事实未提供时按事实完备纪律处理（【待填写】占位或模糊表述），不得自行给出数值。",
+}
+
+
+# 智能完善的修订方式（policy.decide 给出）：上一轮没有进展时换方法；连续两轮没有进展时只处理阻塞问题
+REVISION_MODE_HINTS = {
+    "alternate": "上一轮修订后，这些问题仍未解决。请换一种修改方式：不要只在原句上做局部替换，改为重写涉及问题的段落；"
+                 "缺失的评分要点单独成条论述（资料不足处用【待填写】占位）。",
+    "minimal": "本轮只处理上面列出的阻塞问题，其余段落（包括篇幅与措辞）一律保持原样，不做其他改动。",
 }
 
 
@@ -103,6 +111,27 @@ def _sibling_context(outline: List[OutlineNode], section_id: str, max_siblings: 
     return "\n".join(parts)
 
 
+def writing_inputs(project: Project, node: OutlineNode, **overrides) -> Tuple[dict, dict]:
+    """
+    返回 (select_evidence 参数, build_prompts 参数)。覆盖值为空时回落到章节自身的标题、路径、要求与锁定/排除设置。
+    先选资料（检索、企业资料、招标原文）再写正文：生成环节只使用选好的依据。
+    """
+    o = {k: v for k, v in overrides.items() if v}
+    title = o.get("section_title", node.title)
+    path = o.get("section_path", node.path or node.title)
+    reqs = o.get("requirements", node.requirements)
+    instruction = o.get("custom_instruction", "")
+    evidence_kw = dict(
+        instruction=instruction, section_title=title, section_path=path, requirements=reqs,
+        pinned_refs=o.get("pinned_refs", node.pinned_refs), excluded_refs=o.get("excluded_refs", node.excluded_refs),
+    )
+    prompt_kw = dict(
+        section_title=title, section_path=path, requirements=reqs, custom_instruction=instruction,
+        facts=project.facts, outline=project.outline, section_id=node.id,
+    )
+    return evidence_kw, prompt_kw
+
+
 class SectionGenerator:
     def __init__(self):
         self.llm = llm_client
@@ -119,10 +148,12 @@ class SectionGenerator:
         section_id: str = "",
         base_text: Optional[str] = None,
         issues: Optional[List[str]] = None,
+        revision_mode: str = "normal",
     ) -> Dict[str, Any]:
         """
         装配提示词（纯函数：不检索、不读资料库，依据全部来自 evidence），返回 {system, user, refs, retrieval_message}。
-        base_text / issues：定向修订——在原稿基础上逐条处理问题清单，未涉及的段落保持原样。
+        base_text / issues：定向修订——在原稿基础上逐条处理问题清单，未涉及的段落保持原样；
+        revision_mode 为 alternate / minimal 时附加换方法或只处理阻塞问题的要求（智能完善）。
         """
         facts_obj = facts or GlobalFacts()
         evidence = evidence or EvidenceSet()
@@ -160,6 +191,8 @@ class SectionGenerator:
 
 【修订任务】：
 逐条处理上述问题，输出修订后的完整正文；未涉及问题的段落保持原样。资料不足以解决的问题用【待填写】或【待核实】占位，不得编造企业事实或承诺数值。直接输出正文，不要解释修改过程。"""
+            if revision_mode in REVISION_MODE_HINTS:
+                task += f"\n【本轮修订方式】：{REVISION_MODE_HINTS[revision_mode]}"
         else:
             task = """【编写任务】：
 请针对上述章节，融合可用的参考资料与企业资料，输出详尽、专业的技术标书正文；企业资质、人员、业绩等事实只能取自上面的企业资料与全局事实。
@@ -194,10 +227,10 @@ class SectionGenerator:
             "retrieval_message": evidence.retrieval_message,
         }
 
-    def draft_section(self, evidence: EvidenceSet, **kwargs) -> Dict[str, Any]:
-        """同步完整生成（后台批量任务使用）；依据由调用方先经 select_evidence 选好"""
+    def draft_section(self, evidence: EvidenceSet, purpose: str = "section_write", **kwargs) -> Dict[str, Any]:
+        """同步完整生成（批量撰写、智能完善起草）；依据由调用方先经 select_evidence 选好"""
         built = self.build_prompts(evidence=evidence, **kwargs)
-        content = self.llm.chat_completion(system_prompt=built["system"], user_prompt=built["user"], purpose="section_write")
+        content = self.llm.chat_completion(system_prompt=built["system"], user_prompt=built["user"], purpose=purpose)
         return {
             "generated_content": strip_title_heading(content, kwargs.get("section_title", "")),
             "references": evidence.ref_records(),
@@ -205,9 +238,12 @@ class SectionGenerator:
             "mode": self.llm.get_mode(),
         }
 
-    def revise_section(self, evidence: EvidenceSet, base_text: str, issues: List[str], **kwargs) -> Dict[str, Any]:
+    def revise_section(
+        self, evidence: EvidenceSet, base_text: str, issues: List[str], revision_mode: str = "normal", **kwargs,
+    ) -> Dict[str, Any]:
         """定向修订：在原稿基础上逐条处理问题清单（未涉及的段落保持原样），依据同样由调用方选好"""
-        built = self.build_prompts(evidence=evidence, base_text=base_text, issues=issues, **kwargs)
+        built = self.build_prompts(evidence=evidence, base_text=base_text, issues=issues,
+                                   revision_mode=revision_mode, **kwargs)
         content = self.llm.chat_completion(system_prompt=built["system"], user_prompt=built["user"], purpose="section_revise")
         return {
             "generated_content": strip_title_heading(content, kwargs.get("section_title", "")),

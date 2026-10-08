@@ -30,6 +30,8 @@ from app.services.project_store import find_node, now_str
 from app.services.section_content import save_section_content
 
 OPEN_STATUSES = ("draft", "checked")
+# 智能完善产生的候选稿：起草稿与各轮修订稿（parent_id 串成一条链）
+REFINE_ORIGINS = ("refine_draft", "refine")
 # 资料指纹不含附件与确认时间：补传证书附件不改变正文依据；状态（待核实 → 已确认）属于依据
 ASSET_VOLATILE_FIELDS = ("attachments", "confirmed_at")
 ASSET_PREFIX = "asset:"
@@ -115,6 +117,7 @@ def to_dict(row: SectionProposal, with_content: bool = True) -> Dict[str, Any]:
         "id": row.id, "project_id": row.project_id, "section_id": row.section_id,
         "parent_id": row.parent_id, "task_id": row.task_id, "origin": row.origin,
         "base_revision": row.base_revision, "status": row.status,
+        "refine": json.loads(row.refine_json) if row.refine_json else None,
         "created_at": row.created_at, "decided_at": row.decided_at,
         "char_count": len("".join((row.content or "").split())),
         "blocking_count": report.get("blocking_count", 0) if report else None,
@@ -195,6 +198,17 @@ class ProposalStore:
             )
             return bool(result.rowcount)
 
+    def chain(self, project_id: str, tip_id: str, max_len: int = 20) -> List[SectionProposal]:
+        """沿 parent_id 回溯的智能完善候选稿链（根 → tip），遇到非智能完善的候选稿或其他章节即停"""
+        out: List[SectionProposal] = []
+        row = self.get(project_id, tip_id)
+        while row is not None and row.origin in REFINE_ORIGINS and len(out) < max_len:
+            if out and row.section_id != out[-1].section_id:
+                break
+            out.append(row)
+            row = self.get(project_id, row.parent_id) if row.parent_id else None
+        return list(reversed(out))
+
     def delete_project(self, project_id: str):
         with get_session() as session:
             for row in session.exec(select(SectionProposal).where(SectionProposal.project_id == project_id)).all():
@@ -209,10 +223,13 @@ proposal_store = ProposalStore()
 def propose(
     project: Project, node: OutlineNode, content: str, evidence: EvidenceSet, *,
     origin: str, task_id: str = "", parent_id: str = "",
+    refine: Optional[Dict[str, Any]] = None, base_revision: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     生成候选稿。project / node 为生成时读取的快照：base_revision 取 node.revision，输入清单与检查报告都按该快照计算
     （生成期间用户改了正文或依据，采纳时会如实报告变化）。
+    base_revision 显式传入时以其为准：智能完善中断后继续执行，候选稿仍以起始时的正文为基准。
+    refine 为智能完善的轮次信息（存入 refine_json）。
     """
     try:
         report = check_section(project, node, content, evidence).model_dump_json()
@@ -222,7 +239,8 @@ def propose(
     row = SectionProposal(
         id=f"prop_{uuid.uuid4().hex[:12]}", project_id=project.id, section_id=node.id,
         parent_id=parent_id, task_id=task_id, origin=origin, content=content,
-        base_revision=node.revision,
+        base_revision=node.revision if base_revision is None else base_revision,
+        refine_json=json.dumps(refine, ensure_ascii=False) if refine else "",
         input_manifest_json=json.dumps(compute_manifest(project, node, evidence), ensure_ascii=False),
         evidence_json=json.dumps(evidence.ref_records(), ensure_ascii=False),
         report_json=report, status=status, created_at=now_str(), created_ts=time.time(),

@@ -1,4 +1,4 @@
-"""章节撰写路由：SSE 流式生成 / 同步生成 / 批量撰写 / 保存 / 润色 / 章节检查 / 定向修订 / 历史版本"""
+"""章节撰写路由：SSE 流式生成 / 同步生成 / 批量撰写 / 保存 / 润色 / 章节检查 / 定向修订 / 智能完善 / 历史版本"""
 import asyncio
 import json
 import logging
@@ -16,10 +16,12 @@ from app.models.schemas import (
 )
 from app.services.project_store import project_store, find_node
 from app.services.generator.evidence_set import select_evidence
-from app.services.generator.section_generator import section_generator, strip_title_heading
+from app.services.generator.section_generator import section_generator, strip_title_heading, writing_inputs as _inputs
 from app.services.checker.quality_inspector import quality_inspector
-from app.services.checker.section_check import check_section
+from app.services.checker.section_check import check_section, revision_issues
 from app.services.proposals import proposal_store, propose
+from app.services.refine import runner as refine_runner
+from app.services.refine.policy import DEFAULT_MAX_ROUNDS, MAX_ROUNDS_LIMIT, decide
 from app.services.section_content import save_section_content as _save_section_content
 from app.services.version_store import version_store
 
@@ -32,27 +34,6 @@ def _get_project(project_id: str):
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
     return project
-
-
-def _inputs(project, node: OutlineNode, **overrides) -> Tuple[dict, dict]:
-    """
-    返回 (select_evidence 参数, build_prompts 参数)。请求中为空的覆盖值回落到章节自身的设置。
-    先选资料（检索、企业资料、招标原文）再写正文：生成环节只使用选好的依据。
-    """
-    o = {k: v for k, v in overrides.items() if v}
-    title = o.get("section_title", node.title)
-    path = o.get("section_path", node.path or node.title)
-    reqs = o.get("requirements", node.requirements)
-    instruction = o.get("custom_instruction", "")
-    evidence_kw = dict(
-        instruction=instruction, section_title=title, section_path=path, requirements=reqs,
-        pinned_refs=o.get("pinned_refs", node.pinned_refs), excluded_refs=o.get("excluded_refs", node.excluded_refs),
-    )
-    prompt_kw = dict(
-        section_title=title, section_path=path, requirements=reqs, custom_instruction=instruction,
-        facts=project.facts, outline=project.outline, section_id=node.id,
-    )
-    return evidence_kw, prompt_kw
 
 
 def _request_inputs(project, req: GenerateSectionRequest) -> Tuple[OutlineNode, dict, dict]:
@@ -265,14 +246,6 @@ def check_section_content(project_id: str, section_id: str, req: Optional[Sectio
     return check_section(project, node, text, evidence, llm_review=req.llm_review)
 
 
-def _revision_issues(report, instruction: str) -> List[str]:
-    """修订的问题清单：规则检查出的问题（附原文定位）+ 用户补充的修订要求"""
-    issues = [i.message + (f"（原文：{i.excerpt}）" if i.excerpt else "") for i in report.issues if i.source == "rule"]
-    if instruction.strip():
-        issues.append(f"补充修订要求：{instruction.strip()}")
-    return issues
-
-
 @router.post("/project/{project_id}/section/{section_id}/revise",
              summary="基于当前正文定向修订（后台任务，需已配置模型）：结果存为候选稿，经采纳才写入正文")
 def revise_section(
@@ -291,7 +264,7 @@ def revise_section(
     if not node.content.strip():
         raise HTTPException(status_code=400, detail="本节尚无正文，请先撰写")
     precheck = check_section(project, node, node.content, select_evidence(project, node, retrieve=False))
-    if not _revision_issues(precheck, instruction):
+    if not revision_issues(precheck, instruction):
         raise HTTPException(status_code=400, detail="当前正文没有检查出问题；如需改写，请填写修订要求")
 
     def _run(ctx):
@@ -305,7 +278,7 @@ def revise_section(
         if ctx.cancelled():
             return {"section_id": section_id, "proposal_id": None}
         ctx.report(35, "检查当前正文")
-        issues = _revision_issues(check_section(latest, current, current.content, evidence), instruction)
+        issues = revision_issues(check_section(latest, current, current.content, evidence), instruction)
         if not issues:
             return {"section_id": section_id, "proposal_id": None, "message": "当前正文没有检查出问题，未修订"}
         ctx.report(50, f"定向修订：{len(issues)} 个问题")
@@ -318,7 +291,53 @@ def revise_section(
         return {"section_id": section_id, "proposal_id": proposal["id"], "issues": len(issues),
                 "blocking_count": proposal["blocking_count"], "quality_count": proposal["quality_count"]}
 
-    task_id = task_manager.submit("section_revise", _run, description=f"定向修订：{node.title}")
+    task_id = task_manager.submit("section_revise", _run, description=f"定向修订：{node.title}",
+                                  meta={"section_id": section_id})
+    return {"task_id": task_id}
+
+
+# ---------------- 智能完善（写—查—改闭环） ----------------
+
+@router.post("/project/{project_id}/section/{section_id}/refine",
+             summary="智能完善（后台任务，需已配置模型）：起草或以当前正文为原稿 → 检查 → 定向修订（默认最多 2 轮），产出带检查报告的候选稿")
+def refine_section(
+    project_id: str, section_id: str,
+    instruction: str = Body(default="", embed=True),
+    max_rounds: int = Body(default=DEFAULT_MAX_ROUNDS, embed=True),
+    apply_if_blank: bool = Body(default=False, embed=True),
+    resume: bool = Body(default=False, embed=True),
+):
+    project = _get_project(project_id)
+    node = find_node(project.outline, section_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="未找到对应章节")
+    if not llm_client.is_configured:
+        raise HTTPException(status_code=400, detail="智能完善需要先配置大模型（检查本章不需要模型）")
+    if not 0 <= max_rounds <= MAX_ROUNDS_LIMIT:
+        raise HTTPException(status_code=400, detail=f"修订轮数只能为 0–{MAX_ROUNDS_LIMIT} 轮")
+    if resume:
+        if refine_runner.resume_tip(project_id, section_id) is None:
+            raise HTTPException(status_code=400, detail="没有可继续的智能完善候选稿（已采纳、放弃或被取代），请重新发起")
+    elif node.content.strip() and not instruction.strip():
+        precheck = check_section(project, node, node.content, select_evidence(project, node, retrieve=False))
+        if decide([precheck], 0, max_rounds).outcome == "goal_met":
+            raise HTTPException(status_code=400, detail="当前正文已通过检查；如需改写，请填写补充要求")
+    if not refine_runner.claim(project_id, section_id):
+        raise HTTPException(status_code=409, detail="本节已有智能完善在进行，请等待其结束")
+
+    def _run(ctx):
+        try:
+            return refine_runner.run_refine(ctx, project_id, section_id, instruction=instruction,
+                                            max_rounds=max_rounds, apply_if_blank=apply_if_blank, resume=resume)
+        finally:
+            refine_runner.release(project_id, section_id)
+
+    try:
+        task_id = task_manager.submit("section_refine", _run, description=f"{'继续' if resume else ''}智能完善：{node.title}",
+                                      meta={"section_id": section_id})
+    except Exception:
+        refine_runner.release(project_id, section_id)
+        raise
     return {"task_id": task_id}
 
 

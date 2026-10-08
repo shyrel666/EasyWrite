@@ -468,6 +468,15 @@ def _llm_review(project: Project, text: str, evidence: EvidenceSet) -> Tuple[Lis
 
 # ---------------- 入口 ----------------
 
+def revision_issues(report: SectionCheckReport, instruction: str = "", blocking_only: bool = False) -> List[str]:
+    """定向修订的问题清单：规则检查出的问题（附原文定位；blocking_only 时只取阻塞问题）+ 用户补充的修订要求"""
+    issues = [i.message + (f"（原文：{i.excerpt}）" if i.excerpt else "")
+              for i in report.issues if i.source == "rule" and (i.level == "blocking" or not blocking_only)]
+    if instruction.strip():
+        issues.append(f"补充修订要求：{instruction.strip()}")
+    return issues
+
+
 def check_section(
     project: Project, node: OutlineNode, text: str,
     evidence: Optional[EvidenceSet] = None, llm_review: bool = False,
