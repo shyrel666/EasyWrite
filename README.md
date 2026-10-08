@@ -126,6 +126,16 @@ npm --prefix frontend test
 
 测试使用独立临时数据目录与空密钥，不读取真实模型密钥或写入运行数据。
 
+效果评估（改进计划阶段 E）用真实招标文件对比“单次生成”与“智能完善”：
+
+```bash
+python scripts/eval_sections.py plan
+python scripts/eval_sections.py run
+python scripts/eval_sections.py summarize docs/eval/<日期>.md
+```
+
+`plan` 只按规则拆标并列出将评估的章节与请求次数上限，不调用模型；`run` 使用已配置的模型（产生费用，开始前需确认），在 `backend/data/eval/<时间>/` 的数据副本中运行，不改动现有项目，报告写入 `docs/eval/<日期>.md`；填好报告中的人工标注列、改好 `*.edited.md` 后运行 `summarize`，计算修改量并判断决策门槛。可用 `--tender`、`--section`、`--limit`、`--facts` 调整样本。
+
 </details>
 
 ## 开源参考

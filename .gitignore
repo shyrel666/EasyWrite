@@ -23,6 +23,8 @@ backend/data/*.bak
 backend/data/uploads/*
 backend/data/exports/*
 backend/data/rendered_diagrams/*
+# 效果评估工作目录（scripts/eval_sections.py：数据库副本、生成的正文与改稿，可能含企业资料）
+backend/data/eval/
 !backend/data/uploads/.gitkeep
 !backend/data/exports/.gitkeep
 !backend/data/rendered_diagrams/.gitkeep
