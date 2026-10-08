@@ -134,7 +134,7 @@ python scripts/eval_sections.py run
 python scripts/eval_sections.py summarize docs/eval/<日期>.md
 ```
 
-`plan` 只按规则拆标并列出将评估的章节与请求次数上限，不调用模型；`run` 使用已配置的模型（产生费用，开始前需确认），在 `backend/data/eval/<时间>/` 的数据副本中运行，不改动现有项目，报告写入 `docs/eval/<日期>.md`；填好报告中的人工标注列、改好 `*.edited.md` 后运行 `summarize`，计算修改量并判断决策门槛。可用 `--tender`、`--section`、`--limit`、`--facts` 调整样本。
+`plan` 只按规则拆标并列出将评估的章节与请求次数上限，不调用模型；`run` 使用已配置的模型（产生费用，开始前需确认），在 `backend/data/eval/<时间>/` 的数据副本中运行，不改动现有项目，报告写入 `docs/eval/<日期>.md`；个别写法因网络等原因没有产出正文时，`retry <报告>` 在原数据副本中重跑并并入同一份报告；填好报告中的人工标注列、改好 `*.edited.md` 后运行 `summarize`，计算修改量并判断决策门槛。可用 `--tender`、`--section`、`--limit`、`--facts` 调整样本。
 
 </details>
 

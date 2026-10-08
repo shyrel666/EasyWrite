@@ -192,12 +192,41 @@ def test_failed_rows_are_reported_but_not_compared(tmp_path):
     assert "失败：模型调用失败，未能起草" in text
 
 
+def test_retry_reruns_only_failed_methods_and_keeps_annotations(client, project_id, monkeypatch, tmp_path):
+    client.put(f"/api/v1/project/{project_id}/outline", json={"outline": OUTLINE})
+    no_kb(monkeypatch)
+    model = FakeModel(monkeypatch, drafts=[LACKING], revisions=[FULL])
+    results = _results()
+    sec = results["sections"][0]
+    sec.update(project_id=project_id, section_id="sec_1_1")
+    sec["refine"] = {"task_id": "task_old", "status": "failed", "error": "模型调用失败，未能起草",
+                     "usage": {"calls": 3, "errors": 3}, "seconds": 90.0, "content": ""}
+    workspace, report = tmp_path / "ws", tmp_path / "r.md"
+    ev.write_texts(workspace, sec["key"], "single", sec["single"]["content"])
+    annotations = {(sec["key"], "single"): {ev.HUMAN_COLUMNS[0]: "2"}}
+
+    assert [(s["key"], m) for s, m in ev.failed_rows(results)] == [("T1-S1", "refine")]
+    ev.retry_failed(results, workspace, report, annotations, "备注保留")
+    assert model.kinds() == ["draft", "revise"]  # 只重跑失败的智能完善
+    refine = results["sections"][0]["refine"]
+    assert refine["content"] == FULL and refine["outcome"] == "goal_met"
+    assert refine["attempts"] == [{"task_id": "task_old", "status": "failed", "error": "模型调用失败，未能起草",
+                                   "usage": {"calls": 3, "errors": 3}, "seconds": 90.0}]
+    assert not ev.failed_rows(results) and (workspace / "texts" / "T1-S1.refine.md").read_text(encoding="utf-8") == FULL
+    text = report.read_text(encoding="utf-8")
+    assert "备注保留" in text and "| T1-S1 | 单次生成 |" in text
+    assert ev.parse_report(text)[1][("T1-S1", "single")][ev.HUMAN_COLUMNS[0]] == "2"
+
+
 def test_helpers():
     assert ev.edit_ratio("abcd", "abcd") == 0 and ev.edit_ratio("abcd", "abXd") == 0.25
     assert ev.edit_ratio("一行\n二行", "一行\r\n二行  ") == 0
     assert ev.date_label(datetime(2026, 10, 8, 9, 5)) == "2026-10-08"
     assert ev.max_requests(2, 0) == (1, 3) and ev.max_requests(2, 10) == (2, 4)
     assert ev.parse_int(" 3（见备注）") == 3 and ev.parse_int("") is None
+    trace = 'Traceback (most recent call last):\n  File "x.py", line 1\nRuntimeError: 模型调用失败，未产出正文\n'
+    assert ev.error_line(trace) == "模型调用失败，未产出正文" and ev.error_line("") == ""
+    assert ev._result_cell("single", {"status": "failed", "error": trace, "content": ""}) == "失败：模型调用失败，未产出正文"
 
 
 @pytest.mark.skipif(not ev.TENDER_DIR.is_dir(), reason="真实招标文件不在仓库中（downloads/ 被忽略）")

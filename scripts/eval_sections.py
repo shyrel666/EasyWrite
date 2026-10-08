@@ -3,6 +3,8 @@
 
   python scripts/eval_sections.py plan       只按规则拆标、生成大纲，列出将评估的章节与请求次数上限（不调用模型、不产生费用）
   python scripts/eval_sections.py run        调用模型生成并检查，报告写入 docs/eval/<日期>.md（真实模型请求会产生费用，开始前需确认）
+  python scripts/eval_sections.py retry docs/eval/<日期>.md
+                                             重跑没有产出正文的写法（如网络错误），在原工作目录中运行并并入同一份报告
   python scripts/eval_sections.py summarize docs/eval/<日期>.md
                                              填好人工标注列、改好 *.edited.md 后运行：计算修改量，重新汇总并判断决策门槛
 
@@ -110,6 +112,12 @@ def read_edited(path: Path) -> Optional[str]:
     if EDITED_MARKER in text:
         return None
     return text
+
+
+def error_line(error: str) -> str:
+    """任务错误记录的是完整堆栈：取最后一行，去掉异常类名"""
+    lines = [line.strip() for line in (error or "").splitlines() if line.strip()]
+    return re.sub(r"^\w+(?:Error|Exception|Exceeded): ", "", lines[-1]) if lines else ""
 
 
 def parse_int(raw: str) -> Optional[int]:
@@ -378,7 +386,7 @@ def measure(project_id: str, section_id: str, content: str) -> Dict[str, Any]:
 def _finish(task: Dict[str, Any], seconds: float, content: str, project_id: str, section_id: str) -> Dict[str, Any]:
     from app.core import llm_usage
 
-    out = {"task_id": task.get("id", ""), "status": task.get("status", ""), "error": task.get("error", ""),
+    out = {"task_id": task.get("id", ""), "status": task.get("status", ""), "error": error_line(task.get("error", "")),
            "seconds": seconds, "usage": llm_usage.run_totals(task.get("id", "")), "content": content}
     if content.strip():
         out.update(measure(project_id, section_id, content))
@@ -484,10 +492,11 @@ def _ok(m: Optional[Dict[str, Any]]) -> bool:
 
 
 def _result_cell(method: str, m: Dict[str, Any]) -> str:
+    failed = f"失败：{(error_line(m.get('error', '')) or m.get('status') or '')[:40]}"
     if method == "single":
-        return "完成" if _ok(m) else f"失败：{(m.get('error') or m.get('status') or '')[:40]}"
+        return "完成" if _ok(m) else failed
     if not m.get("outcome") and not _ok(m):
-        return f"失败：{(m.get('error') or m.get('status') or '')[:40]}"
+        return failed
     head = m.get("outcome_label") or m.get("outcome", "")
     if m.get("stop_reason") not in ("", "goal_met"):
         head += f"（{m.get('stop_label') or m.get('stop_reason')}）"
@@ -813,18 +822,53 @@ def cmd_plan(args) -> None:
         engine.dispose()  # 释放 SQLite 文件，临时目录才能删除
 
 
+def _load_model(workspace: Path) -> None:
+    """载入应用与模型配置（工作目录中须已有 ai_settings.json 副本）；密钥载入内存后即删除副本"""
+    isolate_env(workspace, offline=False)
+    from app.core.llm_client import llm_client
+
+    (workspace / "ai_settings.json").unlink(missing_ok=True)
+    if not llm_client.is_configured:
+        raise SystemExit("未配置模型：请先在 设置 → 模型 中配置（读取 backend/data/ai_settings.json）")
+
+
+def _confirm(args, message: str) -> bool:
+    if args.yes:
+        return True
+    if not sys.stdin.isatty():
+        raise SystemExit("真实模型请求会产生费用：确认后加 --yes 运行")
+    return input(f"\n{message}（产生费用）。输入 yes 开始：").strip().lower() == "yes"
+
+
+def _run_method(workspace: Path, sec: Dict[str, Any], method: str, max_rounds: int) -> Dict[str, Any]:
+    """运行一种写法（出错不影响其他章节），保存正文并打印结果"""
+    print(f"   {METHODS[method]}")
+    try:
+        if method == "single":
+            m = run_single(sec["project_id"], sec["section_id"])
+        else:
+            m = run_refine(sec["project_id"], sec["section_id"], max_rounds)
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        m = {"status": "failed", "error": str(e)[:200], "usage": {}, "seconds": 0, "content": ""}
+    if _ok(m):
+        write_texts(workspace, sec["key"], method, m["content"])
+    blocking = f"阻塞 {m.get('blocking', '—')}，" if method == "single" and _ok(m) else ""
+    print(f"      → {_result_cell(method, m)}；{blocking}请求 {m.get('usage', {}).get('calls', 0)} 次，{m.get('seconds', 0)} 秒")
+    return m
+
+
 def cmd_run(args) -> None:
     now = datetime.now()
     workspace = EVAL_ROOT / stamp(now)
     prepare_workspace(workspace, Path(args.data_dir), with_model=True)
-    isolate_env(workspace, offline=False)
-    from app.core.config import settings
-    from app.core.llm_client import llm_client
-
-    (workspace / "ai_settings.json").unlink(missing_ok=True)  # 密钥已载入内存，工作目录不留副本
-    if not llm_client.is_configured:
+    try:
+        _load_model(workspace)
+    except SystemExit:
         shutil.rmtree(workspace, ignore_errors=True)
-        raise SystemExit("未配置模型：请先在 设置 → 模型 中配置（读取 backend/data/ai_settings.json）")
+        raise
+    from app.core.config import settings
 
     tenders, sections, facts_label = build_plan(args)
     basis = basis_summary()
@@ -832,12 +876,9 @@ def cmd_run(args) -> None:
     total = print_plan(tenders, sections, model, args.max_rounds, basis["kb_chunks"])
     if not sections:
         raise SystemExit("没有可评估的章节")
-    if not args.yes:
-        if not sys.stdin.isatty():
-            raise SystemExit("真实模型请求会产生费用：确认后加 --yes 运行")
-        if input(f"\n将发起最多约 {total} 次真实模型请求（产生费用）。输入 yes 开始：").strip().lower() != "yes":
-            shutil.rmtree(workspace, ignore_errors=True)
-            raise SystemExit("已取消")
+    if not _confirm(args, f"将发起最多约 {total} 次真实模型请求"):
+        shutil.rmtree(workspace, ignore_errors=True)
+        raise SystemExit("已取消")
 
     report_path = next_report_path(now)
     results: Dict[str, Any] = {
@@ -853,22 +894,7 @@ def cmd_run(args) -> None:
             entry = dict(sec)
             results["sections"].append(entry)
             for method in METHODS:
-                print(f"   {METHODS[method]}")
-                try:
-                    if method == "single":
-                        m = run_single(sec["project_id"], sec["section_id"])
-                    else:
-                        m = run_refine(sec["project_id"], sec["section_id"], args.max_rounds)
-                except KeyboardInterrupt:
-                    raise
-                except Exception as e:  # 一节出错不影响其他章节
-                    m = {"status": "failed", "error": str(e)[:200], "usage": {}, "seconds": 0, "content": ""}
-                entry[method] = m
-                if _ok(m):
-                    write_texts(workspace, sec["key"], method, m["content"])
-                blocking = f"阻塞 {m.get('blocking', '—')}，" if method == "single" and _ok(m) else ""
-                print(f"      → {_result_cell(method, m)}；{blocking}请求 {m.get('usage', {}).get('calls', 0)} 次，"
-                      f"{m.get('seconds', 0)} 秒")
+                entry[method] = _run_method(workspace, sec, method, args.max_rounds)
                 save(results, workspace, report_path)
         results["finished_at"] = time_label(datetime.now())
     except KeyboardInterrupt:
@@ -878,16 +904,64 @@ def cmd_run(args) -> None:
           f"  python scripts/eval_sections.py summarize {rel(report_path)}")
 
 
-def cmd_summarize(args) -> None:
-    report_path = Path(args.report).resolve()
+def _open_report(path: str):
+    """(报告路径, 工作目录, results, 人工标注, 备注)"""
+    report_path = Path(path).resolve()
     workspace_rel, annotations, notes = parse_report(report_path.read_text(encoding="utf-8"))
     if not workspace_rel:
-        raise SystemExit("报告中没有工作目录标记（<!-- eval-workspace: … -->），无法汇总")
+        raise SystemExit("报告中没有工作目录标记（<!-- eval-workspace: … -->）")
     workspace = PROJECT_ROOT / workspace_rel
     results_file = workspace / "results.json"
     if not results_file.exists():
         raise SystemExit(f"找不到 {rel(results_file)}（工作目录已删除？）")
-    results = json.loads(results_file.read_text(encoding="utf-8"))
+    return report_path, workspace, json.loads(results_file.read_text(encoding="utf-8")), annotations, notes
+
+
+def failed_rows(results: Dict[str, Any]) -> List[Tuple[Dict[str, Any], str]]:
+    return [(sec, method) for sec in results.get("sections", []) for method in METHODS if not _ok(sec.get(method))]
+
+
+def retry_failed(results: Dict[str, Any], workspace: Path, report_path: Path,
+                 annotations: Optional[Dict[Tuple[str, str], Dict[str, str]]] = None, notes: str = "") -> None:
+    """重跑没有产出正文的写法并逐项写回报告；此前失败的尝试记入 attempts（results.json 中可查）"""
+    max_rounds = results.get("config", {}).get("max_rounds", 2)
+    for sec, method in failed_rows(results):
+        print(f"\n{sec['key']} {sec['title']}")
+        previous = sec.get(method)
+        m = _run_method(workspace, sec, method, max_rounds)
+        if previous:
+            m["attempts"] = previous.pop("attempts", []) + [
+                {k: previous.get(k) for k in ("task_id", "status", "error", "usage", "seconds")}]
+        sec[method] = m
+        save(results, workspace, report_path, annotations, notes)
+
+
+def cmd_retry(args) -> None:
+    """在原工作目录与评估项目中重跑没有产出正文的写法（如网络错误），并入同一份报告"""
+    report_path, workspace, results, annotations, notes = _open_report(args.report)
+    failed = failed_rows(results)
+    if not failed:
+        print("没有需要重跑的写法")
+        return
+    model = model_label(Path(args.data_dir))
+    if model != results.get("config", {}).get("model"):
+        raise SystemExit(f"当前模型 {model} 与评估时的 {results.get('config', {}).get('model')} 不同，重跑结果不可比")
+    for sec, method in failed:
+        print(f"{sec['key']} {METHODS[method]}：{error_line((sec.get(method) or {}).get('error', '')) or '未运行'}")
+    if not _confirm(args, f"将重跑以上 {len(failed)} 项"):
+        raise SystemExit("已取消")
+    shutil.copy2(Path(args.data_dir) / "ai_settings.json", workspace / "ai_settings.json")
+    _load_model(workspace)
+    try:
+        retry_failed(results, workspace, report_path, annotations, notes)
+    except KeyboardInterrupt:
+        print("\n已中断：已完成的重跑写入报告")
+    save(results, workspace, report_path, annotations, notes)
+    print(f"\n已更新 {rel(report_path)}")
+
+
+def cmd_summarize(args) -> None:
+    report_path, workspace, results, annotations, notes = _open_report(args.report)
     save(results, workspace, report_path, annotations, notes)
     rows = collect(results, workspace, annotations)
     agg = aggregate(rows)
@@ -915,10 +989,14 @@ def main(argv: Optional[List[str]] = None) -> None:
         p.add_argument("--data-dir", default=str(SOURCE_DATA_DIR), help="复制运行数据的来源目录（默认 backend/data）")
         if name == "run":
             p.add_argument("--yes", action="store_true", help="不再询问，直接开始（会产生费用）")
+    p = sub.add_parser("retry", help="重跑报告中没有产出正文的写法（如网络错误），并入同一份报告（产生费用）")
+    p.add_argument("report", help="docs/eval/<日期>.md")
+    p.add_argument("--data-dir", default=str(SOURCE_DATA_DIR), help="读取模型配置的目录（默认 backend/data）")
+    p.add_argument("--yes", action="store_true", help="不再询问，直接开始（会产生费用）")
     p = sub.add_parser("summarize", help="读取人工标注与改稿，重新汇总并判断门槛")
     p.add_argument("report", help="docs/eval/<日期>.md")
     args = parser.parse_args(argv)
-    {"plan": cmd_plan, "run": cmd_run, "summarize": cmd_summarize}[args.command](args)
+    {"plan": cmd_plan, "run": cmd_run, "retry": cmd_retry, "summarize": cmd_summarize}[args.command](args)
 
 
 if __name__ == "__main__":
