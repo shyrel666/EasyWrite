@@ -6,7 +6,9 @@ import { useAiStore } from '@/stores/ai'
 import { useProjectStore } from '@/stores/project'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import CheckReport from '@/components/workspace/CheckReport.vue'
 import { sectionStatus } from '@/utils/project'
+import { locateExcerpt } from '@/utils/sectionCheck'
 
 const props = defineProps({
   node: { type: Object, default: null },
@@ -28,6 +30,7 @@ const customInstruction = ref('')
 const abortFn = ref(null)
 const retrievalMessage = ref('')
 const generationMode = ref('')
+const textareaRef = ref(null)
 
 // 自动保存（防抖）；生成期间暂停——生成结果由后端在完成时写入
 let saveTimer = null
@@ -188,6 +191,46 @@ async function markReviewed() {
   }
 }
 
+// ---------- 章节检查（规则离线可用；模型评审可选） ----------
+const checkOpen = ref(false)
+const checking = ref(false)
+const checkReport = ref(null)
+const checkWithLlm = ref(false)
+
+async function runCheck() {
+  if (!props.node) return
+  checkOpen.value = true
+  checking.value = true
+  try {
+    // 检查编辑器中的当前文本（含尚未自动保存的修改），不改动正文
+    checkReport.value = await api.checkSection(props.projectId, props.node.id, content.value, checkWithLlm.value)
+    if (checkReport.value.mode === 'llm') ai.noteMode('llm')
+  } catch (e) {
+    ElMessage.error('检查失败：' + e.message)
+  } finally {
+    checking.value = false
+  }
+}
+
+function locate(item) {
+  const range = locateExcerpt(content.value, item.excerpt, item.line)
+  if (!range) {
+    ElMessage.info('正文已修改，未找到该片段')
+    return
+  }
+  viewMode.value = 'edit'
+  checkOpen.value = false
+  setTimeout(() => {
+    const el = textareaRef.value
+    if (!el) return
+    el.focus()
+    el.setSelectionRange(range[0], range[1])
+    // 按选中位置大致滚动到可见区域
+    const ratio = range[0] / Math.max(1, content.value.length)
+    el.scrollTop = Math.max(0, ratio * el.scrollHeight - el.clientHeight / 3)
+  }, 0)
+}
+
 // ---------- 历史版本 ----------
 const VERSION_SOURCE = { manual: '人工稿（覆盖前快照）', ai_generate: 'AI 撰写', polish: '降AI味润色', batch: '批量撰写', restore: '恢复' }
 const versionsOpen = ref(false)
@@ -287,9 +330,14 @@ onBeforeUnmount(() => {
       <el-button v-else type="danger" plain @click="stopGenerate">
         <el-icon class="mr-1.5"><VideoPause /></el-icon>停止生成
       </el-button>
-      <el-tooltip content="去除套话与模板腔，改写后标记为已校审" placement="bottom" :show-after="400">
+      <el-tooltip content="去除套话与模板腔；覆盖前自动留版，改写后仍需人工校审" placement="bottom" :show-after="400">
         <el-button text :loading="polishing" :disabled="generating || viewMode !== 'edit'" @click="polish">
           <el-icon class="sm:mr-1.5"><Brush /></el-icon><span class="hidden sm:inline">降 AI 味</span>
+        </el-button>
+      </el-tooltip>
+      <el-tooltip content="规则检查：评分要点、承诺数值与全局事实是否一致、示例/待核实资料、篇幅与套话；不改动正文" placement="bottom" :show-after="400">
+        <el-button text :disabled="generating" @click="runCheck">
+          <el-icon class="sm:mr-1.5"><DocumentChecked /></el-icon><span class="hidden sm:inline">检查本章</span>
         </el-button>
       </el-tooltip>
       <el-button text title="历史版本" :disabled="generating" @click="openVersions">
@@ -314,6 +362,7 @@ onBeforeUnmount(() => {
           :class="generating ? 'border-accent/40' : 'border-line'"
         >
           <textarea
+            ref="textareaRef"
             v-model="content"
             :readonly="generating"
             class="flex-1 w-full resize-none outline-none bg-transparent px-5 py-5 sm:px-10 sm:py-8 text-[15px] leading-[1.95] text-ink placeholder:text-ink-3 rounded-lg"
@@ -339,6 +388,18 @@ onBeforeUnmount(() => {
       </template>
       <span v-else class="num shrink-0">{{ wordCount }} 字</span>
     </div>
+
+    <el-drawer v-model="checkOpen" :title="`检查本章 · ${node.title}`" size="min(520px, 94vw)">
+      <div v-loading="checking" class="min-h-[120px]">
+        <div class="flex items-center justify-between gap-2 mb-4">
+          <el-tooltip :content="ai.llmConfigured ? '另请模型找出无依据的企业事实声明（一次模型调用，结果仅供参考）' : '需要先配置大模型'" placement="bottom">
+            <el-checkbox v-model="checkWithLlm" :disabled="!ai.llmConfigured" size="small">含模型评审</el-checkbox>
+          </el-tooltip>
+          <el-button size="small" :loading="checking" @click="runCheck">重新检查</el-button>
+        </div>
+        <CheckReport :report="checkReport" locatable @locate="locate" />
+      </div>
+    </el-drawer>
 
     <el-drawer v-model="versionsOpen" :title="`历史版本 · ${node.title}`" size="min(600px, 94vw)">
       <div v-loading="loadingVersions" class="space-y-2">

@@ -1,4 +1,4 @@
-"""章节撰写路由：SSE 流式生成 / 同步生成 / 批量撰写 / 保存 / 润色 / 历史版本"""
+"""章节撰写路由：SSE 流式生成 / 同步生成 / 批量撰写 / 保存 / 润色 / 章节检查 / 历史版本"""
 import asyncio
 import json
 import logging
@@ -12,11 +12,13 @@ from app.core.task_manager import task_manager
 from app.models.schemas import (
     GenerateSectionRequest, GenerateSectionResponse, OutlineNode,
     UpdateSectionRequest, PolishSectionRequest, PolishSectionResponse,
+    SectionCheckReport, SectionCheckRequest,
 )
 from app.services.project_store import project_store, find_node
 from app.services.generator.evidence_set import select_evidence
 from app.services.generator.section_generator import section_generator, strip_title_heading
 from app.services.checker.quality_inspector import quality_inspector
+from app.services.checker.section_check import check_section
 from app.services.version_store import version_store
 
 logger = logging.getLogger("easywrite.api.sections")
@@ -267,6 +269,23 @@ def polish_section(project_id: str, req: PolishSectionRequest):
     # 润色是 AI 改写，不等于人工校审：状态为 completed，"已校审"只能由用户标记
     _save_section_content(project_id, req.section_id, resp.polished_content, "completed", version_source="polish")
     return resp
+
+
+# ---------------- 章节检查 ----------------
+
+@router.post("/project/{project_id}/section/{section_id}/check", response_model=SectionCheckReport,
+             summary="检查章节正文（规则离线可用；可选加做模型评审）")
+def check_section_content(project_id: str, section_id: str, req: Optional[SectionCheckRequest] = Body(default=None)):
+    req = req or SectionCheckRequest()
+    project = _get_project(project_id)
+    node = find_node(project.outline, section_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="未找到对应章节")
+    text = node.content if req.content is None else req.content
+    # 只选企业资料与招标原文，不检索知识库（不产生重排调用）；模型评审另参考上次撰写用到的知识库片段
+    evidence = select_evidence(project, node, retrieve=False)
+    evidence.refs = [r for r in node.last_refs if r.get("ref_type", "kb") == "kb"]
+    return check_section(project, node, text, evidence, llm_review=req.llm_review)
 
 
 # ---------------- 章节历史版本 ----------------

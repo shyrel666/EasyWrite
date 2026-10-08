@@ -414,6 +414,57 @@ class PolishSectionResponse(BaseModel):
     mode: str = Field(default="llm", description="生成模式：llm=真实模型 / mock=离线演示")
 
 
+# ==================== 章节检查（规则离线可用，模型评审可选） ====================
+
+class CheckIssue(BaseModel):
+    """章节检查发现的一个问题"""
+    level: Literal["blocking", "quality"] = Field(..., description="blocking 阻塞（采纳前必须处理）/ quality 质量")
+    source: Literal["rule", "llm"] = Field(default="rule", description="rule 规则 / llm 模型评审（仅供参考）")
+    code: str = Field(..., description="问题类别，如 missing_point / fact_conflict / example_asset")
+    message: str
+    excerpt: str = Field(default="", description="定位：正文中的原文片段")
+    line: Optional[int] = Field(default=None, description="定位：所在行（从 1 开始）")
+
+
+class VerifyItem(BaseModel):
+    """待核实事项：正文中需要企业确认、但不阻塞采纳的内容"""
+    kind: str = Field(..., description="commitment 全局事实中没有的承诺数值 / placeholder 占位 / unverified_asset 待核实资料")
+    text: str
+    note: str = ""
+    line: Optional[int] = None
+
+
+class PointCheck(BaseModel):
+    """本节承接的一个评分要点是否写到"""
+    item_id: str = ""
+    item_name: str = ""
+    point: str
+    mentioned: bool
+
+
+class SectionCheckReport(BaseModel):
+    """章节检查报告：只检查给定文本，不改动正文"""
+    section_id: str
+    section_title: str = ""
+    checked_at: str = ""
+    char_count: int = 0
+    word_budget: Optional[int] = None
+    passed: bool = Field(default=False, description="没有阻塞问题")
+    blocking_count: int = 0
+    quality_count: int = 0
+    issues: List[CheckIssue] = Field(default_factory=list)
+    pending_verification: List[VerifyItem] = Field(default_factory=list)
+    points: List[PointCheck] = Field(default_factory=list, description="本节承接的评分要点逐条结果")
+    llm_review: str = Field(default="skipped", description="模型评审：done / skipped / failed")
+    llm_note: str = Field(default="", description="模型评审说明，如\"未做模型评审（未配置模型）\"")
+    mode: str = Field(default="rules", description="rules 仅规则 / llm 含模型评审")
+
+
+class SectionCheckRequest(BaseModel):
+    content: Optional[str] = Field(default=None, description="待检查文本；不传时检查已保存的正文")
+    llm_review: bool = Field(default=False, description="是否加做模型评审（需已配置模型，产生一次模型调用）")
+
+
 # ==================== 项目列表模型 ====================
 
 class ProjectListItem(BaseModel):

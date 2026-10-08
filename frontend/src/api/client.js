@@ -221,6 +221,9 @@ export const api = {
   polishSection: (id, payload) => request(`/project/${id}/section/polish`, { method: 'POST', body: payload }),
   generateBatch: (id, includeWritten = false) =>
     request(`/project/${id}/sections/generate-batch`, { method: 'POST', body: { include_written: includeWritten } }),
+  // 章节检查：content 不传时检查已保存的正文；llmReview 加做模型评审（产生一次模型调用）
+  checkSection: (id, sectionId, content, llmReview = false) =>
+    request(`/project/${id}/section/${sectionId}/check`, { method: 'POST', body: { content, llm_review: llmReview } }),
   listVersions: (id, sectionId) => request(`/project/${id}/section/${sectionId}/versions`),
   getVersion: (id, sectionId, versionId) => request(`/project/${id}/section/${sectionId}/versions/${versionId}`),
   restoreVersion: (id, sectionId, versionId) =>

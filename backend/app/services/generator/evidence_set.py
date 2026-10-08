@@ -91,6 +91,7 @@ def select_evidence(
     requirements: Optional[List[str]] = None,
     pinned_refs: Optional[List[str]] = None,
     excluded_refs: Optional[List[str]] = None,
+    retrieve: bool = True,
 ) -> EvidenceSet:
     """
     为一个章节挑选撰写依据（同步：检索含 LLM 重排，流式接口需放到线程中执行）：
@@ -99,6 +100,7 @@ def select_evidence(
        示例资料一律不用；证书过期（含投标截止日前到期）、所属主体与投标人不一致的资料不进入提示词，记入 excluded_assets
     3. 招标原文：本节承接的评分项的评分标准与证明材料要求
     参数为 None 时取章节自身的标题、路径、要求与锁定/排除设置。
+    retrieve=False 时不检索知识库（章节检查等只需要企业资料与招标原文的场景，不产生重排调用）。
     """
     title = section_title or node.title
     path = section_path or node.path or title
@@ -113,7 +115,7 @@ def select_evidence(
         top_k=4,
         pinned_ids=node.pinned_refs if pinned_refs is None else pinned_refs,
         excluded_ids=node.excluded_refs if excluded_refs is None else excluded_refs,
-    )
+    ) if retrieve else {"refs": [], "message": "未检索知识库"}
 
     exclude = generation_filter(project)
     keys = list(dict.fromkeys(k for sid in node.scoring_item_ids for k in project.evidence_links.get(sid, [])))

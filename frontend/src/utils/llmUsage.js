@@ -7,6 +7,7 @@ export const PURPOSE_LABELS = {
   outline_expand: '大纲展开',
   section_write: '章节撰写',
   polish: '润色',
+  section_review: '章节评审',
   deviation_response: '偏离表响应',
   compliance_check: '合规核查',
   rerank: '检索重排',
