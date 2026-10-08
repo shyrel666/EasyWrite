@@ -205,6 +205,16 @@ class SectionGenerator:
             "mode": self.llm.get_mode(),
         }
 
+    def revise_section(self, evidence: EvidenceSet, base_text: str, issues: List[str], **kwargs) -> Dict[str, Any]:
+        """定向修订：在原稿基础上逐条处理问题清单（未涉及的段落保持原样），依据同样由调用方选好"""
+        built = self.build_prompts(evidence=evidence, base_text=base_text, issues=issues, **kwargs)
+        content = self.llm.chat_completion(system_prompt=built["system"], user_prompt=built["user"], purpose="section_revise")
+        return {
+            "generated_content": strip_title_heading(content, kwargs.get("section_title", "")),
+            "references": evidence.ref_records(),
+            "mode": self.llm.get_mode(),
+        }
+
     async def draft_section_stream(self, evidence: EvidenceSet, **kwargs) -> AsyncGenerator[Dict[str, Any], None]:
         """
         异步流式生成：先 yield 本次依据（知识库片段 + 企业资料，引用面板即时可见），再逐 token yield。

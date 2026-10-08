@@ -8,6 +8,7 @@ from app.models.schemas import (
     OutlineUpdateRequest, ProjectListItem,
 )
 from app.services.project_store import find_node, merge_outline, project_store
+from app.services.proposals import proposal_store
 from app.services.version_store import version_store
 
 router = APIRouter(tags=["项目管理"])
@@ -40,6 +41,7 @@ def delete_project(project_id: str):
     if not project_store.delete(project_id):
         raise HTTPException(status_code=404, detail="项目不存在")
     version_store.delete_project(project_id)
+    proposal_store.delete_project(project_id)
     return {"status": "success", "deleted_id": project_id}
 
 
@@ -61,6 +63,7 @@ def update_project_outline(project_id: str, req: OutlineUpdateRequest):
         return project.stage, removed
 
     stage, removed = project_store.update(project_id, mutate)
+    proposal_store.supersede(project_id, removed)  # 被删除章节的待处理候选稿作废
     return {"status": "success", "stage": stage, "outline": project_store.get(project_id).outline, "removed": removed}
 
 

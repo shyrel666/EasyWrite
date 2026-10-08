@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Body
 
 from app.services.project_store import project_store
 from app.services.generator.outline_generator import outline_generator
+from app.services.proposals import proposal_store
 
 logger = logging.getLogger("easywrite.api.outline")
 router = APIRouter(tags=["大纲规划"])
@@ -55,4 +56,5 @@ def expand_outline(
         return latest.stage
 
     stage = project_store.update(project_id, mutate)
+    proposal_store.supersede(project_id)  # 大纲整体重建：旧大纲上的待处理候选稿全部作废
     return {"status": "success", "outline": result["outline"], "mode": result["mode"], "message": result["message"], "stage": stage}

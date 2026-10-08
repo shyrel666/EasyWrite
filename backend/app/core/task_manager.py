@@ -119,6 +119,10 @@ class TaskContext:
         self._record = record
         self._manager = manager
 
+    @property
+    def task_id(self) -> str:
+        return self._record.id
+
     def report(self, progress: int, message: str = ""):
         self._record.progress = max(0, min(100, int(progress)))
         if message:

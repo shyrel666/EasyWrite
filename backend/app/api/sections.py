@@ -1,4 +1,4 @@
-"""章节撰写路由：SSE 流式生成 / 同步生成 / 批量撰写 / 保存 / 润色 / 章节检查 / 历史版本"""
+"""章节撰写路由：SSE 流式生成 / 同步生成 / 批量撰写 / 保存 / 润色 / 章节检查 / 定向修订 / 历史版本"""
 import asyncio
 import json
 import logging
@@ -19,6 +19,7 @@ from app.services.generator.evidence_set import select_evidence
 from app.services.generator.section_generator import section_generator, strip_title_heading
 from app.services.checker.quality_inspector import quality_inspector
 from app.services.checker.section_check import check_section
+from app.services.proposals import proposal_store, propose
 from app.services.section_content import save_section_content as _save_section_content
 from app.services.version_store import version_store
 
@@ -249,6 +250,63 @@ def check_section_content(project_id: str, section_id: str, req: Optional[Sectio
     evidence = select_evidence(project, node, retrieve=False)
     evidence.refs = [r for r in node.last_refs if r.get("ref_type", "kb") == "kb"]
     return check_section(project, node, text, evidence, llm_review=req.llm_review)
+
+
+def _revision_issues(report, instruction: str) -> List[str]:
+    """修订的问题清单：规则检查出的问题（附原文定位）+ 用户补充的修订要求"""
+    issues = [i.message + (f"（原文：{i.excerpt}）" if i.excerpt else "") for i in report.issues if i.source == "rule"]
+    if instruction.strip():
+        issues.append(f"补充修订要求：{instruction.strip()}")
+    return issues
+
+
+@router.post("/project/{project_id}/section/{section_id}/revise",
+             summary="基于当前正文定向修订（后台任务，需已配置模型）：结果存为候选稿，经采纳才写入正文")
+def revise_section(
+    project_id: str, section_id: str,
+    parent_id: str = Body(default="", embed=True),
+    instruction: str = Body(default="", embed=True),
+):
+    project = _get_project(project_id)
+    node = find_node(project.outline, section_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="未找到对应章节")
+    if not llm_client.is_configured:
+        raise HTTPException(status_code=400, detail="定向修订需要先配置大模型（检查本章不需要模型）")
+    if parent_id and not proposal_store.get(project_id, parent_id):
+        raise HTTPException(status_code=404, detail="候选稿不存在")
+    if not node.content.strip():
+        raise HTTPException(status_code=400, detail="本节尚无正文，请先撰写")
+    precheck = check_section(project, node, node.content, select_evidence(project, node, retrieve=False))
+    if not _revision_issues(precheck, instruction):
+        raise HTTPException(status_code=400, detail="当前正文没有检查出问题；如需改写，请填写修订要求")
+
+    def _run(ctx):
+        latest = project_store.get(project_id)
+        current = find_node(latest.outline, section_id) if latest else None
+        if current is None or not current.content.strip():
+            raise RuntimeError("章节已删除或正文为空，未修订")
+        ctx.report(10, "选择资料")
+        evidence_kw, prompt_kw = _inputs(latest, current)
+        evidence = select_evidence(latest, current, **evidence_kw)
+        if ctx.cancelled():
+            return {"section_id": section_id, "proposal_id": None}
+        ctx.report(35, "检查当前正文")
+        issues = _revision_issues(check_section(latest, current, current.content, evidence), instruction)
+        if not issues:
+            return {"section_id": section_id, "proposal_id": None, "message": "当前正文没有检查出问题，未修订"}
+        ctx.report(50, f"定向修订：{len(issues)} 个问题")
+        result = section_generator.revise_section(evidence=evidence, base_text=current.content, issues=issues, **prompt_kw)
+        if result["mode"] != "llm" or not result["generated_content"].strip():
+            raise RuntimeError("模型调用失败，未生成候选稿")
+        ctx.report(90, "检查修订稿")
+        proposal = propose(latest, current, result["generated_content"], evidence,
+                           origin="revise", task_id=ctx.task_id, parent_id=parent_id)
+        return {"section_id": section_id, "proposal_id": proposal["id"], "issues": len(issues),
+                "blocking_count": proposal["blocking_count"], "quality_count": proposal["quality_count"]}
+
+    task_id = task_manager.submit("section_revise", _run, description=f"定向修订：{node.title}")
+    return {"task_id": task_id}
 
 
 # ---------------- 章节历史版本 ----------------

@@ -158,3 +158,34 @@ class SectionVersion(SQLModel, table=True):
     source: str = "manual"
     char_count: int = 0
     created_at: str = ""
+
+
+class SectionProposal(SQLModel, table=True):
+    """
+    章节候选稿：AI 对已有正文的改动先存为候选稿，用户查看差异与检查报告后采纳或放弃。
+    content 写入后不再修改；base_revision 为生成时章节的修订号，input_manifest_json 为生成时所用依据的内容指纹，
+    采纳时二者都要与当前状态一致。候选稿 ID 即采纳的幂等键。
+    """
+    __tablename__ = "section_proposals"
+
+    id: str = Field(primary_key=True)
+    project_id: str = Field(index=True)
+    section_id: str = Field(index=True)
+    # 上一版候选稿（基于它重新修订时）
+    parent_id: str = ""
+    # 产生该候选稿的后台任务
+    task_id: str = ""
+    # 来源：batch 批量撰写重写已有正文 / revise 基于当前正文定向修订
+    origin: str = ""
+    content: str = ""
+    base_revision: int = 0
+    input_manifest_json: str = "{}"
+    # 生成时用到的依据（EvidenceSet.ref_records，采纳时写入章节 last_refs）
+    evidence_json: str = "[]"
+    # 规则检查报告（SectionCheckReport）
+    report_json: str = ""
+    # draft 未检查 / checked 已检查（可采纳）/ applied 已采纳 / rejected 已放弃 / superseded 已被取代
+    status: str = Field(default="draft", index=True)
+    created_at: str = ""
+    created_ts: float = Field(default=0.0, index=True)
+    decided_at: str = ""

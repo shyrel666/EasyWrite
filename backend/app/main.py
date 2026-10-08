@@ -26,6 +26,7 @@ from app.api.assets import router as assets_router
 from app.api.evidence import router as evidence_router
 from app.api.export import router as export_router
 from app.api.tasks import router as tasks_router
+from app.api.proposals import router as proposals_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -85,7 +86,7 @@ async def project_not_found_handler(request: Request, exc: ProjectNotFound):
 for r in (
     ai_settings_router, projects_router, tender_router, outline_router,
     sections_router, deviations_router, compliance_router, knowledge_router,
-    assets_router, evidence_router, export_router, tasks_router,
+    assets_router, evidence_router, export_router, tasks_router, proposals_router,
 ):
     app.include_router(r, prefix=settings.API_PREFIX)
 
