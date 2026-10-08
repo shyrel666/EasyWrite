@@ -43,7 +43,7 @@ def test_blank_section_draft_check_revise_until_goal(client, pid, monkeypatch):
     model = FakeModel(monkeypatch, drafts=[LACKING], revisions=[FULL])
     task = refine(client, pid)
     assert task["status"] == "completed", task
-    assert task["meta"] == {"section_id": "sec_1_1"}
+    assert task["meta"] == {"section_id": "sec_1_1", "outcome": "goal_met"}
     r = task["result"]
     assert (r["outcome"], r["stop_reason"], r["base"], r["rounds"], r["max_rounds"]) == ("goal_met", "goal_met", "draft", 1, 2)
     assert [(h["label"], h["blocking_count"]) for h in r["history"]] == [("起草稿", 2), ("第 1 轮修订", 0)]
@@ -116,7 +116,7 @@ def test_minimal_mode_and_insufficient_evidence(client, pid, monkeypatch):
     assert "只处理上面列出的阻塞问题" in model.user_prompts("revise")[2]
     # 要点没写到、知识库与企业资料都没有可用依据：如实报告资料不足
     assert (r["outcome"], r["stop_reason"]) == ("partial", "insufficient_evidence")
-    assert "资料不足" in r["message"] and "知识库中没有本节的高置信参考" in r["evidence_gaps"]
+    assert "知识库中没有本节的高置信参考" in r["message"] and "知识库中没有本节的高置信参考" in r["evidence_gaps"]
 
 
 def test_budget_exhausted_keeps_proposals_and_resume_does_not_regain_rounds(client, pid, monkeypatch):
@@ -125,7 +125,7 @@ def test_budget_exhausted_keeps_proposals_and_resume_does_not_regain_rounds(clie
     FakeModel(monkeypatch, drafts=[LACKING], revisions=[HALF, FULL])
     task = refine(client, pid)
     r = task["result"]
-    assert task["status"] == "completed"
+    assert task["status"] == "completed" and task["meta"]["outcome"] == "partial"
     assert (r["outcome"], r["stop_reason"], r["rounds"]) == ("partial", "budget_exhausted", 1)
     assert r["budget"]["exceeded"] == "calls" and "继续" in r["message"]
     tip = proposal_store.get(pid, r["final_proposal_id"])

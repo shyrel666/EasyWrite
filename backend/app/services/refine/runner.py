@@ -270,7 +270,7 @@ class RefineRun:
         self.outcome, self.stop_reason, self.message = action.outcome, action.stop_reason, action.message
         if self.final_id is None:
             if action.outcome == "goal_met":
-                self.message = "当前正文已达成检查目标，无需修订"
+                self.message = "当前正文没有需要修订的问题"
             else:
                 self.outcome = "no_output"
             return
@@ -280,7 +280,7 @@ class RefineRun:
         if (self.outcome == "partial" and self.stop_reason in ("no_improvement", "rounds_exhausted")
                 and blocking_missing and not self.evidence.refs and not self.evidence.assets):
             self.stop_reason = "insufficient_evidence"
-            self.message += "；资料不足：" + "、".join(gaps) + "，未写到的评分要点需补充资料后再完善"
+            self.message += "。" + "、".join(gaps) + "，未写到的评分要点需补充资料后再完善"
         if self.outcome == "goal_met" and self.apply_if_blank and self.started_blank:
             self._apply_blank()
 
@@ -333,17 +333,21 @@ def run_refine(
     try:
         run.execute(instruction, max_rounds, apply_if_blank, resume)
     except BudgetExceeded as e:
-        run.stop("budget_exhausted", f"预算用尽：{e.message}，已产生的候选稿保留，可点\"继续\"接着执行")
+        run.stop("budget_exhausted", f"{e.message}，已产生的候选稿保留，可点\"继续\"接着执行")
     except _Cancelled:
-        run.stop("cancelled", "已取消，已产生的候选稿保留")
+        run.stop("cancelled", "已产生的候选稿保留")
     except Exception as e:
         if run.final_id is None:
             raise  # 什么都没产出：任务按失败结束
         logger.exception("智能完善中途出错 %s/%s", project_id, section_id)
-        run.stop("error", f"运行出错：{e}；已产生的候选稿保留")
+        run.stop("error", f"{e}；已产生的候选稿保留")
     finally:
         current_run.reset(token)
     result = run.result()
+    if hasattr(ctx, "set_meta"):
+        ctx.set_meta(outcome=result["outcome"])  # 任务列表据此显示"部分完成 / 未产出"，而不是"已完成"
     head = OUTCOME_LABELS.get(result["outcome"], result["outcome"])
+    if result["stop_reason"] not in ("", "goal_met"):
+        head += f"（{STOP_LABELS.get(result['stop_reason'], result['stop_reason'])}）"
     ctx.report(99, f"{head}：{result['message']}" if result["message"] else head)
     return result

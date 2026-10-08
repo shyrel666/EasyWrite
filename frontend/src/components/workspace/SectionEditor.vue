@@ -1,14 +1,18 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '@/api/client'
 import { useAiStore } from '@/stores/ai'
 import { useProjectStore } from '@/stores/project'
+import { useTaskStore } from '@/stores/tasks'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import CheckReport from '@/components/workspace/CheckReport.vue'
 import ProposalPanel from '@/components/workspace/ProposalPanel.vue'
+import RefinePanel from '@/components/workspace/RefinePanel.vue'
 import { sectionStatus } from '@/utils/project'
+import { isActiveTask } from '@/utils/tasks'
+import { DEFAULT_MAX_ROUNDS, MAX_ROUNDS_LIMIT, canResume, outcomeMeta, stopReasonLabel } from '@/utils/refine'
 import { locateExcerpt } from '@/utils/sectionCheck'
 
 const props = defineProps({
@@ -19,6 +23,7 @@ const emit = defineEmits(['refs-updated', 'proposals-changed'])
 
 const ai = useAiStore()
 const projectStore = useProjectStore()
+const taskStore = useTaskStore()
 
 const content = ref('')
 // 最近一次确认已落库的正文；dirty 由二者比较得出，避免异步 watcher 与标志位赛跑
@@ -279,6 +284,113 @@ function onProposalApplied({ content: text, status }) {
   markSaved(props.node.id, text, status)
 }
 
+// ---------- 智能完善：起草或以当前正文为原稿 → 检查 → 定向修订，产出带检查报告的候选稿 ----------
+const refineDialog = ref(false)
+const refineForm = reactive({ instruction: '', maxRounds: DEFAULT_MAX_ROUNDS, applyIfBlank: false })
+const refineOpen = ref(false)
+const refineTask = ref(null) // 本节最近一次智能完善任务（进行中的由此处轮询，面板只负责展示）
+const refineStarting = ref(false)
+const refineActive = computed(() => isActiveTask(refineTask.value))
+let refineAbort = null
+
+function stopRefinePoll() {
+  if (refineAbort) refineAbort.abort()
+  refineAbort = null
+}
+
+function followRefine(taskId, sid) {
+  stopRefinePoll()
+  const controller = new AbortController()
+  refineAbort = controller
+  api.pollTask(taskId, (t) => { if (props.node?.id === sid) refineTask.value = t }, { signal: controller.signal })
+    .then((final) => {
+      if (props.node?.id !== sid) return
+      refineTask.value = final
+      onRefineFinished(final)
+    })
+    .catch(() => { /* 切换章节或卸载时中止轮询 */ })
+}
+
+// 切换章节时找回本节最近一次智能完善（进行中的继续跟进度，中断或预算用尽的可以继续）
+async function loadRefineState() {
+  stopRefinePoll()
+  refineTask.value = null
+  refineOpen.value = false
+  const sid = props.node?.id
+  if (!sid) return
+  try {
+    const { tasks } = await api.listTasks({ projectId: props.projectId, type: 'section_refine', withResult: true, limit: 20 })
+    if (props.node?.id !== sid) return
+    const task = tasks.find((t) => t.meta?.section_id === sid) || null
+    refineTask.value = task
+    if (isActiveTask(task)) followRefine(task.id, sid)
+  } catch { /* 仅用于恢复显示，失败不影响编辑 */ }
+}
+watch(() => props.node?.id, loadRefineState, { immediate: true })
+
+function openRefineDialog() {
+  refineForm.instruction = ''
+  refineForm.applyIfBlank = false
+  refineDialog.value = true
+}
+
+async function startRefine({ resume = false } = {}) {
+  if (!props.node || refineStarting.value) return
+  if (dirty.value) await autosave()
+  if (dirty.value) return // 保存失败：智能完善基于已保存的正文
+  const sid = props.node.id
+  refineStarting.value = true
+  try {
+    const options = resume
+      ? { resume: true }
+      : { instruction: refineForm.instruction, maxRounds: refineForm.maxRounds, applyIfBlank: refineForm.applyIfBlank && !content.value.trim() }
+    const res = await api.refineSection(props.projectId, sid, options)
+    refineDialog.value = false
+    refineTask.value = { id: res.task_id, type: 'section_refine', status: 'pending', progress: 0, message: '已提交', meta: { section_id: sid }, result: null }
+    refineOpen.value = true
+    followRefine(res.task_id, sid)
+    if (taskStore.watchers) taskStore.refresh()
+  } catch (e) {
+    ElMessage.warning(e.message)
+  } finally {
+    refineStarting.value = false
+  }
+}
+
+async function onRefineFinished(task) {
+  emit('proposals-changed')
+  if (taskStore.watchers) taskStore.refresh()
+  if (task.status === 'failed') {
+    ElMessage.error('智能完善失败：' + (task.error || task.message || '').split('\n')[0])
+    return
+  }
+  const r = task.result
+  if (!r) return
+  if (r.applied && r.final_proposal_id) {
+    // 空白章节达成目标后已按采纳流程写入；编辑器中有未保存的修改时不覆盖
+    try {
+      const p = await api.getProposal(props.projectId, r.section_id, r.final_proposal_id)
+      if (props.node?.id === r.section_id && !dirty.value) onProposalApplied({ content: p.content, status: 'completed' })
+      else projectStore.setSectionContent(r.section_id, p.content, 'completed')
+    } catch { /* 正文已写入，重新打开章节可见 */ }
+  }
+  const meta = outcomeMeta(r.outcome)
+  const reason = r.outcome === 'goal_met' ? '' : `（${stopReasonLabel(r.stop_reason)}）`
+  ElMessage[r.outcome === 'goal_met' ? 'success' : 'warning'](`智能完善：${meta.label}${reason}`)
+}
+
+// 编辑器顶部提示：进行中 / 可继续
+const refineBanner = computed(() => {
+  const task = refineTask.value
+  if (!task) return null
+  if (isActiveTask(task)) return { tone: 'note-info', icon: 'Loading', text: `智能完善进行中：${task.message || '已提交'}`, action: '查看进度' }
+  if (canResume(task) && pendingProposals.value) {
+    const why = task.status === 'interrupted' ? '服务重启，任务已中断' : stopReasonLabel(task.result?.stop_reason)
+    return { tone: 'note-warn', icon: 'Warning', text: `上次智能完善未完成（${why}），可以从最后一版候选稿继续。`, action: '查看结果', resumable: true }
+  }
+  return null
+})
+
 // ---------- 历史版本 ----------
 const VERSION_SOURCE = { manual: '人工稿（覆盖前快照）', ai_generate: 'AI 撰写', polish: '降AI味润色', batch: '批量撰写', restore: '恢复', deviation: '偏离表回填', proposal: '采纳候选稿' }
 const versionsOpen = ref(false)
@@ -344,6 +456,7 @@ const budgetMeter = computed(() => {
 const statusMeta = computed(() => sectionStatus(props.node?.status))
 
 onBeforeUnmount(() => {
+  stopRefinePoll()
   if (abortFn.value) abortFn.value()
   // 切换章节前立即保存未落库的编辑，而不是丢弃防抖中的保存
   else if (dirty.value) autosave()
@@ -371,13 +484,20 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 操作栏 -->
-    <div class="shrink-0 flex items-center gap-2 px-2 sm:px-4 py-2 border-b border-line bg-raised flex-wrap">
+    <div class="shrink-0 flex items-center gap-2 px-2 sm:px-4 py-2 border-b border-line bg-raised flex-wrap [&_.el-button+.el-button]:ml-0 max-sm:[&_.el-button.is-text]:px-2.5">
       <el-button v-if="!generating" type="primary" @click="generate">
         <el-icon class="mr-1.5"><MagicStick /></el-icon>AI 撰写本节
       </el-button>
       <el-button v-else type="danger" plain @click="stopGenerate">
         <el-icon class="mr-1.5"><VideoPause /></el-icon>停止生成
       </el-button>
+      <el-tooltip :content="ai.llmConfigured ? '自动起草（本节为空时）或以当前正文为原稿 → 规则检查 → 按问题定向修订，结果是带检查报告的候选稿' : '智能完善需要先配置大模型；检查本章不需要模型'" placement="bottom" :show-after="400">
+        <span>
+          <el-button text type="primary" :disabled="!ai.llmConfigured || generating || refineActive" @click="openRefineDialog">
+            <el-icon class="sm:mr-1.5"><Aim /></el-icon><span class="hidden sm:inline">智能完善</span>
+          </el-button>
+        </span>
+      </el-tooltip>
       <el-tooltip content="去除套话与模板腔；覆盖前自动留版，改写后仍需人工校审" placement="bottom" :show-after="400">
         <el-button text :loading="polishing" :disabled="generating || viewMode !== 'edit'" @click="polish">
           <el-icon class="sm:mr-1.5"><Brush /></el-icon><span class="hidden sm:inline">降 AI 味</span>
@@ -407,6 +527,15 @@ onBeforeUnmount(() => {
         <el-icon class="text-accent-fg shrink-0"><DocumentCopy /></el-icon>
         <span class="flex-1">本节有 {{ pendingProposals }} 份候选稿待处理：AI 的改动经你查看差异并采纳后才会写入正文。</span>
         <el-button size="small" type="primary" plain :disabled="generating" @click="openProposals">查看候选稿</el-button>
+      </p>
+    </div>
+
+    <div v-if="refineBanner" class="shrink-0 px-2 sm:px-4 py-2 border-b border-line bg-surface">
+      <p class="note !py-2 items-center" :class="refineBanner.tone">
+        <el-icon class="shrink-0" :class="refineBanner.icon === 'Loading' ? 'animate-spin text-accent-fg' : 'text-warn'"><component :is="refineBanner.icon" /></el-icon>
+        <span class="flex-1 min-w-0 truncate" :title="refineBanner.text">{{ refineBanner.text }}</span>
+        <el-button size="small" plain @click="refineOpen = true">{{ refineBanner.action }}</el-button>
+        <el-button v-if="refineBanner.resumable" size="small" type="primary" plain :loading="refineStarting" @click="startRefine({ resume: true })">继续</el-button>
       </p>
     </div>
 
@@ -477,6 +606,46 @@ onBeforeUnmount(() => {
         @changed="emit('proposals-changed')"
       />
     </el-drawer>
+
+    <el-drawer v-model="refineOpen" :title="`智能完善 · ${node.title}`" size="min(760px, 96vw)">
+      <RefinePanel
+        v-if="refineOpen && refineTask"
+        :project-id="projectId"
+        :section-id="node.id"
+        :task="refineTask"
+        :resuming="refineStarting"
+        @resume="startRefine({ resume: true })"
+        @restart="openRefineDialog"
+        @applied="onProposalApplied"
+        @changed="emit('proposals-changed')"
+      />
+    </el-drawer>
+
+    <el-dialog v-model="refineDialog" :title="`智能完善 · ${node.title}`" width="min(520px, 94vw)" append-to-body>
+      <div class="space-y-4 text-sm">
+        <p class="text-xs text-ink-2 leading-relaxed">
+          {{ content.trim() ? '以当前正文为原稿' : '本节为空，先起草' }}，然后做规则检查，并按检查出的问题定向修订。每一版都是带检查报告的候选稿，查看差异后再采纳；资料不足的内容用【待填写】【待核实】占位，不会补写。
+        </p>
+        <div>
+          <p class="field-label">补充要求（可选）</p>
+          <el-input v-model="refineForm.instruction" type="textarea" :rows="3" maxlength="500" show-word-limit placeholder="如：补充驻场安排；删除未经确认的人员姓名" />
+        </div>
+        <div>
+          <p class="field-label">修订轮数</p>
+          <div class="seg">
+            <button v-for="n in MAX_ROUNDS_LIMIT + 1" :key="n" class="seg-item" :class="{ 'is-active': refineForm.maxRounds === n - 1 }" @click="refineForm.maxRounds = n - 1">
+              {{ n - 1 }} 轮
+            </button>
+          </div>
+          <p class="hint mt-1.5">不含首次起草。达成检查目标即停止；连续两轮没有进展会改为只处理阻塞问题。单次运行有模型请求次数与时长上限，超出时保留已有候选稿，可以继续。</p>
+        </div>
+        <el-checkbox v-if="!content.trim()" v-model="refineForm.applyIfBlank" class="!h-auto !whitespace-normal">达成检查目标后直接写入正文（经候选稿采纳流程）</el-checkbox>
+      </div>
+      <template #footer>
+        <el-button @click="refineDialog = false">取消</el-button>
+        <el-button type="primary" :loading="refineStarting" @click="startRefine()">开始</el-button>
+      </template>
+    </el-dialog>
 
     <el-drawer v-model="versionsOpen" :title="`历史版本 · ${node.title}`" size="min(600px, 94vw)">
       <div v-loading="loadingVersions" class="space-y-2">

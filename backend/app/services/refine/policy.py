@@ -63,7 +63,7 @@ def decide(
     blocking, quality = counts(reports[-1])
     if blocking == 0 and quality <= quality_threshold:
         return Action("accept", outcome="goal_met", stop_reason="goal_met",
-                      message="已达成检查目标：没有阻塞问题" + (f"，质量问题 {quality} 个（不超过 {quality_threshold} 个）" if quality else ""))
+                      message="没有阻塞问题" + (f"，质量问题 {quality} 个（不超过 {quality_threshold} 个）" if quality else ""))
 
     trailing, longest = stalls(reports)
     minimal = longest >= 2

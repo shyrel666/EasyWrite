@@ -2,9 +2,10 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import api from '@/api/client'
 import { callStatusMeta, fillDays, formatMs, formatTokens, purposeLabel } from '@/utils/llmUsage'
+import { taskTypeLabel } from '@/utils/tasks'
 
 /**
- * 模型调用记录：每次真实请求的耗时与用量（离线演示不计入），按日趋势、按用途汇总并列出最近调用。
+ * 模型调用记录：每次真实请求的耗时与用量（离线演示不计入），按日趋势、按用途与按运行（后台任务）汇总并列出最近调用。
  */
 const GLOBAL = '__global__'
 const STATUS_CHIP = { success: 'chip-ok', warning: 'chip-warn', danger: 'chip-bad', info: 'chip-mute' }
@@ -202,6 +203,36 @@ onMounted(async () => {
             </el-table-column>
             <el-table-column label="平均耗时" width="110" align="right">
               <template #default="{ row }"><span class="num pr-2">{{ formatMs(row.avg_latency_ms) }}</span></template>
+            </el-table-column>
+          </el-table>
+        </section>
+
+        <section v-if="data.by_run?.length" class="card overflow-hidden rise" style="animation-delay: 140ms">
+          <div class="px-5 sm:px-6 py-3.5 border-b border-line flex items-baseline justify-between gap-3">
+            <h3 class="text-[13px] font-semibold text-ink">按运行</h3>
+            <p class="text-2xs text-ink-3">一次后台任务（智能完善、批量撰写等）的全部请求，含重排与重试</p>
+          </div>
+          <el-table :data="data.by_run" size="small" max-height="360">
+            <el-table-column label="运行" min-width="180">
+              <template #default="{ row }">
+                <div class="pl-2 truncate" :title="row.title || row.run_id">{{ row.title || row.run_id }}</div>
+                <div class="pl-2 text-2xs text-ink-3 num truncate">{{ taskTypeLabel(row) }} · {{ row.started_at }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column prop="calls" label="请求" width="70" align="right" />
+            <el-table-column label="失败" width="70" align="right">
+              <template #default="{ row }"><span :class="row.errors ? 'text-bad' : 'text-ink-3'">{{ row.errors }}</span></template>
+            </el-table-column>
+            <el-table-column label="Token" width="120" align="right">
+              <template #default="{ row }">
+                <span class="num">{{ formatTokens(row.total_tokens) }}</span>
+                <el-tooltip v-if="row.calls_without_usage" :content="`${row.calls_without_usage} 次请求服务商未返回用量，未计入`" placement="top">
+                  <span class="text-warn cursor-help ml-0.5">*</span>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+            <el-table-column label="累计耗时" width="100" align="right">
+              <template #default="{ row }"><span class="num pr-2">{{ formatMs(row.latency_ms) }}</span></template>
             </el-table-column>
           </el-table>
         </section>

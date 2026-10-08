@@ -9,6 +9,7 @@ export const PURPOSE_LABELS = {
   polish: '润色',
   section_review: '章节评审',
   section_revise: '定向修订',
+  section_refine_draft: '智能完善起草',
   deviation_response: '偏离表响应',
   compliance_check: '合规核查',
   rerank: '检索重排',

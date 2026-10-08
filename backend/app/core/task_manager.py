@@ -138,6 +138,10 @@ class TaskContext:
         self._record.updated_at = _now()
         self._manager._persist(self._record)
 
+    def set_meta(self, **values):
+        """补充任务附加信息（如结束时的 outcome：任务列表据此把"部分完成"与"已完成"区分开），任务结束时落库"""
+        self._record.meta.update(values)
+
 
 class TaskManager:
     def __init__(self, max_workers: int = 4):

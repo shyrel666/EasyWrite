@@ -8,6 +8,7 @@ import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import TaskProgress from '@/components/common/TaskProgress.vue'
 import { collapseRows, diffText } from '@/utils/textDiff'
 import { VERIFY_KIND } from '@/utils/sectionCheck'
+import { proposalOriginLabel } from '@/utils/refine'
 
 /**
  * 候选稿面板：正文差异、检查报告、所用资料、待核实事项；采纳 / 放弃 / 基于当前正文重新修订。
@@ -39,7 +40,6 @@ const STATUS = {
   rejected: { label: '已放弃', chip: 'chip-mute' },
   superseded: { label: '已被取代', chip: 'chip-mute' },
 }
-const ORIGIN = { batch: '批量撰写', revise: '定向修订' }
 const CONFLICT_HINT = {
   content_changed: '可以基于当前正文重新修订，或放弃此候选稿。',
   basis_changed: '候选稿是按旧依据写的，请基于当前正文和最新依据重新修订，或放弃。',
@@ -194,7 +194,7 @@ function onReviseFailed(task) {
       <!-- 概要 -->
       <div class="shrink-0 flex flex-wrap items-center gap-2 text-xs">
         <span class="chip" :class="STATUS[detail.status]?.chip">{{ STATUS[detail.status]?.label || detail.status }}</span>
-        <span class="text-ink-2">{{ ORIGIN[detail.origin] || detail.origin || 'AI' }}</span>
+        <span class="text-ink-2">{{ proposalOriginLabel(detail) }}</span>
         <span class="text-ink-3 num">{{ detail.created_at }} · {{ detail.char_count }} 字</span>
         <span v-if="diff" class="num ml-auto">
           <span class="text-ok">+{{ diff.stats.added }}</span>

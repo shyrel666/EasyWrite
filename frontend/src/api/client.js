@@ -182,10 +182,11 @@ export const api = {
   fetchModels: (data) => request('/ai/models/fetch', { method: 'POST', body: data }),
   embeddingDescribe: () => request('/ai/embedding/describe'),
   testEmbedding: () => request('/ai/embedding/test', { method: 'POST' }),
-  // projectId：undefined 不筛选，'' 只看未归属项目的调用（知识库入库、连接测试等）
-  llmUsage: ({ days = 7, projectId } = {}) => {
+  // projectId：undefined 不筛选，'' 只看未归属项目的调用（知识库入库、连接测试等）；runId 只看某次运行（后台任务）
+  llmUsage: ({ days = 7, projectId, runId } = {}) => {
     const params = new URLSearchParams({ days: String(days) })
     if (projectId !== undefined) params.set('project_id', projectId)
+    if (runId) params.set('run_id', runId)
     return request(`/ai/usage?${params}`)
   },
 
@@ -240,6 +241,13 @@ export const api = {
   // 基于当前正文定向修订（后台任务，需配置模型），结果为候选稿
   reviseSection: (id, sectionId, { parentId = '', instruction = '' } = {}) =>
     request(`/project/${id}/section/${sectionId}/revise`, { method: 'POST', body: { parent_id: parentId, instruction } }),
+  // 智能完善（后台任务，需配置模型）：起草或以当前正文为原稿 → 检查 → 定向修订，产出带检查报告的候选稿；
+  // resume 从最后一版候选稿继续（轮数不重新计算）
+  refineSection: (id, sectionId, { instruction = '', maxRounds = 2, applyIfBlank = false, resume = false } = {}) =>
+    request(`/project/${id}/section/${sectionId}/refine`, {
+      method: 'POST',
+      body: { instruction, max_rounds: maxRounds, apply_if_blank: applyIfBlank, resume },
+    }),
   listVersions: (id, sectionId) => request(`/project/${id}/section/${sectionId}/versions`),
   getVersion: (id, sectionId, versionId) => request(`/project/${id}/section/${sectionId}/versions/${versionId}`),
   restoreVersion: (id, sectionId, versionId) =>
