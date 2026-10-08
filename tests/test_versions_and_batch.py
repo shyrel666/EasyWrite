@@ -12,6 +12,7 @@ from app.core.llm_client import llm_client
 from app.services import version_store as vs_module
 from app.services.generator.section_generator import section_generator
 from app.services.project_store import find_node, project_store
+from app.services.proposals import proposal_store
 from app.services.version_store import version_store
 
 OUTLINE = [
@@ -170,13 +171,17 @@ def test_batch_writes_only_eligible_sections(client, project_id, monkeypatch):
     assert _content(project_id, "sec_1_2") == "已有人工稿"
     assert _content(project_id, "sec_1_3") == "已校审定稿"
 
-    # 包含已有内容：覆盖未校审的人工稿（覆盖前留版），已校审仍跳过
+    # 包含已有内容：已有正文的章节生成候选稿、不直接覆盖；已校审仍跳过
     res = client.post(f"/api/v1/project/{project_id}/sections/generate-batch", json={"include_written": True})
     task = _wait(client, res.json()["task_id"])
-    assert sorted(task["result"]["generated"]) == ["sec_1_1", "sec_1_2"]
-    assert _content(project_id, "sec_1_3") == "已校审定稿"
-    sources = [v["source"] for v in version_store.list(project_id, "sec_1_2")]
-    assert sources == ["batch", "manual"]
+    assert task["result"]["generated"] == []
+    assert sorted(p["id"] for p in task["result"]["proposed"]) == ["sec_1_1", "sec_1_2"]
+    assert _content(project_id, "sec_1_1") == "批量稿：1.1 架构设计"
+    assert _content(project_id, "sec_1_2") == "已有人工稿" and _content(project_id, "sec_1_3") == "已校审定稿"
+    assert version_store.list(project_id, "sec_1_2") == []
+    proposal = proposal_store.get(project_id, task["result"]["proposed"][1]["proposal_id"])
+    assert (proposal.origin, proposal.status, proposal.task_id) == ("batch", "checked", task["id"])
+    assert proposal.content == "批量稿：1.2 安全设计" and proposal.base_revision == 0
 
 
 def test_batch_save_failure_is_reported_per_section(client, project_id, monkeypatch):
@@ -191,8 +196,8 @@ def test_batch_save_failure_is_reported_per_section(client, project_id, monkeypa
     res = client.post(f"/api/v1/project/{project_id}/sections/generate-batch", json={"include_written": True})
     task = _wait(client, res.json()["task_id"])
     assert task["status"] == "completed" and task["result"]["generated"] == []
-    assert sorted(f["id"] for f in task["result"]["failed"]) == ["sec_1_1", "sec_1_2"]
-    assert all("保存失败" in f["reason"] for f in task["result"]["failed"])
+    assert [f["id"] for f in task["result"]["failed"]] == ["sec_1_1"] and "保存失败" in task["result"]["failed"][0]["reason"]
+    assert [p["id"] for p in task["result"]["proposed"]] == ["sec_1_2"]  # 已有正文的章节只生成候选稿，不写版本
     assert _content(project_id, "sec_1_1") == "" and _content(project_id, "sec_1_2") == "已有人工稿"
 
 

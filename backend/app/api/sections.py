@@ -154,7 +154,8 @@ def _batch_targets(outline: List[OutlineNode], include_written: bool, only: Opti
     return targets
 
 
-@router.post("/project/{project_id}/sections/generate-batch", summary="批量撰写章节（后台任务：默认只写空白章节，跳过已校审）")
+@router.post("/project/{project_id}/sections/generate-batch",
+             summary="批量撰写章节（后台任务：空白章节直接写入；勾选包括已写章节时，已有正文的章节生成候选稿）")
 def generate_sections_batch(
     project_id: str,
     include_written: bool = Body(default=False, embed=True),
@@ -169,7 +170,7 @@ def generate_sections_batch(
     target_ids = [n.id for n in targets]
 
     def _run(ctx):
-        generated, skipped, failed = [], [], []
+        generated, proposed, skipped, failed = [], [], [], []
         for i, sid in enumerate(target_ids):
             if ctx.cancelled():
                 break
@@ -192,6 +193,17 @@ def generate_sections_batch(
                 # 模型调用失败退回了演示样例：不写入
                 failed.append({"id": sid, "title": node.title, "reason": "模型调用失败，未写入"})
                 continue
+            if before.strip():
+                # 已有正文：不直接覆盖，存为候选稿（附规则检查报告），由用户查看差异后采纳
+                try:
+                    proposal = propose(latest, node, result["generated_content"], evidence,
+                                       origin="batch", task_id=ctx.task_id)
+                except Exception as e:
+                    logger.exception("批量撰写生成候选稿失败 %s", sid)
+                    failed.append({"id": sid, "title": node.title, "reason": f"候选稿保存失败：{str(e)[:80]}"})
+                    continue
+                proposed.append({"id": sid, "title": node.title, "proposal_id": proposal["id"]})
+                continue
             try:
                 status = _save_section_content(
                     project_id, sid, result["generated_content"], "completed",
@@ -205,7 +217,8 @@ def generate_sections_batch(
                 skipped.append(sid)  # 生成期间用户改过该章节：保留用户内容
             else:
                 generated.append(sid)
-        return {"total": len(target_ids), "generated": generated, "skipped": skipped, "failed": failed}
+        return {"total": len(target_ids), "generated": generated, "proposed": proposed,
+                "skipped": skipped, "failed": failed}
 
     task_id = task_manager.submit("section_batch", _run, description=f"批量撰写 {len(target_ids)} 个章节")
     return {"task_id": task_id, "total": len(target_ids)}

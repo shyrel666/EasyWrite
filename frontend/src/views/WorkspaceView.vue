@@ -128,7 +128,8 @@ async function onBatchDone(task) {
   if (task.status === 'completed') {
     const failed = r.failed?.length ? `，失败 ${r.failed.length} 节（${r.failed.map((f) => f.title).slice(0, 3).join('、')}）` : ''
     const skipped = r.skipped?.length ? `，跳过 ${r.skipped.length} 节（期间已被编辑）` : ''
-    ElMessage[r.failed?.length ? 'warning' : 'success'](`批量撰写完成：写入 ${r.generated?.length || 0} 节${skipped}${failed}`)
+    const proposed = r.proposed?.length ? `，${r.proposed.length} 节生成候选稿（在大纲中标出，查看差异后采纳）` : ''
+    ElMessage[r.failed?.length ? 'warning' : 'success'](`批量撰写完成：写入 ${r.generated?.length || 0} 节${proposed}${skipped}${failed}`)
   } else {
     ElMessage.warning(`批量撰写已${task.status === 'cancelled' ? '取消' : '中止'}，已写入的章节已保存`)
   }
@@ -235,9 +236,9 @@ const progress = computed(() => {
           <span class="text-xl font-semibold num">{{ batchCandidates.empty }}<span class="text-xs text-ink-3 font-normal ml-1">节</span></span>
         </div>
         <el-checkbox v-model="batchIncludeWritten" :disabled="!batchCandidates.written">
-          同时重写已有内容（未校审）的 {{ batchCandidates.written }} 节
+          同时重写已有正文（未校审）的 {{ batchCandidates.written }} 节
         </el-checkbox>
-        <p class="hint mt-2">覆盖前自动保存历史版本；撰写期间可继续编辑，你手动修改过的章节不会被覆盖。</p>
+        <p class="hint mt-2">空白章节直接写入；已有正文的章节不直接覆盖，而是生成候选稿，查看差异与检查报告后再采纳。撰写期间可继续编辑，你手动修改过的章节不会被覆盖。</p>
       </template>
       <TaskProgress
         v-else
