@@ -24,6 +24,9 @@ class OutlineNode(BaseModel):
     last_refs: List[Dict[str, Any]] = Field(default_factory=list)
     # 本章节承接的评分项（ScoringItem.id），用于字数分配与评分点覆盖核查
     scoring_item_ids: List[str] = Field(default_factory=list)
+    # 正文修订号与来源：每次正文变化加 1（只经章节写入接口修改；候选稿采纳时据此判断正文是否变化）
+    revision: int = Field(default=0, description="正文修订号")
+    content_source: str = Field(default="", description="最近一次正文写入的来源：manual / ai_generate / batch / polish / restore / proposal / deviation")
     children: List['OutlineNode'] = Field(default_factory=list, description="子章节节点")
 
 

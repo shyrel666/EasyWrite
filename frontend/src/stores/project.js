@@ -31,8 +31,9 @@ export const useProjectStore = defineStore('project', {
       return res.facts
     },
     async saveOutline(outline) {
+      // 服务端合并：已有章节的正文、状态与修订号以服务端为准，返回合并后的大纲
       const res = await api.updateOutline(this.id, outline)
-      this.project.outline = outline
+      this.project.outline = res.outline || outline
       if (res.stage) this.project.stage = res.stage
       return res
     },

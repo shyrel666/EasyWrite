@@ -7,7 +7,7 @@ from app.models.schemas import (
     Project, ProjectCreate, GlobalFacts,
     OutlineUpdateRequest, ProjectListItem,
 )
-from app.services.project_store import project_store, find_node
+from app.services.project_store import find_node, merge_outline, project_store
 from app.services.version_store import version_store
 
 router = APIRouter(tags=["项目管理"])
@@ -52,16 +52,16 @@ def update_project_facts(project_id: str, facts: GlobalFacts):
     return {"status": "success", "facts": facts}
 
 
-@router.put("/project/{project_id}/outline", summary="人工编辑保存大纲树（增删改节点/字数预算）")
+@router.put("/project/{project_id}/outline", summary="人工编辑保存大纲树（结构、标题、字数预算；已有章节的正文与状态以服务端为准）")
 def update_project_outline(project_id: str, req: OutlineUpdateRequest):
-    def mutate(project: Project) -> str:
-        project.outline = req.outline
+    def mutate(project: Project):
+        project.outline, removed = merge_outline(project.outline, req.outline)
         if project.stage in ("created", "tender_analyzed"):
             project.stage = "outline_confirmed"
-        return project.stage
+        return project.stage, removed
 
-    stage = project_store.update(project_id, mutate)
-    return {"status": "success", "stage": stage}
+    stage, removed = project_store.update(project_id, mutate)
+    return {"status": "success", "stage": stage, "outline": project_store.get(project_id).outline, "removed": removed}
 
 
 @router.put("/project/{project_id}/stage", summary="更新向导流程阶段")

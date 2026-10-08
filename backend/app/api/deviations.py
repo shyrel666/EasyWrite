@@ -7,7 +7,8 @@ from fastapi import APIRouter, HTTPException, Body
 from app.core.task_manager import task_manager
 from app.models.schemas import DeviationItem
 from app.services.assets.evidence import generation_filter
-from app.services.project_store import project_store, find_node
+from app.services.project_store import project_store
+from app.services.section_content import save_section_content
 from app.services.parser.deviation_engine import deviation_engine
 
 logger = logging.getLogger("easywrite.api.deviation")
@@ -114,17 +115,12 @@ def generate_project_deviations(project_id: str):
     return {"task_id": task_id, "pending_count": len(pending), "skipped_count": skipped}
 
 
-@router.post("/project/{project_id}/deviation/inject", summary="将偏离表回填至指定大纲章节")
+@router.post("/project/{project_id}/deviation/inject", summary="将偏离表回填至指定大纲章节（覆盖前自动留版）")
 def inject_deviations_to_outline(project_id: str, section_id: str = Body(..., embed=True)):
-    def mutate(project):
-        if not project.deviation_matrix:
-            raise HTTPException(status_code=400, detail="偏离表为空")
-        node = find_node(project.outline, section_id)
-        if not node:
-            raise HTTPException(status_code=404, detail=f"未找到目标章节 {section_id}")
-        node.content = deviation_engine.to_markdown_table(project.deviation_matrix)
-        node.status = "completed"
-        node.content_mode = "point_to_point"
-
-    project_store.update(project_id, mutate)
+    project = _get_project(project_id)
+    if not project.deviation_matrix:
+        raise HTTPException(status_code=400, detail="偏离表为空")
+    table = deviation_engine.to_markdown_table(project.deviation_matrix)
+    save_section_content(project_id, section_id, table, "completed", version_source="deviation",
+                         content_mode="point_to_point")
     return {"status": "success", "section_id": section_id}

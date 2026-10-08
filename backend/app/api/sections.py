@@ -19,6 +19,7 @@ from app.services.generator.evidence_set import select_evidence
 from app.services.generator.section_generator import section_generator, strip_title_heading
 from app.services.checker.quality_inspector import quality_inspector
 from app.services.checker.section_check import check_section
+from app.services.section_content import save_section_content as _save_section_content
 from app.services.version_store import version_store
 
 logger = logging.getLogger("easywrite.api.sections")
@@ -63,44 +64,6 @@ def _request_inputs(project, req: GenerateSectionRequest) -> Tuple[OutlineNode, 
         custom_instruction=req.custom_instruction, pinned_refs=req.pinned_refs, excluded_refs=req.excluded_refs,
     )
     return node, evidence_kw, prompt_kw
-
-
-def _save_section_content(
-    project_id: str, section_id: str, content: str, status: str,
-    last_refs: Optional[List[dict]] = None,
-    version_source: Optional[str] = None,
-    expect_content: Optional[str] = None,
-) -> Optional[str]:
-    """
-    原子写回单个章节（重新读取最新项目，不覆盖其他章节的并发编辑），返回写入后的状态。
-    version_source：AI 生成/润色/批量/恢复等覆盖操作，在写回正文的同一事务内记录历史版本；
-    版本写入失败时正文一并回滚并抛出异常（人工自动保存不传，不留版）。
-    expect_content：仅当章节正文仍等于该值时才写入（批量撰写期间用户改过的章节不覆盖），否则返回 None。
-    """
-    def mutate(project):
-        node = find_node(project.outline, section_id)
-        if not node:
-            raise HTTPException(status_code=404, detail="未找到对应章节")
-        if expect_content is not None and node.content != expect_content:
-            return None, None
-        old = node.content
-        node.content = content
-        node.status = status
-        if last_refs is not None:
-            node.last_refs = last_refs
-        if project.stage != "writing":
-            project.stage = "writing"
-        return node.status, old
-
-    def snapshot(session, result):
-        saved, old = result
-        if saved is not None and version_source:
-            version_store.record_in(session, project_id, section_id, old or "", content, version_source)
-
-    saved_status, _ = project_store.update(project_id, mutate, also=snapshot)
-    if saved_status is not None and version_source:
-        version_store.prune(project_id, section_id)
-    return saved_status
 
 
 @router.post("/project/{project_id}/section/generate/stream", summary="章节流式草拟 (SSE：先推送引用元数据再逐 token 输出)")

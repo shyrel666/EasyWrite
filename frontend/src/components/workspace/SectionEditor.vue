@@ -232,7 +232,7 @@ function locate(item) {
 }
 
 // ---------- 历史版本 ----------
-const VERSION_SOURCE = { manual: '人工稿（覆盖前快照）', ai_generate: 'AI 撰写', polish: '降AI味润色', batch: '批量撰写', restore: '恢复' }
+const VERSION_SOURCE = { manual: '人工稿（覆盖前快照）', ai_generate: 'AI 撰写', polish: '降AI味润色', batch: '批量撰写', restore: '恢复', deviation: '偏离表回填', proposal: '采纳候选稿' }
 const versionsOpen = ref(false)
 const versions = ref([])
 const versionPreview = ref(null)

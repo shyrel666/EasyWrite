@@ -12,7 +12,7 @@ import logging
 import threading
 import uuid
 from datetime import datetime
-from typing import Callable, List, Optional, TypeVar
+from typing import Callable, List, Optional, Tuple, TypeVar
 
 from sqlmodel import Session, select
 
@@ -47,6 +47,43 @@ def find_node(nodes: List[OutlineNode], section_id: str) -> Optional[OutlineNode
         if found:
             return found
     return None
+
+
+# 只经章节接口修改的字段：大纲整树保存时，已存在节点保留服务端的值
+SERVER_OWNED_FIELDS = ("content", "status", "last_refs", "revision", "content_source", "pinned_refs", "excluded_refs")
+
+
+def merge_outline(server: List[OutlineNode], client: List[OutlineNode]) -> Tuple[List[OutlineNode], List[str]]:
+    """
+    大纲整树保存的合并规则，返回 (合并后的大纲, 被删除的章节 ID)：
+    结构、标题、要求、字数预算等取客户端提交的值；已存在节点的正文、状态、引用与修订号保留服务端的值
+    （正文只能经章节接口修改，客户端的旧快照不会覆盖后台写入的正文）；新节点取客户端的值，修订号从 0 开始。
+    """
+    existing = {n.id: n for n in _walk(server)}
+    seen = set()
+
+    def merge(node: OutlineNode) -> OutlineNode:
+        seen.add(node.id)
+        merged = node.model_copy(update={"children": [merge(c) for c in node.children]})
+        current = existing.get(node.id)
+        if current is not None:
+            for field in SERVER_OWNED_FIELDS:
+                setattr(merged, field, getattr(current, field))
+        else:
+            merged.revision = 0
+            merged.content_source = "manual" if merged.content.strip() else ""
+        return merged
+
+    merged = [merge(n) for n in client]
+    return merged, [sid for sid in existing if sid not in seen]
+
+
+def _walk(nodes: List[OutlineNode]) -> List[OutlineNode]:
+    out: List[OutlineNode] = []
+    for n in nodes:
+        out.append(n)
+        out.extend(_walk(n.children))
+    return out
 
 
 def now_str() -> str:
