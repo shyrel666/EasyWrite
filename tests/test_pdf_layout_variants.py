@@ -262,6 +262,6 @@ def test_real_agency_pdf_details():
                 assert s in text, (prefix, s)
     if "01" in by_prefix:
         parsed = _parse_real(by_prefix["01"])
-        items, _ = deviation_engine.extract_from_structure(parsed["sections"], parsed["full_text"])
+        items, _, _ = deviation_engine.extract_from_structure(parsed["sections"], parsed["full_text"])
         levels = {it.level for it in items}
         assert {"redline", "important"} <= levels, "「★代表实质性指标」「#代表重要指标」两种标记都要识别"

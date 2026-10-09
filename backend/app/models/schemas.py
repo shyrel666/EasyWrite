@@ -169,6 +169,7 @@ class DeviationItem(BaseModel):
     is_star: bool = Field(default=False, description="是否为废标红线条款（level == redline，兼容旧字段）")
     level: str = Field(default="normal", description="redline 不满足即无效投标 / important 不满足按评分扣分 / normal")
     section: str = Field(default="", description="条款在招标文件中的章节路径")
+    package: str = Field(default="", description="条款所属分包（多分包项目），空 = 各包通用")
     response_source: str = Field(default="", description="ai 大模型拟稿（待人工核实）/ manual 人工填写")
     response_status: str = Field(default="完全满足", description="响应结果：完全满足/正偏离/负偏离")
     response_detail: str = Field(default="", description="点对点具体实现技术论述与佐证")

@@ -47,7 +47,7 @@ SECTIONS = [
 
 
 def test_structure_extraction_scope_and_levels():
-    items, scope = deviation_engine.extract_from_structure(SECTIONS, LEGEND)
+    items, scope, _ = deviation_engine.extract_from_structure(SECTIONS, LEGEND)
     assert scope == ["第二篇 项目技术（质量）需求"]
     by_text = {it.clause_title: it for it in items}
 
@@ -70,7 +70,7 @@ def test_structure_extraction_scope_and_levels():
 
 
 def test_structure_without_requirement_part_returns_empty():
-    items, scope = deviation_engine.extract_from_structure([_sec("第一篇 投标邀请书", ["须提供资料。"])], "")
+    items, scope, _ = deviation_engine.extract_from_structure([_sec("第一篇 投标邀请书", ["须提供资料。"])], "")
     assert items == [] and scope == []
 
 

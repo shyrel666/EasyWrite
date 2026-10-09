@@ -132,17 +132,27 @@ def _classify_response(kind: str, name: str, criteria: str) -> str:
     return "proposal"
 
 
+def package_name(match: "re.Match") -> str:
+    """PACKAGE_RE 的匹配统一成评分表用的写法：「第一包」「包1」→ 包1，「a包」「包B」→ A包、B包"""
+    numbered, after, before = match.groups()
+    letter = before or (after if re.fullmatch(r"[A-Za-z]", after or "") else "")
+    if letter:
+        return letter.upper() + "包"
+    raw = numbered or after
+    return "包" + CN_DIGITS.get(raw, raw)
+
+
+def package_labels(text: str) -> List[str]:
+    """文字中出现的分包（去重，保持先后顺序）"""
+    return list(dict.fromkeys(package_name(m) for m in PACKAGE_RE.finditer(text or "")))
+
+
 def _package_label(table: Dict[str, Any]) -> str:
     """从表前文字（取最近一处）或所在章节面包屑识别分包：「（二）包2评审因素」→ 包2"""
     for source in (table.get("context_before", ""), table.get("breadcrumb", "")):
-        matches = PACKAGE_RE.findall(source or "")
+        matches = list(PACKAGE_RE.finditer(source or ""))
         if matches:
-            numbered, after, before = matches[-1]
-            letter = before or (after if re.fullmatch(r"[A-Za-z]", after) else "")
-            if letter:
-                return letter.upper() + "包"
-            raw = numbered or after
-            return "包" + CN_DIGITS.get(raw, raw)
+            return package_name(matches[-1])
     return ""
 
 

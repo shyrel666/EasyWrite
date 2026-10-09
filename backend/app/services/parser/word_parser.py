@@ -15,6 +15,7 @@ class ParsedSection:
         self.breadcrumb = breadcrumb
         self.paragraphs: List[str] = []
         self.tables: List[List[List[str]]] = []  # table rows and cells
+        self.table_anchors: List[int] = []  # 每张表格之前的段落数（还原段落与表格的先后顺序）
         self.subsections: List['ParsedSection'] = []
 
     def add_paragraph(self, text: str):
@@ -25,6 +26,7 @@ class ParsedSection:
     def add_table(self, table_data: List[List[str]]):
         if table_data:
             self.tables.append(table_data)
+            self.table_anchors.append(len(self.paragraphs))
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -34,6 +36,7 @@ class ParsedSection:
             "breadcrumb": self.breadcrumb,
             "content": "\n\n".join(self.paragraphs),
             "tables": self.tables,
+            "table_anchors": self.table_anchors,
             "subsections": [sub.to_dict() for sub in self.subsections]
         }
 

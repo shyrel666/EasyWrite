@@ -90,6 +90,13 @@ const FILTERS = computed(() => [
 const filteredRows = computed(() =>
   items.value.map((item, i) => ({ item, i })).filter(({ item }) => FILTER_TESTS[filter.value](item))
 )
+// 多分包：按投标分包抽取时，说明保留了哪个分包、排除了多少其他分包的条款
+const packageHint = computed(() => {
+  const pkg = coverage.value?.package
+  if (!pkg?.filtered) return ''
+  const detail = Object.entries(pkg.excluded_by_package || {}).map(([name, n]) => `${name} ${n} 条`).join('、')
+  return `多分包项目：只保留投标分包「${pkg.target}」与各包通用的条款，已排除其他分包的条款 ${pkg.excluded} 条${detail ? `（${detail}）` : ''}。投标分包在拆标向导中选择，改选后请重新提取。`
+})
 const statCells = computed(() => [
   { label: '指标总数', value: stats.value.total, tone: 'text-ink' },
   { label: '废标红线', value: stats.value.star, tone: stats.value.star ? 'text-bad' : 'text-ink' },
@@ -247,10 +254,11 @@ onMounted(async () => {
         />
       </div>
 
-      <div class="space-y-2 mb-5" v-if="coverage?.scope?.length || coverage?.note || stats.aiDraft">
+      <div class="space-y-2 mb-5" v-if="coverage?.scope?.length || coverage?.note || packageHint || stats.aiDraft">
         <p v-if="coverage?.scope?.length" class="hint">
           抽取范围：{{ coverage.scope.join('、') }}（仅技术 / 服务需求篇，跳过商务、须知、评标与项目概况）
         </p>
+        <p v-if="packageHint" class="hint">{{ packageHint }}</p>
         <div v-if="coverage?.note" class="note note-warn">
           <el-icon class="text-warn mt-0.5 shrink-0"><WarningFilled /></el-icon><span>{{ coverage.note }}</span>
         </div>
@@ -322,7 +330,10 @@ onMounted(async () => {
                   </td>
                   <td>
                     <el-input v-model="item.clause_title" type="textarea" :autosize="{ minRows: 1, maxRows: 4 }" @input="dirty = true" />
-                    <p v-if="item.section" class="text-2xs text-ink-3 mt-1 truncate" :title="item.section">{{ item.section }}</p>
+                    <p v-if="item.section || item.package" class="text-2xs text-ink-3 mt-1 flex items-center gap-1.5 min-w-0" :title="item.section">
+                      <span v-if="item.package" class="chip chip-mute shrink-0">{{ item.package }}</span>
+                      <span class="truncate">{{ item.section }}</span>
+                    </p>
                   </td>
                   <td class="pt-3">
                     <span class="chip" :class="LEVEL_META[levelOf(item)].chip">{{ LEVEL_META[levelOf(item)].label }}</span>

@@ -29,12 +29,20 @@ def extract_project_deviations(project_id: str, tender_content: Optional[str] = 
     tender_text = document["text"]
     structure = None if tender_content else document["structure"]
 
-    # 优先按章节树只抽技术/服务需求篇；无章节树（粘贴文本/旧项目）或未定位到需求篇时退回全文扫描
-    extracted, scope = [], None
+    # 优先按章节树只抽技术/服务需求篇（多分包时只留投标分包与通用条款）；无章节树（粘贴文本/旧项目）或未定位到需求篇时退回全文扫描
+    analysis = project.tender_analysis
+    target_package = analysis.target_package if analysis else ""
+    extracted, scope, packages = [], None, None
     if structure:
-        extracted, scope = deviation_engine.extract_from_structure(structure.get("sections", []), tender_text)
+        extracted, scope, packages = deviation_engine.extract_from_structure(
+            structure.get("sections", []), tender_text, target_package)
     raw_text = tender_content or tender_text or project.description or ""
-    if not extracted:
+    if not extracted and not (packages or {}).get("filtered"):
+        rubric_packages = {it.package for it in analysis.scoring_items} if analysis else set()
+        if len(rubric_packages) > 1:
+            packages = {"target": target_package, "found": [], "filtered": False, "excluded": 0,
+                        "excluded_by_package": {},
+                        "note": "多分包项目：全文扫描不区分分包，请人工删除其他分包的条款"}
         if not raw_text.strip():
             raise HTTPException(status_code=400, detail="无招标文件正文可抽取（请先上传招标文件或传入 tender_content）")
         extracted = deviation_engine.extract_requirements(raw_text)
@@ -52,7 +60,7 @@ def extract_project_deviations(project_id: str, tender_content: Optional[str] = 
         latest.deviation_matrix = extracted
 
     project_store.update(project_id, mutate)
-    coverage = deviation_engine.coverage_report(extracted, tender_text or raw_text, scope)
+    coverage = deviation_engine.coverage_report(extracted, tender_text or raw_text, scope, packages)
     return {"status": "success", "total_items": len(extracted), "items": extracted, "coverage": coverage}
 
 

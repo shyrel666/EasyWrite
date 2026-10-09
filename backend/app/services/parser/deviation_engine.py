@@ -7,8 +7,9 @@
 2. 条款等级以文件自身的标记定义为准（tender_analyzer.marker_semantics）：
    redline 不满足即无效投标 / important 不满足按评分扣分 / normal；
    段落自身无标记时继承其所在小节标题上的标记（如「（3）★数据确权」下的各段）
-3. 无章节树（粘贴文本、旧项目）时退回全文关键词扫描
-4. 抽取不到就返回空，绝不用假条款填充
+3. 多分包项目只保留投标分包与各包通用的条款，其他分包的条款排除后计数（分包识别规则见 extract_from_structure）
+4. 无章节树（粘贴文本、旧项目）时退回全文关键词扫描（不分包）
+5. 抽取不到就返回空，绝不用假条款填充
 
 响应（LLM）：
 - 每次调用批量响应 8 条，失败的条目逐条重试；只接受真实模型输出（get_mode()=="llm"）
@@ -22,6 +23,7 @@ from typing import Dict, List, Optional, Tuple
 
 from app.core.llm_client import llm_client
 from app.models.schemas import DeviationItem, GlobalFacts
+from app.services.parser.scoring_extractor import PACKAGE_RE, package_labels
 from app.services.parser.tender_analyzer import CLAUSE_MARKERS, is_marker_reference, marker_semantics
 from app.services.rag.retriever import retrieval_service
 
@@ -53,6 +55,8 @@ TOTAL_ROW = re.compile(r"^(?:合计|总计|小计|总价)")
 REQ_TABLE_HEADER = re.compile(r"需求|要求|内容|标准|参数|指标|功能|规格")
 SCORING_HEADER = re.compile(r"分值|评分|得分")
 NUMERIC_CELL = re.compile(r"^[\d.,，%％元万台套个项人天年月日/\s\-—]*$")
+# 分包标签段落的序号前缀：「1.A包：…」「（3）C包：…」
+PACKAGE_LEAD = re.compile(r"^(?:[（(][一二三四五六七八九十\d]{1,3}[)）]|[一二三四五六七八九十\d]{1,3}[、.．)）])?\s*")
 
 
 def _fingerprint(text: str) -> str:
@@ -82,20 +86,38 @@ class DeviationEngine:
 
     # ---------------- 确定性抽取：章节树 ----------------
 
-    def extract_from_structure(self, sections: List[dict], legend_text: str = "") -> Tuple[List[DeviationItem], List[str]]:
+    def extract_from_structure(
+        self, sections: List[dict], legend_text: str = "", target_package: str = ""
+    ) -> Tuple[List[DeviationItem], List[str], dict]:
         """
         从招标文件章节树抽取技术需求条款。
-        返回（条款, 抽取范围的章节标题）；未定位到需求篇时返回 ([], [])，由调用方退回全文扫描。
+        返回（条款, 抽取范围的章节标题, 分包情况）；未定位到需求篇时条款与范围为空，由调用方退回全文扫描。
+
+        分包（多分包项目的需求篇按包分写）：
+        - 标题里的分包（「二、包一招标项目服务需求」「（一）包1服务范围、要求及标准」）管到该章节结束；
+        - 分包标签段落（「第2包」「包2：等保及密评服务」「1.A包：…运行维护」）管到下一个标签或所在章节结束；
+          它是章节最后一块（其后没有表格和下级章节）时是后续同级章节的引导语，管到上级章节结束；
+        - 标题或标签写了几个分包（「四、商务要求（A包、B包）」）为各包通用；需求表格首列写了分包的行归该包。
+        target_package 是需求篇里出现的分包时，只保留该包与通用条款，其余排除并计数；
+        对应不上（或没有投标分包）时不过滤，由分包情况的 note 提示人工核对。
         """
+        packages = {"target": target_package, "found": [], "filtered": False,
+                    "excluded": 0, "excluded_by_package": {}, "note": ""}
         parts = [s for s in sections
                  if REQUIREMENT_PART.search(s.get("title", "")) and not EXCLUDED_PART.search(s.get("title", ""))]
         if not parts:
-            return [], []
+            return [], [], packages
         resolver = _LevelResolver(legend_text)
         items: List[DeviationItem] = []
         seen = set()
+        found: List[str] = []
+        # 当前分包（"" = 各包通用）；until：分包标签段落的作用范围，退出该深度的章节时失效
+        state = {"pkg": "", "until": None}
 
-        def add(text: str, section_path: str, inherited: Optional[str]):
+        def note_packages(labels: List[str]):
+            found.extend(p for p in labels if p not in found)
+
+        def add(text: str, section_path: str, inherited: Optional[str], package: str):
             text = text.strip()
             fp = _fingerprint(text)
             if fp in seen:
@@ -104,44 +126,125 @@ class DeviationEngine:
             level = resolver.level_of(text) or inherited or "normal"
             items.append(DeviationItem(
                 index=len(items) + 1, clause_title=text, is_star=level == "redline", level=level,
-                section=section_path, response_status="待生成", response_detail="", source_fingerprint=fp,
+                section=section_path, package=package, response_status="待生成", response_detail="",
+                source_fingerprint=fp,
             ))
 
-        def walk(node: dict, path: List[str]):
+        def walk(node: dict, path: List[str], depth: int, base: str):
             title = node.get("title", "")
             section_path = " > ".join(path + [title])
             inherited = resolver.level_of(title)
-            if not (BACKGROUND_SECTION.search(title) and not inherited):
-                # 带标记的短标签（「★1.1.6数据质量提升」）把等级与标签名带给其后的需求段落，直到下一个标签
-                label, label_level, label_used = "", None, True
-                for para in (node.get("content") or "").split("\n\n"):
-                    para = para.strip()
-                    if self._is_label(para):
-                        if label and not label_used:
-                            add(label, section_path, label_level)
-                        label, label_level = para, resolver.level_of(para)
-                        label_used = label_level is None  # 无标记的结构性标签不单独成条
-                        continue
-                    if self._is_requirement(para, resolver):
-                        if label_level:
-                            add(f"{label}：{para}", section_path, label_level)
-                            label_used = True
-                        else:
-                            add(para, section_path, inherited)
-                if label and not label_used:
-                    add(label, section_path, label_level)
-                for table in node.get("tables") or []:
-                    for row_text in self._requirement_rows(table):
-                        add(row_text, section_path, inherited)
-            for child in node.get("subsections") or []:
-                walk(child, path + [title])
+            saved = dict(state)
+            title_packages = package_labels(title)
+            if title_packages:
+                note_packages(title_packages)
+                base = title_packages[0] if len(title_packages) == 1 else ""
+                state.update(pkg=base, until=None)
+            subsections = node.get("subsections") or []
+            blocks = self._blocks(node)
+            skip = BACKGROUND_SECTION.search(title) and not inherited
+            # 带标记的短标签（「★1.1.6数据质量提升」）把等级与标签名带给其后的需求段落，直到下一个标签
+            label, label_level, label_used = "", None, True
+            for i, (kind, value) in enumerate(blocks):
+                if kind == "table":
+                    if not skip:
+                        for row_package, row_text in self._requirement_rows(value):
+                            if row_package is not None:
+                                note_packages([row_package] if row_package else [])
+                            add(row_text, section_path, inherited, state["pkg"] if row_package is None else row_package)
+                    continue
+                marker = self._package_marker(value)
+                if marker is not None:
+                    if label and not label_used and not skip:
+                        add(label, section_path, label_level, state["pkg"])
+                    label, label_level, label_used = "", None, True
+                    note_packages(package_labels(value))
+                    last = i == len(blocks) - 1 and not subsections
+                    state.update(pkg=marker, until=depth - 1 if last else depth)
+                    continue
+                if skip:
+                    continue
+                if self._is_label(value):
+                    if label and not label_used:
+                        add(label, section_path, label_level, state["pkg"])
+                    label, label_level = value, resolver.level_of(value)
+                    label_used = label_level is None  # 无标记的结构性标签不单独成条
+                    continue
+                if self._is_requirement(value, resolver):
+                    if label_level:
+                        add(f"{label}：{value}", section_path, label_level, state["pkg"])
+                        label_used = True
+                    else:
+                        add(value, section_path, inherited, state["pkg"])
+            if label and not label_used and not skip:
+                add(label, section_path, label_level, state["pkg"])
+            for child in subsections:
+                walk(child, path + [title], depth + 1, base)
+            if title_packages:
+                state.update(saved)
+            elif state["until"] is not None and state["until"] >= depth:
+                state.update(pkg=base, until=None)
 
         for part in parts:
-            walk(part, [])
+            state.update(pkg="", until=None)
+            walk(part, [], 0, "")
+
+        packages["found"] = found
+        if target_package and target_package in found:
+            kept, excluded = [], {}
+            for it in items:
+                if it.package and it.package != target_package:
+                    excluded[it.package] = excluded.get(it.package, 0) + 1
+                else:
+                    kept.append(it)
+            items = kept
+            packages.update(filtered=True, excluded=sum(excluded.values()), excluded_by_package=excluded)
+        elif len(found) > 1 or (target_package and found):
+            names = "、".join(found)
+            packages["note"] = (
+                f"需求篇按分包分写（{names}），与投标分包「{target_package}」对应不上，未按分包过滤，请人工删除其他分包的条款"
+                if target_package else
+                f"需求篇按分包分写（{names}），但评分表未区分分包、无法确定投标分包，未按分包过滤，请人工删除其他分包的条款"
+            )
         items.sort(key=lambda it: (LEVEL_ORDER.get(it.level, 2), it.index))
         for i, it in enumerate(items, 1):
             it.index = i
-        return items, [p["title"] for p in parts]
+        return items, [p["title"] for p in parts], packages
+
+    @staticmethod
+    def _blocks(node: dict) -> List[Tuple[str, object]]:
+        """章节的段落与表格按文档顺序排列；旧存档没有 table_anchors 时表格排在段落之后"""
+        paras = [p.strip() for p in (node.get("content") or "").split("\n\n") if p.strip()]
+        tables = node.get("tables") or []
+        anchors = node.get("table_anchors") or []
+        if len(anchors) != len(tables):
+            anchors = [len(paras)] * len(tables)
+        blocks: List[Tuple[str, object]] = []
+        t = 0
+        for i, para in enumerate(paras):
+            while t < len(tables) and anchors[t] <= i:
+                blocks.append(("table", tables[t]))
+                t += 1
+            blocks.append(("para", para))
+        blocks.extend(("table", table) for table in tables[t:])
+        return blocks
+
+    @staticmethod
+    def _package_marker(text: str) -> Optional[str]:
+        """
+        分包标签：以分包开头的短行（「第2包」「A包:」「包2：等保及密评服务」「1.A包：…运行维护」）。
+        返回该分包；写了几个分包的（「A包、B包通用要求」）返回 ""（各包通用）；不是标签返回 None。
+        句子（含句读，如「A包主要内容：……。」）不是标签。
+        """
+        p = (text or "").strip()
+        if not p or len(p) > 60 or re.search(r"[。；;]", p):
+            return None
+        m = PACKAGE_RE.match(p, PACKAGE_LEAD.match(p).end())
+        # 标签后须是分隔符或行尾：「包1年免费维保」的「包1」不是分包
+        if not m or (m.end() < len(p) and p[m.end()] not in "：:（( 　、，,-—"):
+            return None
+        labels = package_labels(p)
+        return labels[0] if len(labels) == 1 else ""
 
     @staticmethod
     def _is_label(para: str) -> bool:
@@ -158,9 +261,11 @@ class DeviationEngine:
             return True
         return bool(REQ_VERBS.search(p))
 
-    @staticmethod
-    def _requirement_rows(table: List[List[str]]) -> List[str]:
-        """需求类表格逐行成条：「需求分类：具体需求」；评分表与纯数量/金额列不纳入"""
+    @classmethod
+    def _requirement_rows(cls, table: List[List[str]]) -> List[Tuple[Optional[str], str]]:
+        """
+        需求类表格逐行成条：（首列写的分包或 None, 「需求分类：具体需求」）；评分表与纯数量/金额列不纳入
+        """
         if len(table) < 2:
             return []
         header = " ".join(table[0])
@@ -174,7 +279,7 @@ class DeviationEngine:
             cells = list(dict.fromkeys(cells))  # 纵向合并造成的重复单元格
             text = "：".join(cells)
             if len(text) >= 8 and not TOTAL_ROW.match(text):
-                rows.append(text)
+                rows.append((cls._package_marker(cells[0]), text))
         return rows
 
     # ---------------- 确定性抽取：全文扫描（无章节树时的兜底） ----------------
@@ -210,8 +315,9 @@ class DeviationEngine:
             item.index = i
         return items
 
-    def coverage_report(self, items: List[DeviationItem], tender_text: str, scope: Optional[List[str]] = None) -> dict:
-        """覆盖率核算：文件中带红线标记的行 vs 抽取到的红线条款"""
+    def coverage_report(self, items: List[DeviationItem], tender_text: str, scope: Optional[List[str]] = None,
+                        packages: Optional[dict] = None) -> dict:
+        """覆盖率核算：文件中带红线标记的行 vs 抽取到的红线条款；packages 为 extract_from_structure 的分包情况"""
         resolver = _LevelResolver(tender_text or "")
         marked_lines = [
             l for l in (tender_text or "").split("\n")
@@ -223,6 +329,8 @@ class DeviationEngine:
             note = "未定位到技术/服务需求章节，已退回全文关键词扫描，条款可能混入非技术内容，请人工核对"
         elif not scope and len(marked_lines) > covered:
             note = "红线标记条款存在未覆盖行，建议人工核对招标文件红线条款"
+        if packages and packages.get("note"):
+            note = "；".join(n for n in (note, packages["note"]) if n)
         return {
             "extracted_total": len(items),
             "redline_count": covered,
@@ -231,6 +339,7 @@ class DeviationEngine:
             "star_covered": covered,
             "star_uncovered": max(0, len(marked_lines) - covered),
             "scope": scope or [],
+            "package": packages or {},
             "note": note,
         }
 
