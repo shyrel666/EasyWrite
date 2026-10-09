@@ -14,10 +14,14 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from app.core.llm_client import llm_client
 from app.models.schemas import OutlineNode, TenderAnalysis18, GlobalFacts, ScoringItem
+from app.services.checker.scoring_coverage import point_overlap
 from app.services.rag import curator
 from app.services.generator import rubric_planner as rp
 
 logger = logging.getLogger("easywrite.outline")
+
+# 评分要点（或评分项名称）与小节标题 / 要求的贴近度达到该值才归入该小节，否则补一个小节承接
+POINT_MATCH = 0.5
 
 
 def _assign_paths(nodes: List[OutlineNode], parent_path: str = ""):
@@ -155,13 +159,18 @@ class OutlineGenerator:
             outline = self._parse_tree(data, confirmed_chapters) if self.llm.get_mode() == "llm" else None
             if outline:
                 child_weights: Dict[str, float] = {}
+                added: List[str] = []
                 for i, node in enumerate(outline, 1):
                     if not node.children:  # 大模型未展开的章节用评分细则补齐
                         node.children, weights = rp.chapter_children(i, confirmed_chapters[i - 1], items_by_id)
                         child_weights.update(weights)
+                    else:
+                        added += self._attach_points(i, node, items_by_id)
                 self._allocate_budgets(outline, total_word_budget, items_by_id, child_weights)
                 _assign_paths(outline)
-                return {"outline": outline, "mode": "llm", "message": ""}
+                message = (f"大模型展开遗漏 {len(added)} 个评分要点，已补充承接小节：{'、'.join(added)}"
+                           if added else "")
+                return {"outline": outline, "mode": "llm", "message": message}
 
         outline, child_weights = self._fallback_tree(confirmed_chapters, items_by_id)
         self._allocate_budgets(outline, total_word_budget, items_by_id, child_weights)
@@ -243,6 +252,66 @@ class OutlineGenerator:
             )
             nodes.append(node)
         return nodes if nodes else None
+
+    @staticmethod
+    def _attach_points(index: int, chapter: OutlineNode, items_by_id: Dict[str, ScoringItem]) -> List[str]:
+        """
+        大模型展开的小节不带评分要点：把本章评分项分到小节上，章节检查与智能完善才能核对本节漏写了哪些要点。
+        - 单个评分项的章：各小节都承接该评分项；评分子项 / 评分标准列举的要点按标题分给最贴近的小节
+          （写成「评分子项：…」「评分要点：…」要求）
+        - 归并了几个评分项的章：每个评分项按名称分给最贴近的小节（挂上评分项 ID 与该项的要求）
+        没有贴近小节的要点或评分项补一个小节承接（标题即评分点），返回补出的小节标题。
+        """
+        items = [items_by_id[x] for x in chapter.scoring_item_ids if x in items_by_id]
+        units = [(c, leaf) for c in chapter.children for leaf in (c.children or [c])]
+        if not items or not units:
+            return []
+        added: List[str] = []
+        # 按大模型给出的标题与要求匹配（取分配前的快照，已写入的评分要点行不参与后续匹配）
+        texts = ["\n".join(([leaf.title] if c is leaf else [c.title, leaf.title]) + leaf.requirements)
+                 for c, leaf in units]
+
+        def closest(point: str) -> Optional[OutlineNode]:
+            score, k = max((point_overlap(point, t), -k) for k, t in enumerate(texts))
+            return units[-k][1] if score >= POINT_MATCH else None
+
+        def add_section(title: str, reqs: List[str], item: ScoringItem):
+            mode = {"compliance": "point_to_point", "evidence": "template_fill"}.get(item.response_type, "ai_generate")
+            j = len(chapter.children) + 1
+            chapter.children.append(OutlineNode(
+                id=f"sec_{index}_{j}", title=f"{index}.{j} {title}", level=2,
+                requirements=reqs, content_mode=mode, scoring_item_ids=[item.id],
+            ))
+            added.append(chapter.children[-1].title)
+
+        def require(leaf: OutlineNode, lines: List[str]):
+            leaf.requirements += [r for r in lines if r not in leaf.requirements]
+
+        if len(items) == 1:
+            it = items[0]
+            parent = f"所属评分项：{it.name}（{rp.fmt_points(it.points)}）"
+            for _, leaf in units:
+                leaf.scoring_item_ids = [it.id]
+            subs = {s.name: s for s in it.sub_items}
+            for point in list(subs) or rp.content_points(it.criteria):
+                line = (f"评分子项：{point}（{rp.fmt_points(subs[point].points)}）" if point in subs
+                        else f"评分要点：{point}")
+                leaf = closest(point)
+                if leaf is None:
+                    add_section(point, [line, parent], it)
+                else:
+                    require(leaf, [line, parent])
+            return added
+
+        for it in items:
+            leaf = closest(it.name)
+            if leaf is None:
+                add_section(f"{it.name}响应" if it.response_type == "compliance" else it.name,
+                            rp.item_requirements(it), it)
+            else:
+                leaf.scoring_item_ids = list(dict.fromkeys(leaf.scoring_item_ids + [it.id]))
+                require(leaf, rp.item_requirements(it))
+        return added
 
     @staticmethod
     def _allocate_budgets(outline: List[OutlineNode], total: int,

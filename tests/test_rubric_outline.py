@@ -82,6 +82,70 @@ def test_llm_draft_missing_items_are_backfilled(monkeypatch):
     assert res["chapters"][-1]["title"].startswith("第四章")
 
 
+LLM_EXPANSION = {"outline": [
+    {"title": "第一章 项目理解", "children": [
+        {"title": "1.1 对本项目运维工作的认识", "requirements": ["结合采购人业务"]},
+        {"title": "1.2 业务目标与难点"},
+    ]},
+    {"title": "第二章 技术服务方案", "children": [
+        {"title": "2.1 现状调研与需求分析"},
+        {"title": "2.2 运维服务体系", "children": [{"title": "2.2.1 日常巡检"}, {"title": "2.2.2 故障处理"}]},
+    ]},
+    {"title": "第三章 技术需求逐条响应", "children": [
+        {"title": "3.1 技术需求逐条响应表", "content_mode": "point_to_point"},
+    ]},
+    {"title": "第四章 商务资信与证明材料", "children": [
+        {"title": "4.1 项目团队人员配置"},
+        {"title": "4.2 企业资质证书"},
+    ]},
+]}
+
+
+def _flat(nodes):
+    for n in nodes:
+        yield n
+        yield from _flat(n.children)
+
+
+def test_llm_expansion_leaves_carry_scoring_points(monkeypatch):
+    """大模型展开的小节挂上评分要点（章节检查才能核对漏写），没有承接小节的要点补一个小节"""
+    from app.models.schemas import Project
+    from app.services.checker.section_check import section_points
+
+    _offline(monkeypatch)
+    chapters = outline_generator.draft_level1("运维项目", ANALYSIS)["chapters"]
+    monkeypatch.setattr(llm_client, "is_configured", True)
+    monkeypatch.setattr(llm_client, "get_mode", lambda: "llm")
+    monkeypatch.setattr(llm_client, "chat_completion_structured", lambda **kw: LLM_EXPANSION)
+    res = outline_generator.expand_full_tree(chapters, "运维项目", ANALYSIS, total_word_budget=10000)
+    assert res["mode"] == "llm"
+    assert "2 个评分要点" in res["message"] and "1.3 运维现状分析" in res["message"] and "4.3 类似项目业绩" in res["message"]
+    understanding, plan, compliance, evidence = res["outline"]
+    nodes = {n.title: n for n in _flat(res["outline"])}
+
+    assert [c.title for c in understanding.children] == ["1.1 对本项目运维工作的认识", "1.2 业务目标与难点", "1.3 运维现状分析"]
+    assert nodes["1.1 对本项目运维工作的认识"].requirements == [
+        "结合采购人业务", "评分要点：本项目运维的认识", "所属评分项：项目理解（10分）"]
+    assert all(c.scoring_item_ids == ["s_s2"] for c in understanding.children)
+    assert "评分子项：现状及需求分析（10分）" in nodes["2.1 现状调研与需求分析"].requirements
+    assert "评分子项：运维服务方案（30分）" in nodes["2.2.1 日常巡检"].requirements, "上级小节标题即评分点：归入其第一个小节"
+    assert compliance.children[0].scoring_item_ids == ["s_s4"]
+    assert nodes["4.1 项目团队人员配置"].scoring_item_ids == ["s_s5"]
+    assert "评分项：人员配置（12分）" in nodes["4.1 项目团队人员配置"].requirements
+    assert nodes["4.2 企业资质证书"].scoring_item_ids == []
+    assert nodes["4.3 类似项目业绩"].scoring_item_ids == ["s_s6"]
+    assert nodes["4.3 类似项目业绩"].content_mode == "template_fill"
+    assert all(n.word_budget for n in _flat(res["outline"]) if not n.children), "补出的小节也分配字数"
+
+    project = Project(id="p", name="p", client_name="", description="", outline=res["outline"],
+                      tender_analysis=ANALYSIS, created_at="", updated_at="")
+    assert [p for _, p in section_points(project, nodes["1.1 对本项目运维工作的认识"])] == ["本项目运维的认识"]
+    assert [p for _, p in section_points(project, nodes["2.2.1 日常巡检"])] == ["运维服务方案"]
+    assert section_points(project, nodes["1.2 业务目标与难点"]) == []
+    coverage = {r.item_id: r for r in check_scoring_coverage(res["outline"], ANALYSIS)}
+    assert coverage["s_s6"].section_titles == ["4.3 类似项目业绩"]
+
+
 def _outline_with_content():
     return [
         OutlineNode(id="sec_1", title="第一章 项目理解", scoring_item_ids=["s_s2"], children=[

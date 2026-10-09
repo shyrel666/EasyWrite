@@ -271,6 +271,8 @@ async function expandOutline() {
     store.project.outline = res.outline
     store.project.stage = res.stage
     ElMessage.success(`大纲展开完成：共 ${countNodes(res.outline)} 个章节节点`)
+    // 离线按评分细则展开、或大模型漏掉评分要点而补了小节时说明一下
+    if (res.message) ElMessage({ type: 'warning', message: res.message, duration: 6000 })
     step.value = 3
   } catch (e) {
     ElMessage.error('大纲展开失败：' + e.message)
