@@ -8,9 +8,11 @@
    系统仍然完全可用（分层降级策略的语义兜底层）。
 3. 批量计算 + 失败即停（不静默吞错，让入库任务显式报告失败原因）。
 """
+import hashlib
 import logging
 import threading
 import time
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -65,6 +67,22 @@ BATCH_SIZE = 32
 MAX_TEXT_CHARS = 6000
 
 
+@dataclass(frozen=True)
+class EmbeddingSnapshot:
+    """一次请求/重建固定使用的客户端与模型；热切换配置不影响已开始的批次。"""
+    provider: str
+    model: str
+    base_url: str
+    client: Optional[OpenAI]
+
+    @property
+    def version(self) -> str:
+        if self.client is None:
+            return ""
+        endpoint = hashlib.sha256(self.base_url.rstrip("/").encode()).hexdigest()[:16]
+        return f"{self.provider}:{self.model}:{endpoint}"
+
+
 class EmbeddingClient:
     def __init__(self):
         self._lock = threading.Lock()
@@ -107,30 +125,43 @@ class EmbeddingClient:
                 self.client = None
                 self.async_client = None
 
-    def embed_texts_sync(self, texts: List[str]) -> Optional[np.ndarray]:
+    def snapshot(self) -> EmbeddingSnapshot:
+        with self._lock:
+            return EmbeddingSnapshot(self.provider, self.model, self.base_url,
+                                     self.client if self.is_available else None)
+
+    def embed_texts_sync(self, texts: List[str], *, snapshot: Optional[EmbeddingSnapshot] = None) -> Optional[np.ndarray]:
         """批量同步嵌入，返回 (N, dim) float32 矩阵；不可用或失败返回 None（不静默降级）。"""
-        if not self.is_available or not self.client:
+        snapshot = snapshot or self.snapshot()
+        if snapshot.client is None:
             return None
         all_vectors: List[List[float]] = []
         for i in range(0, len(texts), BATCH_SIZE):
             batch = [t[:MAX_TEXT_CHARS] for t in texts[i : i + BATCH_SIZE]]
             started = time.perf_counter()
             try:
-                resp = self.client.embeddings.create(input=batch, model=self.model)
-                llm_usage.record(purpose="embedding", kind="embedding", model=self.model, started=started,
+                resp = snapshot.client.embeddings.create(input=batch, model=snapshot.model)
+                llm_usage.record(purpose="embedding", kind="embedding", model=snapshot.model, started=started,
                                  usage=getattr(resp, "usage", None))
                 all_vectors.extend(item.embedding for item in resp.data)
             except Exception as e:
-                llm_usage.record(purpose="embedding", kind="embedding", model=self.model, started=started, error=e)
+                llm_usage.record(purpose="embedding", kind="embedding", model=snapshot.model, started=started, error=e)
                 logger.error("Embedding 批量计算失败 (batch %d): %s", i // BATCH_SIZE, e)
                 return None
         if not all_vectors:
             return None
-        return np.array(all_vectors, dtype=np.float32)
+        try:
+            matrix = np.array(all_vectors, dtype=np.float32)
+            if matrix.ndim != 2 or matrix.shape[0] != len(texts) or not matrix.shape[1] or not np.isfinite(matrix).all():
+                raise ValueError("嵌入返回的数量、维度或数值无效")
+            return matrix
+        except ValueError as exc:
+            logger.error("Embedding 返回无效向量: %s", exc)
+            return None
 
-    def embed_query_sync(self, text: str) -> Optional[np.ndarray]:
+    def embed_query_sync(self, text: str, *, snapshot: Optional[EmbeddingSnapshot] = None) -> Optional[np.ndarray]:
         """单条查询嵌入，返回 (dim,) 向量"""
-        mat = self.embed_texts_sync([text[:MAX_TEXT_CHARS]])
+        mat = self.embed_texts_sync([text[:MAX_TEXT_CHARS]], snapshot=snapshot)
         if mat is None:
             return None
         return mat[0]

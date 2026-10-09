@@ -446,6 +446,11 @@ class EnterpriseAssetManager:
             return None
         return next((copy.deepcopy(x) for x in getattr(self, kind) if x.get("id") == asset_id), None)
 
+    def snapshot(self) -> Dict[str, List[Dict[str, Any]]]:
+        """一次选材、提示词与检查共用的资料副本。"""
+        with self._lock:
+            return {kind: copy.deepcopy(getattr(self, kind)) for kind in ASSET_KINDS}
+
     def _require_material(self, kind: str, asset_id: str) -> Dict[str, Any]:
         if kind not in MATERIAL_KINDS:
             raise AttachmentError("只有资质、人员、业绩资料可以上传证明附件")
@@ -728,7 +733,7 @@ class EnterpriseAssetManager:
                 lines.extend(self.asset_line(kind, m) for m in group)
         return "\n".join(lines), models, excluded
 
-    def match_assets_for_section(self, section_title: str, requirements: List[str], exclude=None) -> Dict[str, Any]:
+    def match_assets_for_section(self, section_title: str, requirements: List[str], exclude=None, snapshot=None) -> Dict[str, Any]:
         """
         根据当前撰写章节的主题匹配企业资料：只用用户录入的资料（排除预设示例），只取与本章相关的条目。
         团队/资质/业绩类章节没有可用资料时返回"未录入"说明，提示模型按事实完备纪律处理、不得编造。
@@ -737,6 +742,11 @@ class EnterpriseAssetManager:
         返回 {type, kind, title, context_text, items, excluded}；kind 为资料类别（personnel / qualifications / cases / components）。
         """
         text = f"{section_title} {' '.join(requirements)}"
+        snapshot = self.snapshot() if snapshot is None else snapshot
+
+        def usable(kind):
+            return self._usable([ASSET_MODELS[kind](**item) for item in snapshot.get(kind, [])])
+
         matched = {
             "type": "none",
             "kind": "",
@@ -760,21 +770,21 @@ class EnterpriseAssetManager:
         # 1. 团队人员/组织架构章节
         if any(kw in text for kw in ["实施团队", "人员配置", "项目团队", "项目经理", "架构师", "技术人员",
                                      "人员资质", "人员要求", "团队成员", "项目负责人", "技术负责人"]):
-            return fill("personnel", "personnel", "企业资料：拟任团队人员", self._usable(self.list_personnel()),
+            return fill("personnel", "personnel", "企业资料：拟任团队人员", usable("personnel"),
                         "【拟任团队人员】企业尚未录入人员资料：人员姓名、证书、从业年限按事实完备纪律处理，不得编造。")
 
         # 2. 资质资信/合规准入章节
         if any(kw in text for kw in ["资质", "准入", "CMMI", "ISO", "高新", "涉密", "信用"]):
-            return fill("qualifications", "qualification", "企业资料：资质证书", self._usable(self.list_qualifications()),
+            return fill("qualifications", "qualification", "企业资料：资质证书", usable("qualifications"),
                         "【资质证书】企业尚未录入资质资料：不得声称持有任何具体资质或证书编号，按事实完备纪律处理。")
 
         # 3. 类似业绩/成功案例章节
         if any(kw in text for kw in ["业绩", "案例", "项目经历", "类似项目", "成功案例"]):
-            return fill("cases", "case", "企业资料：类似项目业绩", self._usable(self.list_cases()),
+            return fill("cases", "case", "企业资料：类似项目业绩", usable("cases"),
                         "【类似项目业绩】企业尚未录入业绩资料：不得编造项目名称、客户与合同金额，按事实完备纪律处理。")
 
         # 4. 技术方案组件匹配（按分类/标签）
-        for comp in self._usable(self.list_components()):
+        for comp in usable("components"):
             if comp.category in text or any(t in text for t in comp.tags):
                 matched.update(type="component", kind="components", title=f"企业资料：方案组件 {comp.name}",
                                items=[comp.model_dump()])

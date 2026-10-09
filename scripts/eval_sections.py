@@ -309,8 +309,7 @@ def setup_project(path: Path, facts=None):
         name = analysis.project_name or path.stem
         project = project_store.create(ProjectCreate(name=f"[效果评估] {name}", description=name,
                                                      facts=facts or GlobalFacts()))
-        project_store.set_tender_text(project.id, parsed.get("full_text", ""))
-        project_store.set_tender_structure(project.id, parsed)
+        project_store.set_tender_document(project.id, parsed.get("full_text", ""), parsed)
     outline = item_outline(analysis)
 
     def mutate(p):

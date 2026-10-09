@@ -21,7 +21,6 @@ from app.core.llm_client import llm_client
 from app.models.schemas import (
     CheckIssue, GlobalFacts, OutlineNode, PointCheck, Project, ScoringItem, SectionCheckReport, VerifyItem,
 )
-from app.services.assets.asset_manager import asset_manager
 from app.services.assets.material_check import MATERIAL_KINDS, asset_name
 from app.services.checker.quality_inspector import DE_AI_CLICHE_PATTERNS, INFORMAL_OR_WEAK_PHRASES
 from app.services.checker.scoring_coverage import is_mentioned
@@ -351,15 +350,15 @@ def _marked(text: str, start: int, end: int, spans: List[Tuple[int, int]]) -> bo
     return "【待核实" in text[end:limit]
 
 
-def _check_assets(text: str) -> Tuple[List[CheckIssue], List[VerifyItem]]:
+def _check_assets(text: str, assets: Dict) -> Tuple[List[CheckIssue], List[VerifyItem]]:
     compact, pos = _compact_index(text)
     verify_spans = [(m.start(), m.end()) for m in re.finditer(r"【待核实[^】]{0,80}】", text)]
     issues: List[CheckIssue] = []
     verify: List[VerifyItem] = []
-    usable_ids = {i for kind in MATERIAL_KINDS for item in getattr(asset_manager, kind)
+    usable_ids = {i for kind in MATERIAL_KINDS for item in assets.get(kind, [])
                   if item.get("status") != "example" for i in _identifiers(kind, item)}
     for kind in MATERIAL_KINDS:
-        for item in getattr(asset_manager, kind):
+        for item in assets.get(kind, []):
             status = item.get("status", "confirmed")
             if status not in ("example", "unverified"):
                 continue
@@ -494,7 +493,7 @@ def check_section(
     analysed = _mask(text, CODE_BLOCK)  # 架构图代码不参与数值与资料检查
     points, point_issues = _check_points(project, node, text)
     commitment_issues, commitment_verify = _check_commitments(_mask(analysed, PLACEHOLDER), project.facts)
-    asset_issues, asset_verify = _check_assets(analysed)
+    asset_issues, asset_verify = _check_assets(analysed, evidence.asset_snapshot())
     issues = point_issues + commitment_issues + asset_issues + _check_quality(text, node)
     verify = commitment_verify + asset_verify + _placeholders(text)
 

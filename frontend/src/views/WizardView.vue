@@ -50,6 +50,8 @@ const pasteMode = ref(false)
 const dragOver = ref(false)
 const pasteText = ref('')
 const analysis = ref(null)
+// 与当前拆标结果对应的粘贴原文；上传文件的原文已在服务端存档。
+const analysisText = ref('')
 
 // ---------- Step 1: 拆标确认 ----------
 const editableAnalysis = ref(null)
@@ -181,7 +183,9 @@ async function runPasteAnalysis() {
   }
   uploading.value = true
   try {
-    analysis.value = await api.analyzeTenderText(pasteText.value)
+    const text = pasteText.value
+    analysis.value = await api.analyzeTenderText(text)
+    analysisText.value = text
     editableAnalysis.value = { ...analysis.value }
     applyAnalysis()
   } catch (e) {
@@ -198,6 +202,7 @@ function onAnalyzeDone(task) {
     return
   }
   analyzeTaskDone.value = true
+  analysisText.value = ''
   analysis.value = task.result
   editableAnalysis.value = { ...task.result }
   if (task.result.extraction_mode === 'rules') {
@@ -221,7 +226,7 @@ function resetUpload() {
 
 function applyAnalysis() {
   const payload = { ...editableAnalysis.value }
-  api.applyTender(projectId, payload, pasteText.value).then((res) => {
+  api.applyTender(projectId, payload, analysisText.value).then((res) => {
     store.project.stage = res.stage
     suggestions.value = res.commitment_suggestions || []
     const tip = suggestions.value.length ? `；${suggestions.value.length} 条承诺建议请在「全局事实」步骤确认` : ''

@@ -5,6 +5,19 @@ function jsonResponse(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body }
 }
 
+it('流式请求建立前发生 409，向编辑器透传正文冲突详情', async () => {
+  const detail = { reason: 'content_changed', message: '正文已变化', current_content: '人工稿', current_revision: 2 }
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ detail }, 409)))
+  const onClose = vi.fn()
+  try {
+    const error = await new Promise((resolve) => api.streamSection('p1', {}, vi.fn(), resolve, onClose))
+    expect(error).toMatchObject({ message: '正文已变化', status: 409, detail })
+    expect(onClose).toHaveBeenCalledOnce()
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
 const running = (progress) => ({ id: 't1', status: 'running', progress, message: `进度 ${progress}` })
 
 describe('pollTask', () => {

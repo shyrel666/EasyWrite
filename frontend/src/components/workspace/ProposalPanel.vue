@@ -100,7 +100,7 @@ async function apply() {
   conflict.value = null
   try {
     const res = await api.applyProposal(props.projectId, props.sectionId, detail.value.id)
-    emit('applied', { content: res.content, status: res.node_status || 'completed' })
+    emit('applied', { content: res.content, status: res.node_status || 'completed', revision: res.revision ?? undefined })
     emit('changed')
     ElMessage.success(res.already_applied ? '该候选稿此前已采纳' : '已采纳候选稿，原正文已留存为历史版本')
     await load()

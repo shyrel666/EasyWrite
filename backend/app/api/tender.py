@@ -40,8 +40,7 @@ async def analyze_tender_document(file: UploadFile = File(...), project_id: Opti
             raise ValueError("招标文件解析后无有效文本（可能为扫描件或空文档）")
         if project_id:
             # 招标原文是后续偏离表抽取 / 合规核查的依据，上传即存档（与是否应用拆标结论无关）
-            project_store.set_tender_text(project_id, full_text)
-            project_store.set_tender_structure(project_id, parsed)
+            project_store.set_tender_document(project_id, full_text, parsed)
         ctx.report(30, f"正文 {len(full_text)} 字、表格 {len(parsed.get('tables', []))} 张，开始结构化抽取")
         analysis = tender_analyzer.analyze_document(parsed, filename_hint=file.filename)
         analysis.source_note = describe_source(parsed)
@@ -76,10 +75,11 @@ def apply_tender_analysis(project_id: str, analysis: TenderAnalysis18, tender_te
             project.stage = "tender_analyzed"
         return project
 
-    project = project_store.update(project_id, mutate)
+    def also(session, _project):
+        if tender_text and tender_text.strip():
+            project_store.set_tender_document_in(session, project_id, tender_text)
 
-    if tender_text and tender_text.strip():
-        project_store.set_tender_text(project_id, tender_text)
+    project = project_store.update(project_id, mutate, also=also)
 
     return {
         "status": "success",
@@ -120,8 +120,10 @@ def get_tender_outline(project_id: str, section_id: Optional[str] = None):
     project = project_store.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
-    structure = project_store.get_tender_structure(project_id)
-    result = {"has_structure": bool(structure and structure.get("sections")),
+    document = project_store.get_tender_document(project_id)
+    structure = document["structure"]
+    # source：text 粘贴文本（无章节树）/ docx / pdf；旧项目为空
+    result = {"has_structure": bool(structure and structure.get("sections")), "source": document["source"],
               "sections": tender_reader.outline_tree(structure), "keywords": [], "related": []}
     node = find_node(project.outline, section_id) if section_id else None
     if node:

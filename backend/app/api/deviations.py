@@ -25,8 +25,9 @@ def _get_project(project_id: str):
 @router.post("/project/{project_id}/deviation/extract", summary="从招标文件正文确定性提取技术指标构建偏离表")
 def extract_project_deviations(project_id: str, tender_content: Optional[str] = Body(default=None, embed=True)):
     project = _get_project(project_id)
-    tender_text = project_store.get_tender_text(project_id)
-    structure = None if tender_content else project_store.get_tender_structure(project_id)
+    document = project_store.get_tender_document(project_id)
+    tender_text = document["text"]
+    structure = None if tender_content else document["structure"]
 
     # 优先按章节树只抽技术/服务需求篇；无章节树（粘贴文本/旧项目）或未定位到需求篇时退回全文扫描
     extracted, scope = [], None
@@ -97,6 +98,7 @@ def generate_project_deviations(project_id: str):
                 if src and item.response_status == "待生成":
                     item.response_status = src.response_status
                     item.response_detail = src.response_detail
+                    item.response_source = src.response_source
             return latest.deviation_matrix
 
         items = project_store.update(project_id, merge)

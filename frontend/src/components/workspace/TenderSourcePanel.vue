@@ -13,6 +13,7 @@ const PAGE = 20000
 const loading = ref(false)
 const error = ref('')
 const hasStructure = ref(true)
+const source = ref('') // text 粘贴文本 / docx / pdf；旧项目为空
 const sections = ref([])
 const keywords = ref([])
 const related = ref([])
@@ -27,6 +28,7 @@ async function load() {
   try {
     const res = await api.tenderOutline(props.projectId, props.node?.id)
     hasStructure.value = res.has_structure
+    source.value = res.source || ''
     sections.value = res.sections
     keywords.value = res.keywords
     related.value = res.related
@@ -137,8 +139,14 @@ const hitCount = computed(() => lines.value.reduce((n, l) => n + l.parts.filter(
       <div v-if="loading" class="py-10 text-center text-ink-3">加载招标文件章节…</div>
       <div v-else-if="!hasStructure" class="text-ink-3 py-12 px-4 text-center leading-relaxed">
         <el-icon :size="22" class="text-line-strong mb-2"><Document /></el-icon>
-        <p>本项目没有存档的招标文件章节。</p>
-        <p class="mt-1">在项目向导中上传招标文件（.docx / .pdf）后，可在此按章节阅读原文。</p>
+        <template v-if="source === 'text'">
+          <p>当前招标原文来自粘贴文本，没有章节结构。</p>
+          <p class="mt-1">如需按章节阅读原文，请在项目向导中重新上传招标文件（.docx / .pdf）。</p>
+        </template>
+        <template v-else>
+          <p>本项目没有存档的招标文件章节。</p>
+          <p class="mt-1">在项目向导中上传招标文件（.docx / .pdf）后，可在此按章节阅读原文。</p>
+        </template>
       </div>
       <template v-else>
         <section v-if="keywords.length" class="mb-3">

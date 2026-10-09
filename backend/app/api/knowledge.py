@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 
 from app.core.task_manager import task_manager
 from app.models.schemas import KnowledgeQueryRequest
-from app.services.rag.indexer import knowledge_index
+from app.services.rag.indexer import embedding_version, knowledge_index
 from app.services.rag.retriever import retrieval_service
 from app.services.rag import curator
 from app.services.rag.ingestor import ingest_document_task
@@ -35,27 +35,27 @@ def list_documents():
     return {"documents": knowledge_index.list_documents()}
 
 
-@router.delete("/documents/{doc_id}", summary="删除文档及其全部索引块")
+@router.delete("/documents/{doc_id}", summary="删除文档及其全部索引块和知识条目")
 def delete_document(doc_id: str):
     if not knowledge_index.delete_document(doc_id):
         raise HTTPException(status_code=404, detail="文档不存在")
     return {"status": "success", "deleted_id": doc_id}
 
 
-@router.post("/documents/{doc_id}/reindex", summary="嵌入模型变更后重建该文档向量（后台任务）")
-def reindex_document(doc_id: str):
-    docs = [d for d in knowledge_index.list_documents() if d["id"] == doc_id]
-    if not docs:
-        raise HTTPException(status_code=404, detail="文档不存在")
+@router.post("/reindex", summary="嵌入模型变更后补齐/重建知识库向量（后台任务；已在运行时返回该任务）")
+def reindex_embeddings():
+    if not embedding_version():
+        raise HTTPException(status_code=400, detail="未配置嵌入模型，无法重建向量")
+    running = task_manager.list(limit=1, task_type="kb_reindex", active_only=True)
+    if running:
+        return {"task_id": running[0]["id"], "already_running": True}
 
     def _run(ctx):
-        from app.services.rag.indexer import embedding_version
-        # 重建以当前嵌入模型为目标的全部陈旧向量（简单起见全量重建）
         done = knowledge_index.reindex_embeddings(progress=ctx)
         return {"reembedded": done, "embedding_version": embedding_version()}
 
-    task_id = task_manager.submit("kb_reindex", _run, description=f"向量重建：{docs[0]['doc_name']}")
-    return {"task_id": task_id}
+    task_id = task_manager.submit("kb_reindex", _run, description="知识库向量重建")
+    return {"task_id": task_id, "already_running": False}
 
 
 @router.post("/documents/{doc_id}/curate", summary="对文档执行 LLM 知识条目策展（后台任务）")

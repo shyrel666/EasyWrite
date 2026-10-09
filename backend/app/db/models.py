@@ -32,6 +32,7 @@ class ProjectModel(SQLModel, table=True):
     tender_analysis_json: Optional[str] = None
     tender_text: str = Field(default="", description="招标文件解析正文（偏离表抽取与上下文引用）")
     tender_structure_json: str = Field(default="", description="招标文件章节树（偏离表按技术需求章节抽取）")
+    tender_source: str = Field(default="", description="招标原文来源：text/docx/pdf，与正文和章节树一起更新")
     outline_json: str = "[]"
     deviation_json: str = "[]"
     # 评分项与企业资料的关联：{评分项ID: ["kind:资料ID", …]}（用户确认后保存）
@@ -54,7 +55,7 @@ class KBDocument(SQLModel, table=True):
     status: str = "ingesting"
     chunk_count: int = 0
     item_count: int = 0
-    # 嵌入模型版本指纹（provider:model），变更后需要重建向量
+    # 嵌入模型版本指纹（provider:model:endpoint_hash），变更后需要重建向量
     embedding_version: str = ""
     error_msg: str = ""
     scope: str = "local"

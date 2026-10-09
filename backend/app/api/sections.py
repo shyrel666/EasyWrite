@@ -22,7 +22,7 @@ from app.services.checker.section_check import check_section, revision_issues
 from app.services.proposals import proposal_store, propose
 from app.services.refine import runner as refine_runner
 from app.services.refine.policy import DEFAULT_MAX_ROUNDS, MAX_ROUNDS_LIMIT, decide
-from app.services.section_content import save_section_content as _save_section_content
+from app.services.section_content import check_section_revision, save_section_content as _save_section_content
 from app.services.version_store import version_store
 
 logger = logging.getLogger("easywrite.api.sections")
@@ -40,12 +40,40 @@ def _request_inputs(project, req: GenerateSectionRequest) -> Tuple[OutlineNode, 
     node = find_node(project.outline, req.section_id)
     if not node:
         raise HTTPException(status_code=404, detail="未找到对应章节")
+    check_section_revision(node, req.base_revision)
     evidence_kw, prompt_kw = _inputs(
         project, node,
         section_title=req.section_title, section_path=req.section_path, requirements=req.requirements,
         custom_instruction=req.custom_instruction, pinned_refs=req.pinned_refs, excluded_refs=req.excluded_refs,
     )
     return node, evidence_kw, prompt_kw
+
+
+def _save_with_revision(*args, **kwargs):
+    info = {}
+    status = _save_section_content(*args, **kwargs, also=lambda _session, saved: info.update(saved))
+    return status, info["revision"]
+
+
+def _save_ai_result(project, node, content, evidence, source, refs=None):
+    """比较任务开始时的修订号与状态；冲突时保留 AI 结果供查看，不自动覆盖人工稿。"""
+    try:
+        return _save_with_revision(
+            project.id, node.id, content, "completed", last_refs=refs, version_source=source,
+            expected_revision=node.revision, expected_status=node.status,
+        )
+    except HTTPException as exc:
+        if exc.status_code != 409:
+            raise
+        # 冲突稿基于旧正文，通常已不能直接采纳：不取代本节其他仍可采纳的候选稿（如智能完善的结果）
+        try:
+            proposal = propose(project, node, content, evidence, origin=source, supersede=False)
+        except Exception:
+            logger.exception("写回冲突后留存 AI 候选稿失败：%s/%s", project.id, node.id)
+            raise exc from None
+        exc.detail = {**exc.detail, "proposal_id": proposal["id"],
+                      "message": exc.detail["message"] + "；AI 结果已保存为候选稿"}
+        raise
 
 
 @router.post("/project/{project_id}/section/generate/stream", summary="章节流式草拟 (SSE：先推送引用元数据再逐 token 输出)")
@@ -81,10 +109,12 @@ async def generate_section_content_stream(project_id: str, req: GenerateSectionR
         if complete_text.strip():
             try:
                 # 按 project_id 重新读取最新项目写回：流式期间其他章节的编辑不会被旧快照覆盖
-                status = _save_section_content(project_id, req.section_id, complete_text, "completed",
-                                               last_refs=refs, version_source="ai_generate")
+                status, revision = _save_ai_result(project, node, complete_text, evidence, "ai_generate", refs)
                 # content 为最终落库正文（去掉了重复的章节标题行），前端以此为准
-                yield f"data: {json.dumps({'done': True, 'section_id': req.section_id, 'status': status, 'mode': llm_client.get_mode(), 'content': complete_text}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'done': True, 'section_id': req.section_id, 'status': status, 'revision': revision, 'mode': llm_client.get_mode(), 'content': complete_text}, ensure_ascii=False)}\n\n"
+            except HTTPException as e:
+                detail = e.detail if isinstance(e.detail, dict) else {"message": str(e.detail)}
+                yield f"data: {json.dumps({**detail, 'done': False, 'status_code': e.status_code, 'error': detail['message']}, ensure_ascii=False)}\n\n"
             except Exception as e:
                 yield f"data: {json.dumps({'error': f'内容生成完成但保存失败: {e}'}, ensure_ascii=False)}\n\n"
         else:
@@ -99,8 +129,8 @@ def generate_section_content(project_id: str, req: GenerateSectionRequest):
     node, evidence_kw, prompt_kw = _request_inputs(project, req)
     evidence = select_evidence(project, node, **evidence_kw)
     result = section_generator.draft_section(evidence=evidence, **prompt_kw)
-    _save_section_content(project_id, req.section_id, result["generated_content"], "completed",
-                          last_refs=result["references"], version_source="ai_generate")
+    _, revision = _save_ai_result(project, node, result["generated_content"], evidence,
+                                  "ai_generate", result["references"])
 
     return GenerateSectionResponse(
         section_id=req.section_id,
@@ -109,6 +139,7 @@ def generate_section_content(project_id: str, req: GenerateSectionRequest):
         retrieval_message=result.get("retrieval_message", ""),
         mode=result.get("mode", "llm"),
         tokens_used=len(result["generated_content"]),
+        revision=revision,
     )
 
 
@@ -212,20 +243,23 @@ def update_section_content(project_id: str, req: UpdateSectionRequest):
         status = req.status
     else:
         status = "completed" if req.content.strip() else "pending"
-    _save_section_content(project_id, req.section_id, req.content, status)
-    return {"status": "success", "section_id": req.section_id, "node_status": status}
+    _, revision = _save_with_revision(project_id, req.section_id, req.content, status)
+    return {"status": "success", "section_id": req.section_id, "node_status": status, "revision": revision}
 
 
 @router.post("/project/{project_id}/section/polish", response_model=PolishSectionResponse, summary="单章节深度降AI味与公文严肃化润色")
 def polish_section(project_id: str, req: PolishSectionRequest):
     project = _get_project(project_id)
-    if not find_node(project.outline, req.section_id):
+    node = find_node(project.outline, req.section_id)
+    if not node:
         raise HTTPException(status_code=404, detail="未找到对应章节")
+    check_section_revision(node, req.base_revision)
     if not req.content.strip():
         raise HTTPException(status_code=400, detail="章节尚无内容，请先撰写后再润色")
+    evidence = select_evidence(project, node, retrieve=False)
     resp = quality_inspector.polish_section(req, project.facts)
     # 润色是 AI 改写，不等于人工校审：状态为 completed，"已校审"只能由用户标记
-    _save_section_content(project_id, req.section_id, resp.polished_content, "completed", version_source="polish")
+    _, resp.revision = _save_ai_result(project, node, resp.polished_content, evidence, "polish")
     return resp
 
 
@@ -362,5 +396,5 @@ def restore_section_version(project_id: str, section_id: str, version_id: int):
     version = version_store.get(project_id, section_id, version_id)
     if not version:
         raise HTTPException(status_code=404, detail="历史版本不存在")
-    status = _save_section_content(project_id, section_id, version.content, "completed", version_source="restore")
-    return {"status": "success", "section_id": section_id, "node_status": status, "content": version.content}
+    status, revision = _save_with_revision(project_id, section_id, version.content, "completed", version_source="restore")
+    return {"status": "success", "section_id": section_id, "node_status": status, "content": version.content, "revision": revision}

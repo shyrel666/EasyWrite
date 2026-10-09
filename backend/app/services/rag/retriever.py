@@ -164,6 +164,9 @@ class RetrievalService:
             message = "知识库中无高置信匹配参考，本次生成将不注入历史资料（错误参考不如不引用）"
         elif not reranked:
             message = "未启用 LLM 重排（未配置模型），当前为 BM25/混合召回排序"
+        warning = knowledge_index.dense_status()["embedding_warning"]
+        if warning:
+            message = f"{message}；{warning}" if message else warning
 
         return {
             "refs": [r.to_dict() for r in refs],

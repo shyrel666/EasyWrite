@@ -1,4 +1,5 @@
 """阶段 C3/C4：候选稿表、输入清单、采纳与放弃（正文或依据变化时 409；重复采纳只写一次；异常整体回滚）"""
+import json
 import time
 
 import pytest
@@ -7,7 +8,7 @@ from app.core.llm_client import llm_client
 from app.db.database import get_session
 from app.db.models import SectionProposal
 from app.services import proposals as prop_module
-from app.services.generator.evidence_set import EvidenceSet
+from app.services.generator.evidence_set import EvidenceSet, select_evidence
 from app.services.generator.section_generator import section_generator
 from app.services.project_store import find_node, project_store
 from app.services.proposals import proposal_store, propose
@@ -54,7 +55,7 @@ def test_propose_records_check_manifest_and_supersedes_older(client, pid):
     first = _propose(pid)
     assert first["status"] == "checked" and first["base_revision"] == 1
     assert first["report"]["section_id"] == "sec_1_1" and first["blocking_count"] == 0
-    assert set(first["input_manifest"]) == {"facts", "scoring_items", "evidence_links", "ref_settings", "section",
+    assert set(first["input_manifest"]) == {"facts", "scoring_items", "evidence_links", "ref_settings", "section", "requirements",
                                             "asset:personnel:p_li"}
     assert [e["ref_type"] for e in first["evidence"]] == ["kb", "asset"]
 
@@ -74,6 +75,7 @@ def test_apply_writes_once_with_version_and_is_idempotent(client, pid):
     prop = _propose(pid)
     res = client.post(_url(pid, prop, "apply"))
     assert res.status_code == 200 and res.json()["already_applied"] is False
+    assert res.json()["revision"] == 2
     node = _node(pid)
     assert (node.content, node.revision, node.content_source, node.status) == ("候选稿正文", 2, "proposal", "completed")
     assert [r["ref_type"] for r in node.last_refs] == ["kb", "asset"]
@@ -122,6 +124,50 @@ def test_apply_rejected_when_basis_changed(client, pid):
     assert client.post(_url(pid, prop, "apply")).status_code == 200
 
 
+@pytest.mark.parametrize("during_generation", [False, True])
+def test_requirements_only_change_invalidates_proposal_without_content_revision(client, pid, during_generation):
+    def set_requirements(text):
+        outline = client.get(f"/api/v1/project/{pid}").json()["outline"]
+        outline[0]["children"][0]["requirements"] = [text]
+        assert client.put(f"/api/v1/project/{pid}/outline", json={"outline": outline}).status_code == 200
+
+    set_requirements("须覆盖：项目经理职责")
+    project = project_store.get(pid)
+    node = find_node(project.outline, "sec_1_1")
+    evidence = EvidenceSet()
+    if during_generation:
+        set_requirements("须覆盖：灾备切换演练")
+    prop = propose(project, node, "项目经理职责包括组织人员、协调进度与质量检查。", evidence, origin="batch")
+    assert prop["blocking_count"] == 0
+    if not during_generation:
+        set_requirements("须覆盖：灾备切换演练")
+    current = project_store.get(pid)
+    latest = find_node(current.outline, node.id)
+    assert latest.revision == node.revision
+    assert prop_module.check_section(current, latest, prop["content"], evidence).blocking_count > 0
+    state = client.get(_url(pid, prop)).json()["state"]
+    assert state["content_changed"] is False
+    assert state["basis_changes"] == [{"key": "requirements", "label": "本节要求"}]
+    res = client.post(_url(pid, prop, "apply"))
+    assert res.status_code == 409 and res.json()["detail"]["reason"] == "basis_changed"
+    assert res.json()["detail"]["changes"] == state["basis_changes"]
+    assert _node(pid).content == "人工初稿" and _versions(client, pid) == []
+
+
+def test_legacy_proposal_without_requirements_fingerprint_cannot_bypass_check(client, pid):
+    prop = _propose(pid)
+    with get_session() as session:
+        row = session.get(SectionProposal, prop["id"])
+        manifest = json.loads(row.input_manifest_json)
+        manifest.pop("requirements")
+        row.input_manifest_json = json.dumps(manifest, ensure_ascii=False)
+        session.add(row)
+    res = client.post(_url(pid, prop, "apply"))
+    assert res.status_code == 409
+    assert res.json()["detail"]["changes"] == [{"key": "requirements", "label": "本节要求"}]
+    assert _node(pid).content == "人工初稿"
+
+
 def test_section_settings_and_deleted_asset_change_basis(client, pid):
     prop = _propose(pid)
     client.put(f"/api/v1/project/{pid}/section/refs",
@@ -129,6 +175,35 @@ def test_section_settings_and_deleted_asset_change_basis(client, pid):
     client.delete("/api/v1/assets/personnel/p_li")
     labels = [c["label"] for c in client.get(_url(pid, prop)).json()["state"]["basis_changes"]]
     assert labels == ["知识库引用的锁定与排除", "企业资料（已删除）：p_li"]
+
+
+@pytest.mark.parametrize("linked", [False, True])
+@pytest.mark.parametrize("change", ["edit", "delete"])
+def test_asset_changes_during_generation_use_original_prompt_snapshot(client, pid, linked, change):
+    def setup(project):
+        node = find_node(project.outline, "sec_1_1")
+        node.title = "项目经理"
+        if linked:
+            node.scoring_item_ids = ["team"]
+            project.evidence_links = {"team": ["personnel:p_li"]}
+
+    project_store.update(pid, setup)
+    project = project_store.get(pid)
+    node = find_node(project.outline, "sec_1_1")
+    evidence = select_evidence(project, node, retrieve=False)
+    assert "李工" in evidence.asset_context and "王工" not in evidence.asset_context
+    if change == "edit":
+        client.post("/api/v1/assets/personnel", json={"id": "p_li", "name": "王工", "role": "项目经理", "status": "confirmed"})
+    else:
+        client.delete("/api/v1/assets/personnel/p_li")
+    candidate = propose(project, node, "项目经理由李工担任。", evidence, origin="batch")
+    assert any(issue["code"] == "unmarked_unverified" for issue in candidate["report"]["issues"])
+    changes = client.get(_url(pid, candidate)).json()["state"]["basis_changes"]
+    assert [c["key"] for c in changes] == ["asset:personnel:p_li"]
+    assert changes[0]["label"] == ("企业资料：王工" if change == "edit" else "企业资料（已删除）：p_li")
+    res = client.post(_url(pid, candidate, "apply"))
+    assert res.status_code == 409 and res.json()["detail"]["reason"] == "basis_changed"
+    assert _node(pid).content == "人工初稿"
 
 
 def test_failure_before_commit_rolls_back_content_version_and_status(client, pid, monkeypatch):

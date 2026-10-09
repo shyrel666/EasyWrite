@@ -24,8 +24,7 @@ def _tender(tmp_path):
 
 def _setup(client, pid, tmp_path):
     parsed = _tender(tmp_path)
-    project_store.set_tender_structure(pid, parsed)
-    project_store.set_tender_text(pid, parsed["full_text"])
+    project_store.set_tender_document(pid, parsed["full_text"], parsed)
     outline = [{"id": "sec_1", "title": "第一章 技术服务方案", "level": 1, "children": [
         {"id": "sec_1_1", "title": "1.1 应急预案", "level": 2,
          "requirements": ["评分要点：应急预案", "所属评分项：技术服务方案（30分）"]}]}]
@@ -89,5 +88,5 @@ def test_tender_text_reports_truncation(client, project_id, tmp_path):
 
 def test_no_structure_for_old_projects(client, project_id):
     res = client.get(f"/api/v1/project/{project_id}/tender/outline").json()
-    assert res == {"has_structure": False, "sections": [], "keywords": [], "related": []}
+    assert res == {"has_structure": False, "source": "", "sections": [], "keywords": [], "related": []}
     assert client.get(f"/api/v1/project/{project_id}/tender/section", params={"path": "sec_1"}).status_code == 404

@@ -144,30 +144,39 @@ class ProjectStore:
             row = session.get(ProjectModel, project_id)
             return row.tender_text if row else ""
 
-    def set_tender_text(self, project_id: str, text: str):
-        with _write_lock, get_session() as session:
-            row = session.get(ProjectModel, project_id)
-            if row:
-                row.tender_text = (text or "")[:TENDER_TEXT_LIMIT]
-                row.updated_at = now_str()
-                session.add(row)
-
-    def set_tender_structure(self, project_id: str, parsed: dict):
-        """存档招标文件章节树（不含 full_text，避免与 tender_text 重复）"""
-        payload = {"heading_mode": parsed.get("heading_mode", ""), "sections": parsed.get("sections", [])}
-        with _write_lock, get_session() as session:
-            row = session.get(ProjectModel, project_id)
-            if row:
-                row.tender_structure_json = json.dumps(payload, ensure_ascii=False)
-                row.updated_at = now_str()
-                session.add(row)
-
-    def get_tender_structure(self, project_id: str) -> Optional[dict]:
+    def get_tender_document(self, project_id: str) -> dict:
+        """一次读取同一份招标正文、章节树与来源，避免更新期间混合两份文件。"""
         with get_session() as session:
             row = session.get(ProjectModel, project_id)
-            if not row or not row.tender_structure_json:
-                return None
-            return json.loads(row.tender_structure_json)
+            if not row:
+                return {"text": "", "structure": None, "source": ""}
+            return {"text": row.tender_text,
+                    "structure": json.loads(row.tender_structure_json) if row.tender_structure_json else None,
+                    "source": row.tender_source}
+
+    def set_tender_document(self, project_id: str, text: str, parsed: Optional[dict] = None):
+        """上传文件携带 parsed；纯文本（parsed 为 None）同时清除此前上传文件的章节树。所有来源字段在一个事务内更新。"""
+        with _write_lock, get_session() as session:
+            self.set_tender_document_in(session, project_id, text, parsed)
+
+    @staticmethod
+    def set_tender_document_in(session: Session, project_id: str, text: str, parsed: Optional[dict] = None):
+        """供 update 的 also 钩子使用：应用拆标结论与替换原文也必须同事务提交。"""
+        row = session.get(ProjectModel, project_id)
+        if row is None:
+            raise ProjectNotFound(project_id)
+        row.tender_text = (text or "")[:TENDER_TEXT_LIMIT]
+        if parsed is None:
+            row.tender_structure_json, row.tender_source = "", "text"
+        else:
+            payload = {"heading_mode": parsed.get("heading_mode", ""), "sections": parsed.get("sections", [])}
+            row.tender_structure_json = json.dumps(payload, ensure_ascii=False)
+            row.tender_source = parsed.get("source_format") or "document"
+        row.updated_at = now_str()
+        session.add(row)
+
+    def get_tender_structure(self, project_id: str) -> Optional[dict]:
+        return self.get_tender_document(project_id)["structure"]
 
     def list(self) -> List[ProjectListItem]:
         with get_session() as session:

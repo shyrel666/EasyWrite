@@ -105,12 +105,15 @@ def generation_filter(project: Project):
     return blocking_filter(project.facts, deadline)
 
 
-def resolve_links(keys: List[str]) -> Tuple[List[Tuple[str, Dict[str, Any]]], List[str]]:
+def resolve_links(keys: List[str], snapshot=None) -> Tuple[List[Tuple[str, Dict[str, Any]]], List[str]]:
     """关联键 → (资料列表, 已不存在的键)"""
     found, missing = [], []
     for key in keys:
         kind, asset_id = parse_key(key)
-        asset = asset_manager.get_asset(kind, asset_id) if kind in MATERIAL_KINDS else None
+        if snapshot is None:
+            asset = asset_manager.get_asset(kind, asset_id) if kind in MATERIAL_KINDS else None
+        else:
+            asset = next((a for a in snapshot.get(kind, []) if a.get("id") == asset_id), None)
         if asset is None:
             missing.append(key)
         else:

@@ -62,7 +62,10 @@ function streamSSE(path, body, onEvent, onError, onClose) {
       if (!res.ok || !res.body) {
         let detail = `HTTP ${res.status}`
         try { detail = (await res.json()).detail || detail } catch { /* */ }
-        throw new Error(detail)
+        const error = new Error(typeof detail === 'object' ? detail.message || JSON.stringify(detail) : detail)
+        error.status = res.status
+        error.detail = detail
+        throw error
       }
       const reader = res.body.getReader()
       const decoder = new TextDecoder('utf-8')
@@ -277,7 +280,8 @@ export const api = {
   kbUpload: (file, curate) => uploadFile('/knowledge/upload', file, { curate }),
   kbDocuments: () => request('/knowledge/documents'),
   kbDelete: (docId) => request(`/knowledge/documents/${docId}`, { method: 'DELETE' }),
-  kbReindex: (docId) => request(`/knowledge/documents/${docId}/reindex`, { method: 'POST' }),
+  // 补齐/重建知识库中与当前嵌入模型不兼容的向量；已有重建任务在跑时返回该任务
+  kbReindex: () => request('/knowledge/reindex', { method: 'POST' }),
   kbCurate: (docId) => request(`/knowledge/documents/${docId}/curate`, { method: 'POST' }),
   kbStats: () => request('/knowledge/stats'),
   kbSearch: (payload) => request('/knowledge/search', { method: 'POST', body: payload }),

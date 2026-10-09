@@ -32,6 +32,12 @@ class EvidenceSet:
     excluded_assets: List[Dict[str, Any]] = field(default_factory=list)
     # 相关招标原文：[{item_id, title, text}]（本节承接的评分项的评分标准原文）
     tender_snippets: List[Dict[str, str]] = field(default_factory=list)
+    # 选材时的企业资料库副本（select_evidence 填入，只读）：提示词、检查与候选稿指纹都沿用它，不受之后的资料修改影响
+    library_snapshot: Optional[Dict[str, List[Dict[str, Any]]]] = None
+
+    def asset_snapshot(self) -> Dict[str, List[Dict[str, Any]]]:
+        """选材时的资料库；直接构造、未经选材的 EvidenceSet 按当前资料库"""
+        return self.library_snapshot if self.library_snapshot is not None else asset_manager.snapshot()
 
     def reference_prompt(self) -> str:
         return retrieval_service.build_reference_prompt(self.refs)
@@ -117,16 +123,17 @@ def select_evidence(
         excluded_ids=node.excluded_refs if excluded_refs is None else excluded_refs,
     ) if retrieve else {"refs": [], "message": "未检索知识库"}
 
+    snapshot = asset_manager.snapshot()
     exclude = generation_filter(project)
     keys = list(dict.fromkeys(k for sid in node.scoring_item_ids for k in project.evidence_links.get(sid, [])))
-    found, _missing = resolve_links(keys)
+    found, _missing = resolve_links(keys, snapshot=snapshot)
     if found:
         # 用户为本节评分项关联了资料：只用这些资料；全部被排除时不改用其他资料，只说明已排除
         asset_context, models, dropped = asset_manager.linked_context(found, exclude)
         assets = [_asset_record(kind, m.model_dump(), "linked") for kind, m in models]
         source = "linked"
     else:
-        matched = asset_manager.match_assets_for_section(title, reqs, exclude=exclude)
+        matched = asset_manager.match_assets_for_section(title, reqs, exclude=exclude, snapshot=snapshot)
         asset_context, dropped = matched.get("context_text", ""), matched.get("excluded", [])
         assets = [_asset_record(matched["kind"], item, "matched") for item in matched.get("items", [])]
         source = "matched"
@@ -139,4 +146,5 @@ def select_evidence(
         asset_context=asset_context,
         excluded_assets=excluded,
         tender_snippets=_tender_snippets(project, node),
+        library_snapshot=snapshot,
     )

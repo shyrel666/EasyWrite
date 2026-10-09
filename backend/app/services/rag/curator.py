@@ -17,7 +17,7 @@ from sqlmodel import select, delete as sql_delete
 
 from app.core.llm_client import llm_client
 from app.db.database import get_session
-from app.db.models import KBItem
+from app.db.models import KBItem, KBDocument
 from app.services.rag.indexer import knowledge_index
 
 logger = logging.getLogger("easywrite.rag.curator")
@@ -47,10 +47,7 @@ def curate_document(doc_id: str, progress=None) -> int:
     对指定文档执行 LLM 条目策展（后台任务入口）。
     返回写入的条目数；LLM 不可用返回 0。
     """
-    chunks = sorted(
-        [c for c in knowledge_index._chunks.values() if c["doc_id"] == doc_id],
-        key=lambda c: c["seq"],
-    )
+    chunks = knowledge_index.get_document_chunks(doc_id)
     if not chunks:
         return 0
     if not llm_client.is_configured:
@@ -96,7 +93,11 @@ def curate_document(doc_id: str, progress=None) -> int:
     progress and progress.report(80, f"写入 {len(seen)} 条知识条目")
 
     valid_ids = {c["id"] for c in chunks}
-    with get_session() as session:
+    # 模型调用不持锁。写回前确认文档仍存在，防止删除期间的策展重新制造孤立条目。
+    with knowledge_index.write_lock(), get_session() as session:
+        doc = session.get(KBDocument, doc_id)
+        if doc is None:
+            return 0
         session.exec(sql_delete(KBItem).where(KBItem.doc_id == doc_id))  # type: ignore[arg-type]
         count = 0
         for idx, item in enumerate(seen.values()):
@@ -117,14 +118,9 @@ def curate_document(doc_id: str, progress=None) -> int:
             ))
             count += 1
 
-    # 更新文档条目计数
-    from app.db.models import KBDocument
-    with get_session() as session:
-        doc = session.get(KBDocument, doc_id)
-        if doc:
-            doc.item_count = count
-            doc.updated_at = _now()
-            session.add(doc)
+        doc.item_count = count
+        doc.updated_at = _now()
+        session.add(doc)
 
     progress and progress.report(100, f"策展完成：{count} 条")
     return count
@@ -133,7 +129,7 @@ def curate_document(doc_id: str, progress=None) -> int:
 def list_items(doc_id: str = None) -> List[dict]:
     """列出知识条目（供大纲路由与知识库浏览）"""
     with get_session() as session:
-        stmt = select(KBItem)
+        stmt = select(KBItem).join(KBDocument, KBItem.doc_id == KBDocument.id)
         if doc_id:
             stmt = stmt.where(KBItem.doc_id == doc_id)
         rows = session.exec(stmt).all()
@@ -165,7 +161,8 @@ def get_item_contents(item_ids: List[str]) -> List[dict]:
     with get_session() as session:
         result = []
         for iid in item_ids:
-            item = session.get(KBItem, iid)
+            item = session.exec(select(KBItem).join(KBDocument, KBItem.doc_id == KBDocument.id)
+                                .where(KBItem.id == iid)).first()
             if not item:
                 continue
             chunks = knowledge_index.get_chunks(json.loads(item.chunk_ids_json or "[]"))

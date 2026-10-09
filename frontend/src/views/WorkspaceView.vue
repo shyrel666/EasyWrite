@@ -92,7 +92,7 @@ const batchOpen = ref(false)
 const batchIncludeWritten = ref(false)
 const batchTaskId = ref('')
 const batchStarting = ref(false)
-const editorKey = ref(0)
+const editorRef = ref(null)
 
 function collectLeaves(nodes, out = []) {
   for (const n of nodes || []) {
@@ -112,6 +112,7 @@ const batchCount = computed(() => batchCandidates.value.empty + (batchIncludeWri
 async function startBatch() {
   batchStarting.value = true
   try {
+    if (await editorRef.value?.flushSave() === false) return
     const res = await api.generateBatch(projectId, batchIncludeWritten.value)
     batchTaskId.value = res.task_id
   } catch (e) {
@@ -123,9 +124,9 @@ async function startBatch() {
 
 async function onBatchDone(task) {
   batchTaskId.value = ''
+  await editorRef.value?.flushSave()
   await store.load(projectId, true)
   await store.loadProposalCounts()
-  editorKey.value += 1 // 重新挂载编辑器，载入新正文
   const r = task.result || {}
   if (task.status === 'completed') {
     const failed = r.failed?.length ? `，失败 ${r.failed.length} 节（${r.failed.map((f) => f.title).slice(0, 3).join('、')}）` : ''
@@ -201,7 +202,8 @@ const progress = computed(() => {
       <!-- ===== 中栏：编辑器 ===== -->
       <section class="flex-1 min-w-0 flex flex-col">
         <SectionEditor
-          :key="`${selectedId}-${editorKey}`"
+          ref="editorRef"
+          :key="selectedId"
           :node="selectedNode"
           :project-id="projectId"
           @refs-updated="onRefsUpdated"

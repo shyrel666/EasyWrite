@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Iterator
 
 from sqlalchemy import inspect, text
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import SQLModel, Session, create_engine, select, delete as sql_delete
 
 from app.core.config import settings
 
@@ -47,6 +47,19 @@ def init_db() -> None:
 
     SQLModel.metadata.create_all(engine)
     _add_missing_columns()
+    cleanup_orphan_kb_items()
+
+
+def cleanup_orphan_kb_items() -> int:
+    """启动时清理旧版删除文档后遗留的条目；不依赖 SQLite 外键开关，重复执行安全。"""
+    from app.db.models import KBItem, KBDocument
+
+    with get_session() as session:
+        result = session.exec(sql_delete(KBItem).where(~KBItem.doc_id.in_(select(KBDocument.id))))
+        count = result.rowcount
+    if count:
+        logger.info("数据库清理：删除 %d 条失去来源文档的知识条目", count)
+    return count
 
 
 def _add_missing_columns() -> None:

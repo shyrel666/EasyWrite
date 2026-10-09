@@ -5,6 +5,8 @@
 - 批量响应：每次调用多条，漏答条目逐条重试，模型拟稿标记 ai；离线不编造
 """
 
+import time
+
 from app.core.llm_client import llm_client
 from app.models.schemas import DeviationItem, GlobalFacts
 from app.services.parser import deviation_engine as de_module
@@ -74,8 +76,7 @@ def test_structure_without_requirement_part_returns_empty():
 
 def test_api_extract_uses_structure(client, project_id, monkeypatch):
     from app.services.project_store import project_store
-    project_store.set_tender_structure(project_id, {"sections": SECTIONS})
-    project_store.set_tender_text(project_id, LEGEND)
+    project_store.set_tender_document(project_id, LEGEND, {"sections": SECTIONS})
     res = client.post(f"/api/v1/project/{project_id}/deviation/extract", json={})
     assert res.status_code == 200
     data = res.json()
@@ -113,3 +114,34 @@ def test_batch_responses_offline_keep_pending(monkeypatch):
     items = [DeviationItem(index=1, clause_title="系统须支持等保三级", response_status="待生成")]
     deviation_engine.batch_generate_responses(items, GlobalFacts())
     assert items[0].response_status == "待生成" and items[0].response_detail == "" and items[0].response_source == ""
+
+
+def test_batch_api_persists_ai_source_and_keeps_manual_edits(client, project_id, monkeypatch):
+    url = f"/api/v1/project/{project_id}/deviation"
+    items = [{"index": i, "clause_title": f"系统须支持功能{i}", "response_status": "待生成"} for i in range(1, 5)]
+    items[1].update(response_status="完全满足", response_detail="此前人工应答", response_source="manual")
+    assert client.put(url, json=items).status_code == 200
+
+    def generated(**kwargs):
+        current = client.get(url).json()["items"]
+        current[2].update(response_status="完全满足", response_detail="生成期间人工确认的应答", response_source="manual")
+        assert client.put(url, json=current).status_code == 200
+        return {"responses": [{"no": i, "response_status": "完全满足", "response_detail": f"AI应答{i}"} for i in range(1, 4)]}
+
+    monkeypatch.setattr(llm_client, "is_configured", True)
+    monkeypatch.setattr(llm_client, "get_mode", lambda: "llm")
+    monkeypatch.setattr(llm_client, "chat_completion_structured", generated)
+    monkeypatch.setattr(deviation_engine, "_item_context", lambda *args, **kwargs: ("", ""))
+    res = client.post(f"{url}/generate")
+    assert res.status_code == 200
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        task = client.get(f"/api/v1/tasks/{res.json()['task_id']}").json()
+        if task["status"] in ("completed", "failed"):
+            break
+        time.sleep(0.02)
+    assert task["status"] == "completed", task.get("error")
+    stored = client.get(url).json()["items"]
+    assert [it["response_source"] for it in stored] == ["ai", "manual", "manual", "ai"]
+    assert [it["response_detail"] for it in stored] == ["AI应答1", "此前人工应答", "生成期间人工确认的应答", "AI应答3"]
+    assert task["result"]["items"] == stored

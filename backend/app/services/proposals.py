@@ -3,7 +3,7 @@
 
 - 创建（propose）：对候选文本做规则检查（C1）、计算输入清单，状态为 checked；同一章节其他待处理的候选稿标为 superseded
 - 输入清单（compute_manifest）：生成时实际使用的依据的内容指纹（SHA-256）——全局事实、本节承接的评分项、
-  评分项关联的资料、知识库引用的锁定与排除、本节标题路径与字数预算、所用企业资料（逐条）。由服务端计算，不接受模型自述
+  评分项关联的资料、知识库引用的锁定与排除、本节标题路径与字数预算、章节要求、所用企业资料（逐条）。由服务端计算，不接受模型自述
 - 采纳（apply_proposal）：在 project_store.update 的同一写锁与事务内依次判断——已采纳则直接返回原结果（候选稿 ID 即幂等键）；
   修订号与生成时不同 → 409 正文已变化；按当前状态重算的输入清单与记录不一致 → 409 依据已变化；
   否则写入正文（修订号 +1、来源 proposal）、历史版本快照与候选稿 applied 状态，三者同一事务提交
@@ -82,11 +82,14 @@ def compute_manifest(
                          "sha": _sha({"pinned": sorted(node.pinned_refs), "excluded": sorted(node.excluded_refs)})},
         "section": {"label": "本节标题路径与字数预算",
                     "sha": _sha({"path": section_path(project.outline, node.id), "word_budget": node.word_budget})},
+        "requirements": {"label": "本节要求", "sha": _sha(node.requirements)},
     }
     keys = asset_keys if asset_keys is not None else (evidence_asset_keys(evidence) if evidence else [])
+    snapshot = evidence.asset_snapshot() if evidence is not None else None
     for key in keys:
         kind, asset_id = parse_key(key)
-        asset = asset_manager.get_asset(kind, asset_id)
+        asset = (next((a for a in snapshot.get(kind, []) if a.get("id") == asset_id), None)
+                 if snapshot is not None else asset_manager.get_asset(kind, asset_id))
         if asset is None:
             manifest[ASSET_PREFIX + key] = {"label": f"企业资料（已删除）：{asset_id}", "sha": "deleted"}
             continue
@@ -131,10 +134,11 @@ def to_dict(row: SectionProposal, with_content: bool = True) -> Dict[str, Any]:
 
 
 class ProposalStore:
-    def create(self, row: SectionProposal) -> SectionProposal:
-        """写入候选稿，并把同一章节其他待处理的候选稿标为 superseded（同一事务）"""
+    def create(self, row: SectionProposal, supersede: bool = True) -> SectionProposal:
+        """写入候选稿；supersede 时把同一章节其他待处理的候选稿标为 superseded（同一事务）"""
         with get_session() as session:
-            self._supersede(session, row.project_id, [row.section_id])
+            if supersede:
+                self._supersede(session, row.project_id, [row.section_id])
             session.add(row)
             session.flush()
             session.expunge(row)
@@ -223,13 +227,14 @@ proposal_store = ProposalStore()
 def propose(
     project: Project, node: OutlineNode, content: str, evidence: EvidenceSet, *,
     origin: str, task_id: str = "", parent_id: str = "",
-    refine: Optional[Dict[str, Any]] = None, base_revision: Optional[int] = None,
+    refine: Optional[Dict[str, Any]] = None, base_revision: Optional[int] = None, supersede: bool = True,
 ) -> Dict[str, Any]:
     """
     生成候选稿。project / node 为生成时读取的快照：base_revision 取 node.revision，输入清单与检查报告都按该快照计算
     （生成期间用户改了正文或依据，采纳时会如实报告变化）。
     base_revision 显式传入时以其为准：智能完善中断后继续执行，候选稿仍以起始时的正文为基准。
     refine 为智能完善的轮次信息（存入 refine_json）。
+    supersede=False：不取代本节其他待处理的候选稿（写回冲突时留存的 AI 结果，见 api/sections.py）。
     """
     try:
         report = check_section(project, node, content, evidence).model_dump_json()
@@ -245,7 +250,7 @@ def propose(
         evidence_json=json.dumps(evidence.ref_records(), ensure_ascii=False),
         report_json=report, status=status, created_at=now_str(), created_ts=time.time(),
     )
-    return to_dict(proposal_store.create(row))
+    return to_dict(proposal_store.create(row, supersede=supersede))
 
 
 def _require(project_id: str, section_id: str, proposal_id: str) -> SectionProposal:
@@ -264,6 +269,7 @@ def proposal_state(project: Project, row: SectionProposal) -> Dict[str, Any]:
     stored = json.loads(row.input_manifest_json or "{}")
     changes = diff_manifest(stored, compute_manifest(project, node, asset_keys=manifest_asset_keys(stored)))
     return {"section_exists": True, "current_content": node.content, "current_revision": node.revision,
+            "current_status": node.status,
             "content_changed": node.revision != row.base_revision, "basis_changes": changes}
 
 
@@ -282,9 +288,10 @@ def _conflict(reason: str, message: str, **extra) -> HTTPException:
     return HTTPException(status_code=409, detail={"reason": reason, "message": message, **extra})
 
 
-def _applied(row: SectionProposal, already: bool, node_status: Optional[str] = None) -> Dict[str, Any]:
+def _applied(row: SectionProposal, already: bool, node_status: Optional[str] = None,
+             revision: Optional[int] = None) -> Dict[str, Any]:
     return {"status": "applied", "already_applied": already, "proposal_id": row.id,
-            "section_id": row.section_id, "node_status": node_status, "content": row.content}
+            "section_id": row.section_id, "node_status": node_status, "content": row.content, "revision": revision}
 
 
 def apply_proposal(project_id: str, section_id: str, proposal_id: str) -> Dict[str, Any]:
@@ -310,8 +317,11 @@ def apply_proposal(project_id: str, section_id: str, proposal_id: str) -> Dict[s
             raise _conflict("basis_changed", "依据已变化：候选稿生成后，" + "、".join(c["label"] for c in changes) + "有变化",
                             changes=changes)
 
+    saved = {}
+
     def also(session: Session, info: Dict[str, Any]):
         proposal_store.set_status_in(session, proposal_id, "applied")
+        saved.update(info)
 
     try:
         node_status = save_section_content(
@@ -320,7 +330,7 @@ def apply_proposal(project_id: str, section_id: str, proposal_id: str) -> Dict[s
         )
     except AlreadyApplied:
         return _applied(row, already=True)
-    return _applied(row, already=False, node_status=node_status)
+    return _applied(row, already=False, node_status=node_status, revision=saved["revision"])
 
 
 def reject_proposal(project_id: str, section_id: str, proposal_id: str) -> Dict[str, Any]:

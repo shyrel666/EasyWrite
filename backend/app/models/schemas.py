@@ -221,6 +221,7 @@ class GenerateSectionRequest(BaseModel):
     project_id: str
     section_id: str
     section_title: str
+    base_revision: Optional[int] = Field(default=None, ge=0, description="开始生成时的正文修订号")
     section_path: str = ""
     requirements: List[str] = Field(default_factory=list)
     custom_instruction: Optional[str] = Field(default="", description="人工补充的特殊要求或提示词")
@@ -236,6 +237,7 @@ class GenerateSectionResponse(BaseModel):
     retrieval_message: str = Field(default="", description="检索状态说明（无匹配/未重排等）")
     mode: str = Field(default="llm", description="生成模式：llm=真实模型 / mock=离线演示")
     tokens_used: int = 0
+    revision: int = 0
 
 
 class UpdateSectionRequest(BaseModel):
@@ -405,6 +407,7 @@ class PolishSectionRequest(BaseModel):
     project_id: str
     section_id: str
     content: str
+    base_revision: Optional[int] = Field(default=None, ge=0, description="开始润色时的正文修订号")
     polish_mode: str = Field(default="de_ai", description="润色模式: de_ai(去空话强化参数), official_formal(公文严肃化), expand_specs(补充技术细节)")
 
 
@@ -413,6 +416,7 @@ class PolishSectionResponse(BaseModel):
     section_id: str
     original_content: str
     polished_content: str
+    revision: int = 0
     improvements: List[str] = Field(default_factory=list, description="所做的改进清单")
     mode: str = Field(default="llm", description="生成模式：llm=真实模型 / mock=离线演示")
 

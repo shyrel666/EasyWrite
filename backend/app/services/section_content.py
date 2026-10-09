@@ -19,6 +19,16 @@ from app.services.version_store import version_store
 CONTENT_SOURCES = ("manual", "ai_generate", "batch", "polish", "restore", "proposal", "deviation")
 
 
+def check_section_revision(node: OutlineNode, revision: Optional[int], status: Optional[str] = None):
+    """正文和校审状态都属于 AI 覆盖写入的前置条件（只改状态不会增加正文修订号）。"""
+    if ((revision is not None and node.revision != revision)
+            or (status is not None and node.status != status)):
+        raise HTTPException(status_code=409, detail={
+            "reason": "content_changed", "message": "本节正文或校审状态已变化，未覆盖当前正文",
+            "current_content": node.content, "current_revision": node.revision, "current_status": node.status,
+        })
+
+
 def write_node(node: OutlineNode, content: str, status: str, source: str) -> str:
     """在 mutate 内修改章节正文：正文变化时修订号加 1 并记录来源；返回覆盖前的正文"""
     old = node.content
@@ -35,6 +45,8 @@ def save_section_content(
     last_refs: Optional[List[dict]] = None,
     version_source: Optional[str] = None,
     expect_content: Optional[str] = None,
+    expected_revision: Optional[int] = None,
+    expected_status: Optional[str] = None,
     content_source: Optional[str] = None,
     check: Optional[Callable[[Project, OutlineNode], None]] = None,
     also: Optional[Callable[[Session, Dict[str, Any]], None]] = None,
@@ -46,6 +58,7 @@ def save_section_content(
     版本写入失败时正文一并回滚并抛出异常（人工自动保存不传，不留版）。
     content_source：正文来源，缺省取 version_source，再缺省为 manual。
     expect_content：仅当章节正文仍等于该值时才写入（批量撰写期间用户改过的章节不覆盖），否则返回 None。
+    expected_revision / expected_status：在写锁与事务内比较生成基准，不一致时返回 409。
     check(project, node)：写入前在同一写锁内校验（抛 HTTPException 则不写入）。
     also(session, info)：同一事务内的附加写入（info 含 old/revision），抛出异常时整体回滚。
     node_updates：一并修改的章节字段（如 content_mode）。
@@ -58,6 +71,7 @@ def save_section_content(
             raise HTTPException(status_code=404, detail="未找到对应章节")
         if expect_content is not None and node.content != expect_content:
             return None
+        check_section_revision(node, expected_revision, expected_status)
         if check is not None:
             check(project, node)
         old = write_node(node, content, status, source)

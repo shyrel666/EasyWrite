@@ -5,6 +5,7 @@ import api from '@/api/client'
 import { useAiStore } from '@/stores/ai'
 import { useProjectStore } from '@/stores/project'
 import { useTaskStore } from '@/stores/tasks'
+import { useSectionSave } from '@/composables/useSectionSave'
 import MarkdownPreview from '@/components/common/MarkdownPreview.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import CheckReport from '@/components/workspace/CheckReport.vue'
@@ -25,10 +26,6 @@ const ai = useAiStore()
 const projectStore = useProjectStore()
 const taskStore = useTaskStore()
 
-const content = ref('')
-// 最近一次确认已落库的正文；dirty 由二者比较得出，避免异步 watcher 与标志位赛跑
-const savedContent = ref('')
-const dirty = computed(() => content.value !== savedContent.value)
 const viewMode = ref('edit') // edit | preview
 const generating = ref(false)
 const polishing = ref(false)
@@ -38,51 +35,21 @@ const retrievalMessage = ref('')
 const generationMode = ref('')
 const textareaRef = ref(null)
 
-// 自动保存（防抖）；生成期间暂停——生成结果由后端在完成时写入
-let saveTimer = null
-
-function clearSaveTimer() {
-  if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = null
-}
+// 正文与保存状态：防抖自动保存（生成期间暂停，生成结果由后端在完成时写入）、串行保存、过期响应按修订号丢弃
+const {
+  content, savedRevision, dirty,
+  syncNode, markSaved, isCurrentRevision, autosave, flushSave, saveOnLeave, clearSaveTimer, editMark, editedSince,
+} = useSectionSave({ node: () => props.node, projectId: () => props.projectId, paused: generating })
 
 watch(
   () => props.node,
-  (n) => {
-    if (!n) return
-    content.value = n.content || ''
-    savedContent.value = content.value
-    customInstruction.value = n.requirements?.join('；') || ''
+  (n, previous) => {
+    if (syncNode(n, previous)) customInstruction.value = n.requirements?.join('；') || ''
   },
   { immediate: true }
 )
 
-watch(content, () => {
-  clearSaveTimer()
-  if (generating.value || !dirty.value) return
-  saveTimer = setTimeout(autosave, 1500)
-})
-
-// 已落库的正文同步回 store：切换章节再切回时编辑器不会加载旧内容
-function markSaved(nodeId, text, status) {
-  savedContent.value = text
-  projectStore.setSectionContent(nodeId, text, status)
-}
-
-async function autosave() {
-  clearSaveTimer()
-  if (!props.node || generating.value || !dirty.value) return
-  const nodeId = props.node.id
-  const text = content.value
-  // 手写正文的待撰写章节视为已完成，计入进度
-  const status = props.node.status === 'pending' && text.trim() ? 'completed' : (props.node.status || 'completed')
-  try {
-    await api.saveSection(props.projectId, nodeId, text, status)
-    markSaved(nodeId, text, status)
-  } catch (e) {
-    ElMessage.error('自动保存失败：' + e.message)
-  }
-}
+defineExpose({ flushSave })
 
 function toggleView() {
   if (viewMode.value === 'edit' && dirty.value) autosave()
@@ -90,7 +57,7 @@ function toggleView() {
 }
 
 async function generate() {
-  if (!props.node || generating.value) return
+  if (!props.node || generating.value || polishing.value) return
   if (content.value.trim()) {
     try {
       await ElMessageBox.confirm(
@@ -100,10 +67,10 @@ async function generate() {
       )
     } catch { return }
   }
-  if (dirty.value) await autosave()
-  if (dirty.value) return // 保存失败时不覆盖未保存的编辑
+  if (!await flushSave()) return
 
   const original = content.value
+  let conflict = null
   const node = props.node
   let finished = false
   let buffer = ''
@@ -118,6 +85,7 @@ async function generate() {
     {
       project_id: props.projectId,
       section_id: node.id,
+      base_revision: savedRevision.value,
       section_title: node.title,
       section_path: node.path || '',
       requirements: node.requirements || [],
@@ -137,21 +105,32 @@ async function generate() {
         generationMode.value = event.mode || 'llm'
         ai.noteMode(event.mode)
         if (event.content !== undefined) content.value = event.content // 后端规整后的最终正文
-        markSaved(node.id, content.value, event.status || 'completed') // 后端已保存
+        markSaved(node.id, content.value, event.status || 'completed', event.revision) // 后端已保存
         if (retrievalMessage.value) ElMessage.info(retrievalMessage.value)
         else ElMessage.success('章节撰写完成')
       } else if (event.error) {
+        if (event.status_code === 409) {
+          conflict = event
+          emit('proposals-changed')
+        }
         ElMessage.error('生成失败：' + event.error)
       }
     },
     (e) => {
+      if (e.status === 409 && e.detail?.current_content !== undefined) {
+        conflict = e.detail
+        emit('proposals-changed')
+      }
       ElMessage.error('流式连接失败：' + e.message)
     },
     () => {
       generating.value = false
       abortFn.value = null
       // 未收到完成确认（停止/失败/断线）：后端未写入，恢复原正文
-      if (!finished) content.value = original
+      if (!finished) {
+        content.value = conflict?.current_content ?? original
+        if (conflict) markSaved(node.id, content.value, conflict.current_status, conflict.current_revision)
+      }
     }
   )
 }
@@ -162,23 +141,44 @@ function stopGenerate() {
 }
 
 async function polish() {
+  if (polishing.value || generating.value) return
   if (!props.node || !content.value.trim()) {
     ElMessage.warning('章节尚无内容，请先撰写')
     return
   }
   polishing.value = true
+  const nodeId = props.node.id
+  let mark
   try {
+    if (!await flushSave()) return
+    const original = content.value
+    mark = editMark()
     const res = await api.polishSection(props.projectId, {
       project_id: props.projectId,
-      section_id: props.node.id,
-      content: content.value,
+      section_id: nodeId,
+      content: original,
+      base_revision: savedRevision.value,
       polish_mode: 'de_ai',
     })
-    content.value = res.polished_content
+    const edited = editedSince(mark)
+    // 润色期间允许继续输入；即使新输入还在防抖窗口，也不能用 AI 结果替换它。
+    const currentResult = isCurrentRevision(nodeId, res.revision)
+    if (props.node?.id === nodeId && !edited && currentResult) content.value = res.polished_content
     ai.noteMode(res.mode)
-    markSaved(props.node.id, res.polished_content, 'completed') // 后端已保存；润色不等于校审，需用户自行标记
-    ElMessage.success('降AI味润色完成' + (res.improvements?.length ? `：${res.improvements.slice(0, 2).join('；')}` : ''))
+    markSaved(nodeId, res.polished_content, 'completed', res.revision)
+    // 服务端写入润色稿时已把它存为历史版本；随后保存的人工正文覆盖它也能从历史版本找回
+    if (edited || !currentResult) ElMessage.info('润色期间正文有改动，已保留你的正文；润色结果可在「历史版本」中找回')
+    else ElMessage.success('降AI味润色完成' + (res.improvements?.length ? `：${res.improvements.slice(0, 2).join('；')}` : ''))
   } catch (e) {
+    if (e.status === 409) {
+      const current = e.detail
+      if (current?.current_content !== undefined && props.node?.id === nodeId
+          && isCurrentRevision(nodeId, current.current_revision)) {
+        if (!editedSince(mark)) content.value = current.current_content
+        markSaved(nodeId, current.current_content, current.current_status, current.current_revision)
+      }
+      emit('proposals-changed')
+    }
     ElMessage.error('润色失败：' + e.message)
   } finally {
     polishing.value = false
@@ -186,11 +186,11 @@ async function polish() {
 }
 
 async function markReviewed() {
-  clearSaveTimer()
+  if (!await flushSave()) return
   const text = content.value
   try {
-    await api.saveSection(props.projectId, props.node.id, text, 'reviewed')
-    markSaved(props.node.id, text, 'reviewed')
+    const res = await api.saveSection(props.projectId, props.node.id, text, 'reviewed')
+    markSaved(props.node.id, text, 'reviewed', res.revision)
     ElMessage.success('已标记校审')
   } catch (e) {
     ElMessage.error('保存失败：' + e.message)
@@ -245,7 +245,7 @@ const pendingProposals = computed(() => projectStore.proposalCounts[props.node?.
 
 async function openProposals() {
   if (!props.node) return
-  if (dirty.value) await autosave()
+  await flushSave()
   try {
     const { items } = await api.sectionProposals(props.projectId, props.node.id)
     const open = items.find((p) => ['draft', 'checked'].includes(p.status))
@@ -265,8 +265,7 @@ async function openProposals() {
 // 按检查结果定向修订：先保存当前正文，修订结果是候选稿，不直接写入
 async function reviseFromCheck() {
   if (!props.node) return
-  if (dirty.value) await autosave()
-  if (dirty.value) return
+  if (!await flushSave()) return
   try {
     const res = await api.reviseSection(props.projectId, props.node.id)
     checkOpen.value = false
@@ -278,10 +277,10 @@ async function reviseFromCheck() {
   }
 }
 
-function onProposalApplied({ content: text, status }) {
+function onProposalApplied({ content: text, status, revision }) {
   clearSaveTimer()
   content.value = text
-  markSaved(props.node.id, text, status)
+  markSaved(props.node.id, text, status, revision)
 }
 
 // ---------- 智能完善：起草或以当前正文为原稿 → 检查 → 定向修订，产出带检查报告的候选稿 ----------
@@ -336,8 +335,7 @@ function openRefineDialog() {
 
 async function startRefine({ resume = false } = {}) {
   if (!props.node || refineStarting.value) return
-  if (dirty.value) await autosave()
-  if (dirty.value) return // 保存失败：智能完善基于已保存的正文
+  if (!await flushSave()) return // 保存失败：智能完善基于已保存的正文
   const sid = props.node.id
   refineStarting.value = true
   try {
@@ -370,8 +368,9 @@ async function onRefineFinished(task) {
     // 空白章节达成目标后已按采纳流程写入；编辑器中有未保存的修改时不覆盖
     try {
       const p = await api.getProposal(props.projectId, r.section_id, r.final_proposal_id)
-      if (props.node?.id === r.section_id && !dirty.value) onProposalApplied({ content: p.content, status: 'completed' })
-      else projectStore.setSectionContent(r.section_id, p.content, 'completed')
+      const current = p.state
+      if (props.node?.id === r.section_id && !dirty.value) onProposalApplied({ content: current.current_content, status: current.current_status, revision: current.current_revision })
+      else projectStore.setSectionContent(r.section_id, current.current_content, current.current_status, current.current_revision)
     } catch { /* 正文已写入，重新打开章节可见 */ }
   }
   const meta = outcomeMeta(r.outcome)
@@ -400,7 +399,7 @@ const loadingVersions = ref(false)
 
 async function openVersions() {
   if (!props.node) return
-  if (dirty.value) await autosave()
+  await flushSave()
   versionsOpen.value = true
   versionPreview.value = null
   loadingVersions.value = true
@@ -429,7 +428,7 @@ async function restoreVersion(v) {
     const res = await api.restoreVersion(props.projectId, props.node.id, v.id)
     clearSaveTimer()
     content.value = res.content
-    markSaved(props.node.id, res.content, res.node_status || 'completed')
+    markSaved(props.node.id, res.content, res.node_status || 'completed', res.revision)
     versionsOpen.value = false
     ElMessage.success('已恢复历史版本')
   } catch (e) {
@@ -458,8 +457,7 @@ const statusMeta = computed(() => sectionStatus(props.node?.status))
 onBeforeUnmount(() => {
   stopRefinePoll()
   if (abortFn.value) abortFn.value()
-  // 切换章节前立即保存未落库的编辑，而不是丢弃防抖中的保存
-  else if (dirty.value) autosave()
+  else saveOnLeave()
   clearSaveTimer()
 })
 </script>
@@ -485,7 +483,7 @@ onBeforeUnmount(() => {
 
     <!-- 操作栏 -->
     <div class="shrink-0 flex items-center gap-2 px-2 sm:px-4 py-2 border-b border-line bg-raised flex-wrap [&_.el-button+.el-button]:ml-0 max-sm:[&_.el-button.is-text]:px-2.5">
-      <el-button v-if="!generating" type="primary" @click="generate">
+      <el-button v-if="!generating" type="primary" :disabled="polishing" @click="generate">
         <el-icon class="mr-1.5"><MagicStick /></el-icon>AI 撰写本节
       </el-button>
       <el-button v-else type="danger" plain @click="stopGenerate">

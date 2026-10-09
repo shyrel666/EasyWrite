@@ -56,7 +56,7 @@ export function proposalOriginLabel(p) {
     const mode = p.refine?.mode && p.refine.mode !== 'normal' ? `（${MODE_LABELS[p.refine.mode] || p.refine.mode}）` : ''
     return `智能完善 · 第 ${round ?? '?'} 轮修订${mode}`
   }
-  return { batch: '批量撰写', revise: '定向修订' }[p.origin] || p.origin || 'AI'
+  return { batch: '批量撰写', revise: '定向修订', ai_generate: '单章撰写（并发冲突）', polish: '润色（并发冲突）' }[p.origin] || p.origin || 'AI'
 }
 
 // 进度步骤：按任务的进度描述定位当前步骤

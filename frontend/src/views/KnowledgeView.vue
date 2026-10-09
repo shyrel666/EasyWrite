@@ -13,6 +13,8 @@ const ai = useAiStore()
 const stats = ref({ total_documents: 0, total_chunks: 0, documents: [] })
 const uploading = ref(false)
 const uploadTaskId = ref('')
+const reindexTaskId = ref('')
+const reindexStarting = ref(false)
 const fileInput = ref(null)
 const searchQuery = ref('')
 const searchResults = ref(null)
@@ -25,6 +27,25 @@ const dragOver = ref(false)
 
 async function load() {
   stats.value = await api.kbStats()
+}
+
+async function rebuildVectors() {
+  if (reindexStarting.value || reindexTaskId.value) return
+  reindexStarting.value = true
+  try {
+    reindexTaskId.value = (await api.kbReindex()).task_id
+  } catch (e) {
+    ElMessage.error('向量重建启动失败：' + e.message)
+  } finally {
+    reindexStarting.value = false
+  }
+}
+
+async function onReindexDone(task) {
+  reindexTaskId.value = ''
+  if (task.status === 'completed') ElMessage.success('向量重建完成')
+  else ElMessage.error('向量重建未完成：' + (task.error || task.message || '').split('\n')[0])
+  await load()
 }
 
 function pickFile() {
@@ -137,6 +158,10 @@ onMounted(async () => {
       uploading.value = true
     }
   } catch { /* 忽略 */ }
+  try {
+    const { tasks } = await api.listTasks({ type: 'kb_reindex', active: true, limit: 1 })
+    if (tasks.length) reindexTaskId.value = tasks[0].id
+  } catch { /* 忽略 */ }
 })
 </script>
 
@@ -159,6 +184,11 @@ onMounted(async () => {
           <input ref="fileInput" type="file" accept=".docx,.pdf" class="hidden" @change="handleUpload" />
         </template>
       </PageHeader>
+      <div v-if="stats.embedding_warning" class="note note-warn items-center">
+        <span class="flex-1">{{ stats.embedding_warning }}</span>
+        <el-button size="small" :loading="reindexStarting" :disabled="!!reindexTaskId" @click="rebuildVectors">重建全部向量</el-button>
+      </div>
+      <TaskProgress v-if="reindexTaskId" :task-id="reindexTaskId" title="正在重建向量" @done="onReindexDone" @failed="onReindexDone" />
 
       <!-- 文档 -->
       <section

@@ -66,12 +66,14 @@ export const useProjectStore = defineStore('project', {
       }
       walk(this.outline)
     },
-    setSectionContent(sectionId, content, status = 'completed') {
+    setSectionContent(sectionId, content, status = 'completed', revision) {
       const walk = (nodes) => {
         for (const n of nodes) {
           if (n.id === sectionId) {
+            if (revision !== undefined && revision < (n.revision || 0)) return true
             n.content = content
             n.status = status
+            if (revision !== undefined) n.revision = revision
             return true
           }
           if (n.children && walk(n.children)) return true
