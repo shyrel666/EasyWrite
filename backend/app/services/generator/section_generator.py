@@ -211,12 +211,14 @@ class SectionGenerator:
             if length_rule:
                 task += f"\n5. {length_rule}。"
 
-        user_prompt = f"""【当前待撰写章节】：{section_title}
+        # 各章节相同的内容（全局事实）在前、本章内容在后，服务商的前缀缓存能多命中一段（F3）；
+        # 智能完善的起草与各轮修订只有末尾的任务不同，整段依据都能命中缓存
+        user_prompt = f"""【本项目的全局事实约束（强制遵守，全文一致）】：
+{facts_obj.to_constraint_text()}
+
+【当前待撰写章节】：{section_title}
 【完整大纲路径】：{section_path or section_title}
 {budget_line}
-
-【本项目的全局事实约束（强制遵守，全文一致）】：
-{facts_obj.to_constraint_text()}
 
 【本章节须响应的招标要点/评分项】：
 {req_lines}

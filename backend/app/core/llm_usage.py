@@ -39,12 +39,19 @@ def _int_or_none(value: Any) -> Optional[int]:
 
 
 def usage_fields(usage: Any) -> Dict[str, Optional[int]]:
-    """OpenAI 兼容 usage → 计数字段（推理模型的思考 token 在 completion_tokens_details.reasoning_tokens）"""
+    """
+    OpenAI 兼容 usage → 计数字段（推理模型的思考 token 在 completion_tokens_details.reasoning_tokens）。
+    缓存命中：prompt_tokens_details.cached_tokens（OpenAI 及多数兼容接口），DeepSeek 为 prompt_cache_hit_tokens。
+    """
+    cached = _int_or_none(_field(_field(usage, "prompt_tokens_details"), "cached_tokens"))
+    if cached is None:
+        cached = _int_or_none(_field(usage, "prompt_cache_hit_tokens"))
     return {
         "prompt_tokens": _int_or_none(_field(usage, "prompt_tokens")),
         "completion_tokens": _int_or_none(_field(usage, "completion_tokens")),
         "total_tokens": _int_or_none(_field(usage, "total_tokens")),
         "reasoning_tokens": _int_or_none(_field(_field(usage, "completion_tokens_details"), "reasoning_tokens")),
+        "cached_tokens": cached,
     }
 
 
@@ -200,19 +207,20 @@ def _by_run(session, conds, limit: int) -> List[Dict[str, Any]]:
 def run_totals(run_id: str) -> Dict[str, Any]:
     """一次运行的实际请求数与服务商返回的用量（未返回用量的请求单独计数，不估算）"""
     with get_session() as session:
-        calls, err, prompt, completion, total, no_usage, latency = session.exec(
+        calls, err, prompt, completion, cached, total, no_usage, latency = session.exec(
             select(
                 func.count(),
                 func.sum(case((LLMCallLog.status == "error", 1), else_=0)),
                 func.sum(LLMCallLog.prompt_tokens),
                 func.sum(LLMCallLog.completion_tokens),
+                func.sum(LLMCallLog.cached_tokens),
                 func.sum(LLMCallLog.total_tokens),
                 func.sum(case((col(LLMCallLog.total_tokens).is_(None), 1), else_=0)),
                 func.sum(LLMCallLog.latency_ms),
             ).where(LLMCallLog.run_id == run_id)
         ).one()
     return {"calls": calls, "errors": int(err or 0), "prompt_tokens": int(prompt or 0),
-            "completion_tokens": int(completion or 0), "total_tokens": int(total or 0),
+            "completion_tokens": int(completion or 0), "cached_tokens": int(cached or 0), "total_tokens": int(total or 0),
             "calls_without_usage": int(no_usage or 0), "latency_ms": int(latency or 0)}
 
 
@@ -225,12 +233,13 @@ def summarize(
     since = f"{since_day} 00:00:00"
     conds = _filters(since, project_id, run_id)
     with get_session() as session:
-        calls, prompt, completion, reasoning, total, avg_latency, no_usage = session.exec(
+        calls, prompt, completion, reasoning, cached, total, avg_latency, no_usage = session.exec(
             select(
                 func.count(),
                 func.sum(LLMCallLog.prompt_tokens),
                 func.sum(LLMCallLog.completion_tokens),
                 func.sum(LLMCallLog.reasoning_tokens),
+                func.sum(LLMCallLog.cached_tokens),
                 func.sum(LLMCallLog.total_tokens),
                 func.avg(LLMCallLog.latency_ms),
                 func.sum(case((col(LLMCallLog.total_tokens).is_(None), 1), else_=0)),
@@ -271,6 +280,7 @@ def summarize(
             "prompt_tokens": int(prompt or 0),
             "completion_tokens": int(completion or 0),
             "reasoning_tokens": int(reasoning or 0),
+            "cached_tokens": int(cached or 0),
             "total_tokens": int(total or 0),
             "calls_without_usage": int(no_usage or 0),
             "avg_latency_ms": int(avg_latency or 0),

@@ -143,6 +143,8 @@ class LLMCallLog(SQLModel, table=True):
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
     reasoning_tokens: Optional[int] = None
+    # 输入中命中服务商前缀缓存的部分（包含在 prompt_tokens 内，计费通常更低）；未返回时为空
+    cached_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
     max_tokens: int = 0
     finish_reason: str = ""

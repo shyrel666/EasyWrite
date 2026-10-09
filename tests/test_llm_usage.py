@@ -131,6 +131,22 @@ def test_sync_call_records_latency_usage_and_purpose(monkeypatch):
     assert row.max_tokens == 1000 and row.finish_reason == "stop" and row.latency_ms >= 0
 
 
+def test_cache_hit_tokens_recorded(monkeypatch):
+    """F3：服务商返回的前缀缓存命中量（OpenAI 写法 / DeepSeek 写法），未返回时留空"""
+    openai_style = _usage(100, 20)
+    openai_style.prompt_tokens_details = SimpleNamespace(cached_tokens=80)
+    deepseek_style = _usage(200, 20)
+    deepseek_style.prompt_cache_hit_tokens = 64
+    deepseek_style.prompt_cache_miss_tokens = 136
+    _fake_sync(monkeypatch, [_resp("甲", usage=openai_style), _resp("乙", usage=deepseek_style),
+                             _resp("丙", usage=_usage(50, 10))])
+    with _project_scope() as pid:
+        for _ in range(3):
+            llm_client.chat_completion("sys", "user", purpose="section_write")
+    assert [r.cached_tokens for r in _rows(pid)] == [80, 64, None]
+    assert llm_usage.summarize(days=1, project_id=pid)["totals"]["cached_tokens"] == 144
+
+
 def test_every_request_of_an_escalation_is_recorded(monkeypatch):
     _fake_sync(monkeypatch, [
         _resp("", "length", usage=_usage(100, 1000)),

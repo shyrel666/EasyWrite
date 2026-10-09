@@ -24,6 +24,12 @@ const error = ref('')
 
 const projectNames = computed(() => Object.fromEntries(projects.value.map((p) => [p.id, p.name])))
 const totals = computed(() => data.value?.totals || {})
+// 输入中命中服务商前缀缓存的比例（服务商返回了缓存命中量时才显示）
+const cacheShare = computed(() =>
+  totals.value.cached_tokens && totals.value.prompt_tokens
+    ? `${Math.round((totals.value.cached_tokens / totals.value.prompt_tokens) * 100)}%`
+    : ''
+)
 
 async function load() {
   loading.value = true
@@ -110,7 +116,9 @@ onMounted(async () => {
         <div class="card px-4 py-3.5">
           <p class="text-xs text-ink-3">Token 合计</p>
           <p class="text-[22px] font-semibold num mt-1.5 leading-none text-ink">{{ formatTokens(totals.total_tokens) }}</p>
-          <p class="text-2xs text-ink-3 mt-2 num truncate">输入 {{ formatTokens(totals.prompt_tokens) }} · 输出 {{ formatTokens(totals.completion_tokens) }}</p>
+          <p class="text-2xs text-ink-3 mt-2 num truncate" :title="cacheShare ? `输入中 ${formatTokens(totals.cached_tokens)} 命中服务商缓存` : ''">
+            输入 {{ formatTokens(totals.prompt_tokens) }}<template v-if="cacheShare">（缓存 {{ cacheShare }}）</template> · 输出 {{ formatTokens(totals.completion_tokens) }}
+          </p>
         </div>
         <div class="card px-4 py-3.5">
           <p class="text-xs text-ink-3">其中思考 Token</p>
@@ -272,7 +280,10 @@ onMounted(async () => {
             <el-table-column label="Token（入/出）" width="130" align="right">
               <template #default="{ row }">
                 <span v-if="row.total_tokens == null" class="text-ink-3 pr-2">—</span>
-                <span v-else class="num pr-2">{{ formatTokens(row.prompt_tokens) }} / {{ formatTokens(row.completion_tokens) }}</span>
+                <template v-else>
+                  <div class="num pr-2">{{ formatTokens(row.prompt_tokens) }} / {{ formatTokens(row.completion_tokens) }}</div>
+                  <div v-if="row.cached_tokens" class="text-2xs text-ink-3 num pr-2">缓存命中 {{ formatTokens(row.cached_tokens) }}</div>
+                </template>
               </template>
             </el-table-column>
           </el-table>
