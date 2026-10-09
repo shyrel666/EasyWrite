@@ -116,8 +116,9 @@ onMounted(async () => {
         <div class="card px-4 py-3.5">
           <p class="text-xs text-ink-3">Token 合计</p>
           <p class="text-[22px] font-semibold num mt-1.5 leading-none text-ink">{{ formatTokens(totals.total_tokens) }}</p>
-          <p class="text-2xs text-ink-3 mt-2 num truncate" :title="cacheShare ? `输入中 ${formatTokens(totals.cached_tokens)} 命中服务商缓存` : ''">
-            输入 {{ formatTokens(totals.prompt_tokens) }}<template v-if="cacheShare">（缓存 {{ cacheShare }}）</template> · 输出 {{ formatTokens(totals.completion_tokens) }}
+          <p class="text-2xs text-ink-3 mt-2 num truncate">输入 {{ formatTokens(totals.prompt_tokens) }} · 输出 {{ formatTokens(totals.completion_tokens) }}</p>
+          <p v-if="cacheShare" class="text-2xs text-ink-3 mt-0.5 num truncate" :title="`输入中 ${formatTokens(totals.cached_tokens)} 命中服务商缓存`">
+            输入中缓存命中 {{ cacheShare }}
           </p>
         </div>
         <div class="card px-4 py-3.5">
