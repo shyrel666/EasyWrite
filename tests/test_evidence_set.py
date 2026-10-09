@@ -99,6 +99,21 @@ def test_revision_prompt_uses_base_text_and_issues():
     assert "编写任务" not in built["user"]
 
 
+def test_prompts_cap_length_near_the_task():
+    """阶段 E：只在开头写目标字数时正文全部超出预算；起草与修订的任务说明里都写明上限（只处理阻塞问题时不提篇幅）"""
+    outline = [OutlineNode(id="sec_1_1", title="1.1 运维流程", word_budget=2000)]
+    kw = dict(section_title="1.1 运维流程", section_path="1.1 运维流程", requirements=[], evidence=EvidenceSet(),
+              outline=outline, section_id="sec_1_1")
+    rule = "篇幅：正文约 2000 字，不超过 2300 字（不含 Mermaid 图代码）"
+    draft = section_generator.build_prompts(**kw)["user"]
+    assert draft.index(rule) > draft.index("【编写任务】") and "详尽" not in draft
+    revise = section_generator.build_prompts(**kw, base_text="原稿", issues=["篇幅偏离"])["user"]
+    assert rule in revise and "原稿超出时压缩" in revise
+    minimal = section_generator.build_prompts(**kw, base_text="原稿", issues=["缺少要点"], revision_mode="minimal")["user"]
+    assert rule not in minimal
+    assert "篇幅：" not in section_generator.build_prompts(**{**kw, "section_id": ""})["user"], "无字数预算时不写上限"
+
+
 def test_stream_selects_evidence_once_and_saves_asset_refs(client, project_id, monkeypatch):
     outline = [{"id": "sec_1", "title": "第一章 项目团队", "level": 1}]
     client.put(f"/api/v1/project/{project_id}/outline", json={"outline": outline})

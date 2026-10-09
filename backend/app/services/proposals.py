@@ -28,6 +28,7 @@ from app.services.generator import rubric_planner as rp
 from app.services.generator.evidence_set import EvidenceSet
 from app.services.project_store import find_node, now_str
 from app.services.section_content import save_section_content
+from app.services.text_stats import body_chars
 
 OPEN_STATUSES = ("draft", "checked")
 # 智能完善产生的候选稿：起草稿与各轮修订稿（parent_id 串成一条链）
@@ -122,7 +123,7 @@ def to_dict(row: SectionProposal, with_content: bool = True) -> Dict[str, Any]:
         "base_revision": row.base_revision, "status": row.status,
         "refine": json.loads(row.refine_json) if row.refine_json else None,
         "created_at": row.created_at, "decided_at": row.decided_at,
-        "char_count": len("".join((row.content or "").split())),
+        "char_count": body_chars(row.content),
         "blocking_count": report.get("blocking_count", 0) if report else None,
         "quality_count": report.get("quality_count", 0) if report else None,
     }

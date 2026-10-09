@@ -21,7 +21,7 @@ from app.services.generator.evidence_set import EvidenceSet
 logger = logging.getLogger("easywrite.section")
 
 SYSTEM_BID_WRITER_PROMPT = """你是一名拥有15年政企信息化与软件工程经验的资深技术标书总架构师。
-你的职责是编写极其严谨、专业、详实且完全响应招标文件要求的高分技术投标方案。
+你的职责是编写严谨、专业、具体且完全响应招标文件要求的高分技术投标方案。
 
 【核心原则与红线要求】：
 1. 【全局事实不可违背】：必须严格遵守【全局事实约束】（投标企业全称、统一代码、核心产品平台、数据库底座、SLA标准），绝对禁止擅自篡改、杜撰冲突型号或产生前后矛盾。
@@ -176,8 +176,13 @@ class SectionGenerator:
 
         if outline and section_id:
             find_budget(outline)
+        # 阶段 E：只在开头写目标字数时，18 份正文全部超出预算（不计图代码仍超出 16%～96%），任务说明里再给出上限
+        length_rule = ""
         if found_budget:
-            budget_line = f"\n【本章节目标正文字数】：约 {found_budget[0]} 字（±15% 以内）"
+            budget = found_budget[0]
+            budget_line = f"\n【本章节目标正文字数】：约 {budget} 字（±15% 以内，不含 Mermaid 图代码）"
+            length_rule = (f"篇幅：正文约 {budget} 字，不超过 {round(budget * 1.15)} 字（不含 Mermaid 图代码）；"
+                           "篇幅按评分要点分配，不为凑字数重复论述或堆砌通用内容")
 
         req_lines = "\n".join(f"- {r}" for r in requirements) if requirements else "- 详实阐述该模块的具体设计与方案保障"
 
@@ -191,16 +196,20 @@ class SectionGenerator:
 
 【修订任务】：
 逐条处理上述问题，输出修订后的完整正文；未涉及问题的段落保持原样。资料不足以解决的问题用【待填写】或【待核实】占位，不得编造企业事实或承诺数值。直接输出正文，不要解释修改过程。"""
+            if length_rule and revision_mode != "minimal":
+                task += f"\n{length_rule}；原稿超出时压缩重复与通用论述。"
             if revision_mode in REVISION_MODE_HINTS:
                 task += f"\n【本轮修订方式】：{REVISION_MODE_HINTS[revision_mode]}"
         else:
             task = """【编写任务】：
-请针对上述章节，融合可用的参考资料与企业资料，输出详尽、专业的技术标书正文；企业资质、人员、业绩等事实只能取自上面的企业资料与全局事实。
+请针对上述章节，融合可用的参考资料与企业资料，输出专业、具体的技术标书正文；企业资质、人员、业绩等事实只能取自上面的企业资料与全局事实。
 要求：
 1. 方案行文中体现投标主体与核心产品的具体应用与保障（以全局事实为准）；
 2. 如涉及架构设计或流转机制，附带一段规范的 ```mermaid 架构图；
 3. 严格遵守政企标书语言风格，分层、分点阐述；
 4. 直接输出正文内容，无需寒暄。"""
+            if length_rule:
+                task += f"\n5. {length_rule}。"
 
         user_prompt = f"""【当前待撰写章节】：{section_title}
 【完整大纲路径】：{section_path or section_title}

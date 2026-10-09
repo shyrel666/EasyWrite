@@ -9,7 +9,7 @@ check_section(project, node, text, evidence) 把候选文本放进虚拟大纲�
 | 承诺数值与全局事实冲突（工期、响应/到场时限、质保期、驻场人数、巡检频次、7×24 等） | 阻塞 |
 | 正文出现示例资料，或待核实资料未用【待核实】标注 | 阻塞 |
 | 全局事实中没有的具体承诺数值 | 列入待核实清单 |
-| 篇幅偏离字数预算超过 ±30% | 质量 |
+| 篇幅偏离字数预算超过 ±30%（正文字数，不计 Mermaid 图代码与 Markdown 符号） | 质量 |
 | 重复本节标题、使用 # 标题、套话与口语化表述 | 质量 |
 | 模型评审：无依据的企业事实声明 | 质量（参考；未配置模型或未请求时跳过并注明） |
 """
@@ -28,6 +28,7 @@ from app.services.generator import rubric_planner as rp
 from app.services.generator.evidence_set import EvidenceSet
 from app.services.generator.section_generator import strip_title_heading
 from app.services.project_store import now_str
+from app.services.text_stats import body_chars
 
 logger = logging.getLogger("easywrite.section_check")
 
@@ -388,7 +389,7 @@ def _check_assets(text: str, assets: Dict) -> Tuple[List[CheckIssue], List[Verif
 
 def _check_quality(text: str, node: OutlineNode) -> List[CheckIssue]:
     issues: List[CheckIssue] = []
-    chars = len(re.sub(r"\s+", "", text))
+    chars = body_chars(text)
     budget = node.word_budget
     if budget:
         ratio = chars / budget - 1
@@ -483,7 +484,7 @@ def check_section(
     """检查 node 的候选文本 text（不改动正文）；llm_review=True 且已配置模型时加做模型评审"""
     evidence = evidence or EvidenceSet()
     report = SectionCheckReport(section_id=node.id, section_title=node.title, checked_at=now_str(),
-                                char_count=len(re.sub(r"\s+", "", text or "")), word_budget=node.word_budget)
+                                char_count=body_chars(text), word_budget=node.word_budget)
     if not (text or "").strip():
         report.issues = [CheckIssue(level="blocking", code="empty", message="正文为空")]
         report.blocking_count = 1

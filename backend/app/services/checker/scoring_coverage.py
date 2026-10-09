@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from app.models.schemas import OutlineNode, ScoringCoverage, TenderAnalysis18
 from app.services.generator import rubric_planner as rp
+from app.services.text_stats import body_chars
 
 MIN_LENGTH_RATIO = 0.3
 FILLER = re.compile(r"方案|措施|计划|情况|内容|的|及|与|和|等|对")
@@ -77,7 +78,7 @@ def check_scoring_coverage(
                 sections[s.id] = s
         written = [s for s in sections.values() if s.content.strip()]
         text = "\n".join(f"{s.title}\n{s.content}" for s in written)
-        words = sum(len(re.sub(r"\s+", "", s.content)) for s in written)
+        words = sum(body_chars(s.content) for s in written)
         leaves = [s for s in sections.values() if not s.children]
         budget = sum(s.word_budget or 0 for s in leaves) or sum(n.word_budget or 0 for n in mapped)
 

@@ -15,6 +15,7 @@ import { sectionStatus } from '@/utils/project'
 import { isActiveTask } from '@/utils/tasks'
 import { DEFAULT_MAX_ROUNDS, MAX_ROUNDS_LIMIT, canResume, outcomeMeta, stopReasonLabel } from '@/utils/refine'
 import { locateExcerpt } from '@/utils/sectionCheck'
+import { bodyChars } from '@/utils/wordCount'
 
 const props = defineProps({
   node: { type: Object, default: null },
@@ -436,7 +437,7 @@ async function restoreVersion(v) {
   }
 }
 
-const wordCount = computed(() => content.value.replace(/\s/g, '').length)
+const wordCount = computed(() => bodyChars(content.value))
 const budgetHint = computed(() => {
   if (!props.node?.word_budget) return ''
   const diff = wordCount.value - props.node.word_budget

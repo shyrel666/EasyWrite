@@ -17,6 +17,7 @@ from sqlmodel import Session, delete, select
 
 from app.db.database import get_session
 from app.db.models import SectionVersion
+from app.services.text_stats import body_chars
 
 logger = logging.getLogger("easywrite.versions")
 
@@ -25,10 +26,6 @@ MAX_VERSIONS_PER_SECTION = 30
 
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _chars(text: str) -> int:
-    return len(re.sub(r"\s+", "", text or ""))
 
 
 class VersionStore:
@@ -55,7 +52,7 @@ class VersionStore:
     @staticmethod
     def _make(project_id: str, section_id: str, content: str, source: str) -> SectionVersion:
         return SectionVersion(project_id=project_id, section_id=section_id, content=content,
-                              source=source, char_count=_chars(content), created_at=_now())
+                              source=source, char_count=body_chars(content), created_at=_now())
 
     @staticmethod
     def prune(project_id: str, section_id: str):
