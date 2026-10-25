@@ -132,6 +132,20 @@ def test_onsite_keyword_beats_response_in_same_clause():
     assert [(q["topic"], q["label"]) for q in qs] == [("onsite", "4小时")]
 
 
+def test_real_data_false_positive_classes():
+    """评估 2026-10-25-2 复盘的三类真实语料误报：从业年限、动量"一次"、信用代码撞服务窗口"""
+    from app.services.checker.section_check import extract_quantities
+    # 从业年限不是工期（分句含"上线"关键词也不判工期）
+    assert extract_quantities("周敏（从业6年）负责环境部署与上线支持") == []
+    assert extract_quantities("团队平均从业年限8年以上") == []
+    # 无周期的"一次"是动量用法，不是巡检频次（"工单一次解决率、巡检完成率"同分句也不误判）
+    assert [q["topic"] for q in extract_quantities("开展一次全流程处置演练与一次备份恢复验证")] == [None, None]
+    assert [q["topic"] for q in extract_quantities("指标含工单一次解决率与巡检完成率")] == [None]
+    # 统一社会信用代码里的"8X2"不是服务窗口
+    assert extract_quantities("重庆云枢科技有限公司（统一社会信用代码 91500108MA61U8X2XK）") == []
+    assert [(q["topic"], q["value"]) for q in extract_quantities("提供7×24小时服务")] == [("window", "7×24")]
+
+
 def test_numbers_in_placeholders_and_diagrams_are_ignored(project):
     text = "响应时限为【待填写：2小时】。\n```mermaid\ngraph TD\nA[4小时到场] --> B\n```"
     r = _check(project, "sec_2", text, facts=SLA)

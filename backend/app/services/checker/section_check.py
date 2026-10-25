@@ -183,6 +183,9 @@ QUANTITY = re.compile(
 )
 WINDOW = re.compile(r"(\d{1,2})\s*[×xX*＊]\s*(\d{1,2})\s*(?:小时|h|H)?")
 PERIOD = re.compile(r"每(?:个)?(日|天|周|月|季度|半年|年)")
+# 从业年限不是工期：评估 2026-10-25-2 中"上线支持 | 周敏（从业6年）"曾因分句含"上线"被判工期冲突
+EXPERIENCE_BEFORE = re.compile(r"(?:从业|工龄|经验)[^，。；;\n]{0,4}$")   # 从业…N年（年限在词后）
+EXPERIENCE_AFTER = re.compile(r"[^，。；;\n]{0,4}(?:从业|经验)")        # N年…经验（年限在词前）
 
 # 承诺类别：关键词 → 允许的量纲
 TOPICS = {
@@ -231,6 +234,14 @@ def _topic(text: str, start: int, end: int, dim: str) -> Optional[str]:
     return best
 
 
+ASCII_ALNUM = re.compile(r"[A-Za-z0-9]")
+
+
+def _ascii_alnum(ch: str) -> bool:
+    """仅 ASCII 字母数字（中文不属于：'供'.isalnum() 为 True，会把正常中文语境全部误杀）"""
+    return bool(ch) and bool(ASCII_ALNUM.match(ch))
+
+
 def extract_quantities(text: str, fallback_topic: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     抽取承诺类数值：[{topic, value, label, start, end, committed}]。
@@ -240,6 +251,10 @@ def extract_quantities(text: str, fallback_topic: Optional[str] = None) -> List[
     out: List[Dict[str, Any]] = []
     masked = text
     for m in WINDOW.finditer(text):
+        # 统一社会信用代码等 ASCII 字母数字串里的"N X M"不是服务窗口（评估 2026-10-25-2：91500108MA61U8X2XK 撞出"8X2"）；
+        # 中文语境（提供7×24小时服务）不受影响
+        if _ascii_alnum(text[max(0, m.start() - 1):m.start()]) or _ascii_alnum(text[m.end():m.end() + 1]):
+            continue
         out.append({"topic": "window", "value": f"{int(m.group(1))}×{int(m.group(2))}", "label": m.group(0).strip(),
                     "start": m.start(), "end": m.end(), "committed": True, "approx": False})
         masked = masked[:m.start()] + " " * (m.end() - m.start()) + masked[m.end():]
@@ -252,6 +267,9 @@ def extract_quantities(text: str, fallback_topic: Optional[str] = None) -> List[
         # 序数（第2年）、频次的周期（每2小时、每半年）、年份（2026年）、日期（10月1日）不是承诺数值
         if before in ("第", "每") or (unit == "年" and value >= 1900) or (unit == "日" and before == "月"):
             continue
+        # 从业年限（从业6年 / 6年经验）是人员事实的转述，不是工期或期限承诺
+        if unit == "年" and (EXPERIENCE_BEFORE.search(text[:m.start()]) or EXPERIENCE_AFTER.match(text[m.end():])):
+            continue
         dim, factor = UNITS[unit]
         topic = _topic(masked, m.start(), m.end(), dim) or fallback_topic
         if topic is None and "日历" in unit:
@@ -261,7 +279,11 @@ def extract_quantities(text: str, fallback_topic: Optional[str] = None) -> List[
         if topic == "inspection":
             a, _ = _clause_bounds(masked, m.start(), m.end())
             period = PERIOD.search(masked, a, m.start())
-            norm: Any = f"{period.group(1) if period else ''}:{value:g}"
+            if not period:
+                topic = None  # 无周期的"一次"是动量用法（开展一次演练、一次解决率），不是巡检频次承诺
+                norm = value
+            else:
+                norm: Any = f"{period.group(1)}:{value:g}"
         else:
             norm = round(value * factor, 3) if dim != "workday" else f"workday:{value:g}"
         a, b = _clause_bounds(masked, m.start(), m.end())
