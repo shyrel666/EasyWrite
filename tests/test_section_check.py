@@ -81,12 +81,11 @@ def test_commitment_conflicts_with_facts_are_blocking(project):
             "项目工期为120日历天。质保期3年。每季度巡检1次。提供7×24小时服务。")
     r = _check(project, "sec_2", text, facts=SLA)
     conflicts = [i.message for i in r.issues if i.code == "fact_conflict"]
-    # 7×24 相对事实的 5×8 窗口更宽：优于事实，不算冲突，列入待核实
-    assert len(conflicts) == 5
+    # 7×24 相对事实 5×8 窗口更宽、质保 3 年相对事实 1 年更长：均优于事实，不算冲突，列入待核实
+    assert len(conflicts) == 4
     assert any("响应时限" in m and "2小时" in m for m in conflicts)
     assert any("到场时限" in m and "4小时" in m for m in conflicts)
     assert any("工期" in m and "120日历天" in m for m in conflicts)
-    assert any("质保期" in m and "3年" in m for m in conflicts)
     assert any("巡检频次" in m for m in conflicts)
     conflict = next(i for i in r.issues if i.code == "fact_conflict")
     assert conflict.line == 1 and "2小时内响应" in conflict.excerpt
@@ -123,6 +122,14 @@ def test_fact_conflicts_tolerate_tiers_and_milestones(project):
     r = _check(project, "sec_2", "全部实施工作120日历天内完成，每季度巡检1次。", facts=facts)
     conflicts = [i.message for i in r.issues if i.code == "fact_conflict"]
     assert len(conflicts) == 2 and any("120日历天" in m for m in conflicts) and any("巡检" in m for m in conflicts)
+
+    # 质保期方向相反：事实 1 年，正文 6 个月是缩水（阻塞），18 个月是加码（待核实）
+    warranty_facts = GlobalFacts(custom_facts={"质保期": "免费质保期1年"})
+    r = _check(project, "sec_2", "质保期6个月。", facts=warranty_facts)
+    warranty_conflict = [i for i in r.issues if i.code == "fact_conflict"]
+    assert warranty_conflict and "6个月" in warranty_conflict[0].message
+    r = _check(project, "sec_2", "质保期18个月。", facts=warranty_facts)
+    assert "fact_conflict" not in _codes(r) and any("18个月" in v.note for v in r.pending_verification)
 
 
 def test_onsite_keyword_beats_response_in_same_clause():

@@ -326,7 +326,8 @@ def _better_or_equal(fact: Dict[str, Any], q: Dict[str, Any]) -> Optional[bool]:
     是常见且合法的写法，原判定一律记"与全局事实不一致"，制造大量阻塞误报；不劣于事实的取值改为列入待核实。"""
     x, y = fact["value"], q["value"]
     if isinstance(x, float) and isinstance(y, float):
-        return y <= x
+        # 时限/工期/期限：更短为优；质保期相反：更长为优（对采购人更有利）
+        return y >= x if fact.get("topic") == "warranty" else y <= x
     if isinstance(x, str) and isinstance(y, str) and "×" in x and "×" in y:  # 服务窗口 N×M：每周覆盖时长更宽为优
         try:
             ax, bx = (int(v) for v in x.split("×"))
