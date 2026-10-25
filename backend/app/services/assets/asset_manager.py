@@ -334,7 +334,9 @@ class EnterpriseAssetManager:
         读取资料文件。只有文件不存在（首次启动）时才写入预设示例；
         文件存在时某一类为空就保持为空——用户删空的资料不能在重启后被示例补回或连带重置其他类。
         文件损坏时先把原文件备份为 *.corrupt-时间.bak，再以空库启动，不用示例覆盖。
-        旧数据没有 status：ID 属于预设示例的标为 example，其余视为用户录入、标为 confirmed，并写回文件。
+        旧数据没有 status：ID 属于预设示例且内容与预设一致的标为 example；沿用预设 ID 但内容被改过
+        （用户在预设条目上编辑出真实资料）的不算示例，按用户录入处理——来源不明，标 unverified 并记录日志，
+        其余用户录入标为 confirmed；迁移结果写回文件。
         """
         with self._lock:
             if not self.storage_file.exists():
@@ -358,11 +360,19 @@ class EnterpriseAssetManager:
             for kind in ASSET_KINDS:
                 items = data.get(kind)
                 items = [x for x in items if isinstance(x, dict)] if isinstance(items, list) else []
-                example_ids = {x["id"] for x in getattr(self, f"DEFAULT_{kind.upper()}")}
+                defaults = {x["id"]: x for x in getattr(self, f"DEFAULT_{kind.upper()}")}
                 for item in items:
-                    if item.get("status") not in ASSET_STATUSES:
-                        item["status"] = "example" if item.get("id") in example_ids else "confirmed"
-                        migrated = True
+                    if item.get("status") in ASSET_STATUSES:
+                        continue
+                    default = defaults.get(item.get("id"))
+                    if default is not None and all(item.get(k) == v for k, v in default.items()):
+                        item["status"] = "example"
+                    else:
+                        if default is not None:
+                            logger.warning("企业资料 %s[%s] 沿用预设 ID 但内容与预设不一致，按待核实处理：请在企业资产中核对后确认",
+                                           kind, item.get("id"))
+                        item["status"] = "unverified" if default is not None else "confirmed"
+                    migrated = True
                 setattr(self, kind, items)
             if migrated or not data:
                 self._save()  # 写回迁移后的状态；损坏文件已备份时写回空库，避免下次启动补入示例

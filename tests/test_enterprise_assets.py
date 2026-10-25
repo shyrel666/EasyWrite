@@ -99,19 +99,23 @@ def test_missing_file_seeds_examples_once(tmp_path):
 
 
 def test_old_data_without_status_is_migrated(tmp_path):
-    """旧数据迁移：预设示例 ID → example，其余视为用户录入 → confirmed，并写回文件"""
+    """旧数据迁移：内容与预设一致的预设 ID → example；沿用预设 ID 但内容被改过 → unverified（不算示例，
+    不会静默退出撰写，IMPROVEMENT_PLAN §12 遗留风险②）；其余用户录入 → confirmed；写回文件"""
     import json
     from app.services.assets.asset_manager import EnterpriseAssetManager
     path = tmp_path / "enterprise_assets.json"
+    edited = dict(EnterpriseAssetManager.DEFAULT_QUALIFICATIONS[1], name="我司真实资质", cert_no="REAL-1")
     path.write_text(json.dumps({
         "qualifications": [dict(EnterpriseAssetManager.DEFAULT_QUALIFICATIONS[0]),
+                           edited,
                            {"id": "qual_user", "name": "某资质", "cert_no": "X-1", "issue_org": "某机构"}],
         "personnel": [], "cases": [], "components": [],
     }, ensure_ascii=False), encoding="utf-8")
     manager = EnterpriseAssetManager(path)
-    assert {q["id"]: q["status"] for q in manager.qualifications} == {"qual_cmmi5": "example", "qual_user": "confirmed"}
+    assert {q["id"]: q["status"] for q in manager.qualifications} == {
+        "qual_cmmi5": "example", edited["id"]: "unverified", "qual_user": "confirmed"}
     saved = json.loads(path.read_text(encoding="utf-8"))
-    assert [q["status"] for q in saved["qualifications"]] == ["example", "confirmed"]
+    assert [q["status"] for q in saved["qualifications"]] == ["example", "unverified", "confirmed"]
 
 
 def test_add_with_existing_id_updates_in_place(tmp_path):
