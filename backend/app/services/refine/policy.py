@@ -4,7 +4,9 @@
 reports 按时间顺序排列：第一项是原稿（起草稿或当前正文）的检查结果，之后每轮修订一项；
 每项只用到阻塞问题数 blocking_count 与质量问题数 quality_count（SectionCheckReport、候选稿摘要或同名键的字典均可）。
 
-- 没有阻塞问题且质量问题不超过阈值：接受，目标达成
+- 没有阻塞问题、质量问题不超过阈值、且篇幅在预算 ±30% 内：接受，目标达成。
+  篇幅偏离预算单独一票：超出 ±30% 的正文用户需要大量增删才能用，不算目标达成
+  （评估报告 2026-10-09：超出 47% 仍标记"目标达成"）；修订压缩不动时按部分完成接受
 - "有进展"：阻塞问题数下降；或阻塞问题已清零时，质量问题数下降
 - 连续 1 轮无进展：下一轮换一种修改方式（alternate）
 - 连续 2 轮无进展：进入最低目标模式（minimal，此后一直保持）——只处理阻塞问题，阻塞清零即接受，结果为部分完成
@@ -36,6 +38,14 @@ def counts(report: Any) -> Tuple[int, int]:
     return int(get("blocking_count", 0) or 0), int(get("quality_count", 0) or 0)
 
 
+def has_length_issue(report: Any) -> bool:
+    """报告里是否有篇幅问题（偏离字数预算 ±30% 以上，code=length）；只有计数的摘要字典视为没有"""
+    get = report.get if isinstance(report, dict) else (lambda k, d=None: getattr(report, k, d))
+    issues = get("issues") or []
+    code = (lambda i: i.get("code")) if issues and isinstance(issues[0], dict) else (lambda i: getattr(i, "code", ""))
+    return any(code(i) == "length" for i in issues)
+
+
 def progressed(prev: Any, cur: Any) -> bool:
     """cur 相对 prev 是否有进展：阻塞问题数下降；或阻塞问题已清零时，质量问题数下降"""
     pb, pq = counts(prev)
@@ -61,7 +71,7 @@ def decide(
     if not reports:
         raise ValueError("至少需要原稿的检查结果")
     blocking, quality = counts(reports[-1])
-    if blocking == 0 and quality <= quality_threshold:
+    if blocking == 0 and quality <= quality_threshold and not has_length_issue(reports[-1]):
         return Action("accept", outcome="goal_met", stop_reason="goal_met",
                       message="没有阻塞问题" + (f"，质量问题 {quality} 个（不超过 {quality_threshold} 个）" if quality else ""))
 

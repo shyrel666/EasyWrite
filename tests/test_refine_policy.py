@@ -1,12 +1,18 @@
 """阶段 D2：智能完善的提交策略（纯函数）"""
 import pytest
 
-from app.models.schemas import SectionCheckReport
+from app.models.schemas import CheckIssue, SectionCheckReport
 from app.services.refine.policy import decide, progressed, stalls
 
 
 def r(blocking, quality=0):
     return {"blocking_count": blocking, "quality_count": quality}
+
+
+def over_budget(quality=1):
+    """质量问题里有篇幅偏离（code=length）的报告"""
+    return {"blocking_count": 0, "quality_count": quality,
+            "issues": [{"level": "quality", "code": "length", "message": "篇幅偏离字数预算：7224 字 / 预算 4900 字（+47%）"}]}
 
 
 def test_goal_met_when_no_blocking_and_quality_within_threshold():
@@ -60,6 +66,29 @@ def test_default_two_rounds_without_progress_stops_with_no_improvement():
     assert decide(reports, 1, 2).mode == "alternate"
     action = decide(reports + [r(2)], 2, 2)
     assert (action.kind, action.stop_reason) == ("stop", "no_improvement")
+
+
+def test_length_deviation_prevents_goal_met():
+    """评估报告 2026-10-09：正文超出预算 47%、质量问题 1 个时不应标记目标达成"""
+    over = over_budget()
+    assert decide([over], 0, 2).kind == "revise"          # 质量问题数在阈值内，篇幅偏离单独一票：先修
+    # 修订压缩到位：目标达成
+    action = decide([over, r(0, 0)], 1, 2)
+    assert (action.kind, action.outcome, action.stop_reason) == ("accept", "goal_met", "goal_met")
+    # 连续压缩不动（默认 2 轮用尽）：降级为部分完成接受，不叫目标达成
+    action = decide([over, over, over], 2, 2)
+    assert (action.kind, action.outcome, action.stop_reason) == ("accept", "partial", "no_improvement")
+    # 轮数用尽且只有一轮无进展：停止，部分完成
+    action = decide([over, over], 2, 2)
+    assert (action.kind, action.outcome) == ("stop", "partial")
+    # 只有计数、没有 issues 明细的摘要（继续执行时的原稿计数）不受影响
+    assert decide([r(0, 1)], 0, 2).outcome == "goal_met"
+
+
+def test_length_issue_detected_on_report_objects():
+    report = SectionCheckReport(section_id="s", blocking_count=0, quality_count=1,
+                                issues=[CheckIssue(level="quality", code="length", message="篇幅偏离字数预算")])
+    assert decide([report], 0, 2).kind == "revise"
 
 
 def test_requires_a_report():
