@@ -7,6 +7,7 @@ check_section(project, node, text, evidence) 把候选文本放进虚拟大纲�
 | 检查项 | 级别 |
 | 本节承接的评分要点未写到 | 阻塞 |
 | 承诺数值与全局事实冲突（工期、响应/到场时限、质保期、驻场人数、巡检频次、7×24 等） | 阻塞 |
+| 承诺数值不低于全局事实承诺（分阶段里程碑、分级时限、分级巡检等合法写法） | 列入待核实清单 |
 | 正文出现示例资料，或待核实资料未用【待核实】标注 | 阻塞 |
 | 人员在职、劳动关系、社保缴纳等现状断言没有人员资料支撑（未用【待核实】标注） | 阻塞 |
 | 全局事实中没有的具体承诺数值 | 列入待核实清单 |
@@ -199,6 +200,9 @@ TOPIC_LABELS = {
 }
 COMMIT_WORDS = re.compile(r"承诺|保证|确保")
 CLAUSE_SPLIT = re.compile(r"[，,。；;！!？?\n]")
+# 具体动作词优先于泛化词：分句里同时出现"响应"与"到达现场"时，数值判为到场时限
+# （评估 2026-10-25-2：全局事实含多条时限时，"…响应机制…4小时内到达现场"曾被误判为响应时限与事实冲突）
+SPECIFIC_TOPICS = ("duration", "warranty", "onsite", "resolve", "staff", "inspection")
 
 
 def _clause_bounds(text: str, start: int, end: int) -> Tuple[int, int]:
@@ -212,16 +216,18 @@ def _clause_bounds(text: str, start: int, end: int) -> Tuple[int, int]:
 
 
 def _topic(text: str, start: int, end: int, dim: str) -> Optional[str]:
-    """数值所在分句中距离最近、且与量纲相容的承诺类别关键词"""
+    """数值所在分句中距离最近、且与量纲相容的承诺类别关键词；具体动作词（到场/解决/工期等）
+    比泛化词（响应）优先——同为候选时取具体词，避免到场时限被误归为响应时限"""
     a, b = _clause_bounds(text, start, end)
-    best, best_dist = None, None
+    best, best_key = None, None
     for topic, (pattern, dims) in TOPICS.items():
         if dim not in dims:
             continue
         for m in pattern.finditer(text, a, b):
             dist = start - m.end() if m.end() <= start else (m.start() - end if m.start() >= end else 0)
-            if best_dist is None or dist < best_dist:
-                best, best_dist = topic, dist
+            key = (0 if topic in SPECIFIC_TOPICS else 1, dist)
+            if best_key is None or key < best_key:
+                best, best_key = topic, key
     return best
 
 
@@ -287,6 +293,39 @@ def fact_quantities(facts: GlobalFacts) -> List[Dict[str, Any]]:
     return out
 
 
+# 巡检频次归一：单位时间内的次数（次/天），次数多 = 更优
+PERIOD_DAYS = {"日": 1, "天": 1, "周": 7, "月": 30, "季度": 90, "半年": 180, "年": 365}
+
+
+def _better_or_equal(fact: Dict[str, Any], q: Dict[str, Any]) -> Optional[bool]:
+    """正文数值是否不劣于事实承诺：时限/期限更短、服务窗口更宽、巡检更频为优。不可比（如工作日与日历天）返回 None。
+
+    评估 2026-10-25-2：分阶段里程碑（进场 7 日历天 < 总工期 30 日历天）、分级巡检（日检相对事实的月检）
+    是常见且合法的写法，原判定一律记"与全局事实不一致"，制造大量阻塞误报；不劣于事实的取值改为列入待核实。"""
+    x, y = fact["value"], q["value"]
+    if isinstance(x, float) and isinstance(y, float):
+        return y <= x
+    if isinstance(x, str) and isinstance(y, str) and "×" in x and "×" in y:  # 服务窗口 N×M：每周覆盖时长更宽为优
+        try:
+            ax, bx = (int(v) for v in x.split("×"))
+            ay, by = (int(v) for v in y.split("×"))
+        except ValueError:
+            return None
+        return ay * by >= ax * bx
+    if isinstance(x, str) and isinstance(y, str) and ":" in x and ":" in y:  # 巡检频次 周期:次数
+        px, _, cx = x.partition(":")
+        py, _, cy = y.partition(":")
+        if px not in PERIOD_DAYS or py not in PERIOD_DAYS:
+            return None
+        try:
+            per_fact = float(cx) / PERIOD_DAYS[px]
+            per_text = float(cy) / PERIOD_DAYS[py]
+        except ValueError:
+            return None
+        return per_text >= per_fact
+    return None
+
+
 def _check_commitments(text: str, facts: GlobalFacts) -> Tuple[List[CheckIssue], List[VerifyItem]]:
     known = fact_quantities(facts)
     issues: List[CheckIssue] = []
@@ -302,6 +341,14 @@ def _check_commitments(text: str, facts: GlobalFacts) -> Tuple[List[CheckIssue],
             continue
         label = TOPIC_LABELS.get(topic or "", "承诺数值")
         if same_topic:
+            if any(_better_or_equal(f, q) for f in same_topic):
+                # 优于或不劣于事实承诺：分阶段里程碑、分级时限与分级巡检常见于此，不算冲突，列入待核实
+                key = (topic, str(q["value"]))
+                if key not in seen:
+                    seen.add(key)
+                    verify.append(VerifyItem(kind="commitment", text=excerpt, line=line,
+                                             note=f"{label}「{q['label']}」不低于全局事实承诺，属分阶段/分档安排，确认后保留"))
+                continue
             facts_text = "；".join(dict.fromkeys(f["fact"] for f in same_topic))
             issues.append(CheckIssue(level="blocking", code="fact_conflict", excerpt=excerpt, line=line,
                                      message=f"{label}与全局事实不一致：正文为「{q['label']}」，全局事实为「{facts_text}」"))

@@ -81,13 +81,13 @@ def test_commitment_conflicts_with_facts_are_blocking(project):
             "项目工期为120日历天。质保期3年。每季度巡检1次。提供7×24小时服务。")
     r = _check(project, "sec_2", text, facts=SLA)
     conflicts = [i.message for i in r.issues if i.code == "fact_conflict"]
-    assert len(conflicts) == 6
+    # 7×24 相对事实的 5×8 窗口更宽：优于事实，不算冲突，列入待核实
+    assert len(conflicts) == 5
     assert any("响应时限" in m and "2小时" in m for m in conflicts)
     assert any("到场时限" in m and "4小时" in m for m in conflicts)
     assert any("工期" in m and "120日历天" in m for m in conflicts)
     assert any("质保期" in m and "3年" in m for m in conflicts)
     assert any("巡检频次" in m for m in conflicts)
-    assert any("服务时间" in m and "7×24" in m for m in conflicts)
     conflict = next(i for i in r.issues if i.code == "fact_conflict")
     assert conflict.line == 1 and "2小时内响应" in conflict.excerpt
 
@@ -104,6 +104,32 @@ def test_matching_commitments_pass_and_unknown_ones_go_to_verify_list(project):
     r = _check(project, "sec_2", "4小时内到达现场，工期100日历天。", facts=GlobalFacts())
     assert "fact_conflict" not in _codes(r)
     assert [v.kind for v in r.pending_verification] == ["commitment", "commitment"]
+
+
+def test_fact_conflicts_tolerate_tiers_and_milestones(project):
+    """评估 2026-10-25-2 修复：分阶段里程碑与分级巡检优于事实承诺时只列待核实；劣于事实仍阻塞"""
+    facts = GlobalFacts(
+        sla_commitment="接到报修后30分钟内响应，4小时内到达现场；重大故障2小时内恢复",
+        delivery_guarantee="中标后30日历天内完成进场接管",
+        custom_facts={"巡检频次": "每月1次现场全面巡检，每周1次远程健康检查"})
+    text = ("故障响应4小时内到达现场处置。实施分阶段推进：进场准备7日历天，系统部署15日历天完成。"
+            "实行分级巡检，开展日巡检，每日1次。")
+    r = _check(project, "sec_2", text, facts=facts)
+    assert "fact_conflict" not in _codes(r)
+    notes = " ".join(v.note for v in r.pending_verification if v.kind == "commitment")
+    assert "7日历天" in notes and "不低于全局事实承诺" in notes
+
+    # 劣于事实：总工期 120 日历天、季度巡检仍为阻塞
+    r = _check(project, "sec_2", "全部实施工作120日历天内完成，每季度巡检1次。", facts=facts)
+    conflicts = [i.message for i in r.issues if i.code == "fact_conflict"]
+    assert len(conflicts) == 2 and any("120日历天" in m for m in conflicts) and any("巡检" in m for m in conflicts)
+
+
+def test_onsite_keyword_beats_response_in_same_clause():
+    """同一分句中"响应…到达现场"：数值判为到场时限（具体词优先），与事实的到场时限比对而非响应"""
+    from app.services.checker.section_check import extract_quantities
+    qs = extract_quantities("故障响应4小时内到达现场处置")
+    assert [(q["topic"], q["label"]) for q in qs] == [("onsite", "4小时")]
 
 
 def test_numbers_in_placeholders_and_diagrams_are_ignored(project):
