@@ -36,7 +36,7 @@ def test_sections_placeholders_assets_and_review(client, project_id):
     outline = [{"id": "sec_1", "title": "第一章 方案", "level": 1, "children": [
         {"id": "sec_1_1", "title": "1.1 空白", "level": 2},
         {"id": "sec_1_2", "title": "1.2 有占位", "level": 2, "status": "completed", "last_refs": [asset_ref],
-         "content": "响应时限【待填写】，人员【待核实：李工的证书】，工期【待填写】。"},
+         "content": "响应时限【待填写】，人员【待核实：李工的证书】，工期【待填写】，我方（【投标人全称：待填写】）承担保修。"},
         {"id": "sec_1_3", "title": "1.3 已校审", "level": 2, "status": "reviewed", "content": "完整正文"},
     ]}]
     client.put(f"/api/v1/project/{project_id}/outline", json={"outline": outline})
@@ -44,8 +44,10 @@ def test_sections_placeholders_assets_and_review(client, project_id):
 
     assert [d["section_id"] for d in checks["unwritten"]["details"]] == ["sec_1_1"]
     ph = checks["placeholders"]
-    assert ph["status"] == "warn" and ph["count"] == 3
+    assert ph["status"] == "warn" and ph["count"] == 4
     assert ph["details"][0]["section_id"] == "sec_1_2" and "【待核实：李工的证书】" in ph["details"][0]["detail"]
+    # 带标签前缀的占位（【投标人全称：待填写】）也要计入：只匹配以"待填写/待核实"开头的括号会漏掉这种写法
+    assert "【投标人全称：待填写】" in ph["details"][0]["detail"]
     assert checks["unverified_assets"]["details"] == [{"title": "1.2 有占位", "detail": "李工", "section_id": "sec_1_2"}]
     assert [d["section_id"] for d in checks["unreviewed"]["details"]] == ["sec_1_2"]
 

@@ -8,6 +8,7 @@ check_section(project, node, text, evidence) 把候选文本放进虚拟大纲�
 | 本节承接的评分要点未写到 | 阻塞 |
 | 承诺数值与全局事实冲突（工期、响应/到场时限、质保期、驻场人数、巡检频次、7×24 等） | 阻塞 |
 | 正文出现示例资料，或待核实资料未用【待核实】标注 | 阻塞 |
+| 人员在职、劳动关系、社保缴纳等现状断言没有人员资料支撑（未用【待核实】标注） | 阻塞 |
 | 全局事实中没有的具体承诺数值 | 列入待核实清单 |
 | 篇幅偏离字数预算超过 ±30%（正文字数，不计 Mermaid 图代码与 Markdown 符号） | 质量 |
 | 重复本节标题、使用 # 标题、套话与口语化表述 | 质量 |
@@ -22,6 +23,7 @@ from app.models.schemas import (
     CheckIssue, GlobalFacts, OutlineNode, PointCheck, Project, ScoringItem, SectionCheckReport, VerifyItem,
 )
 from app.services.assets.material_check import MATERIAL_KINDS, asset_name
+from app.services.checker.placeholders import PLACEHOLDER, VERIFY_MARK
 from app.services.checker.quality_inspector import DE_AI_CLICHE_PATTERNS, INFORMAL_OR_WEAK_PHRASES
 from app.services.checker.scoring_coverage import is_mentioned
 from app.services.generator import rubric_planner as rp
@@ -35,7 +37,6 @@ logger = logging.getLogger("easywrite.section_check")
 LENGTH_TOLERANCE = 0.3
 EXCERPT_RADIUS = 18
 MAX_LLM_CLAIMS = 10
-PLACEHOLDER = re.compile(r"【(?:待填写|待核实)[^】]{0,80}】")
 CODE_BLOCK = re.compile(r"```.*?(?:```|$)", re.S)
 
 # 本节自身要求中的评分要点（rubric_planner 生成大纲时写入）："评分子项：X（10分）"/"评分要点：X"/"须覆盖：X"
@@ -342,18 +343,18 @@ def _compact_index(text: str) -> Tuple[str, List[int]]:
 
 
 def _marked(text: str, start: int, end: int, spans: List[Tuple[int, int]]) -> bool:
-    """出现处位于【待核实…】内，或同一句中紧随其后有【待核实】标注"""
+    """出现处位于【…待核实…】内，或同一句中紧随其后有【…待核实…】标注"""
     if any(a <= start and end <= b for a, b in spans):
         return True
     _, b = _clause_bounds(text, start, end)
     sentence_end = text.find("。", end)
     limit = min(b + 40, sentence_end if sentence_end >= 0 else len(text))
-    return "【待核实" in text[end:limit]
+    return VERIFY_MARK.search(text[end:limit]) is not None
 
 
 def _check_assets(text: str, assets: Dict) -> Tuple[List[CheckIssue], List[VerifyItem]]:
     compact, pos = _compact_index(text)
-    verify_spans = [(m.start(), m.end()) for m in re.finditer(r"【待核实[^】]{0,80}】", text)]
+    verify_spans = [(m.start(), m.end()) for m in VERIFY_MARK.finditer(text)]
     issues: List[CheckIssue] = []
     verify: List[VerifyItem] = []
     usable_ids = {i for kind in MATERIAL_KINDS for item in assets.get(kind, [])
@@ -383,6 +384,44 @@ def _check_assets(text: str, assets: Dict) -> Tuple[List[CheckIssue], List[Verif
                                              message=f"待核实资料「{name}」未用【待核实】标注：未经企业确认的资料只能写作【待核实：…】"))
                 break
     return issues, verify
+
+
+# ---------------- 人员现状断言 ----------------
+
+# 在职、劳动关系、社保缴纳是企业现状事实，不能由招标要求推导：人员资料没有依据时不得作肯定性断言，
+# 只能写"拟派/拟投入"的计划性表述或用【待核实】占位（评估报告 2026-10-09 优先问题：
+# 企业资料为 0 时正文仍声称"全部为直接聘用并依法缴纳社会保险的在职员工"）
+EMPLOYMENT_CLAIM = re.compile(
+    r"(?:依法?缴纳[^，。；;\n]{0,6}社会保险|社会保险缴纳单位|社保缴纳单位|签订[^，。；;\n]{0,8}劳动合同"
+    r"|直接聘用|正式在职|在职员工|在职人员|自有员工|自有人员|专职员工)"
+)
+# 计划性表述（中标后怎么做）是对未来的承诺，不是对企业现状的断言
+EMPLOYMENT_PLAN_GUARD = re.compile(r"中标后|合同签订后|签订合同后|录用后|入职后|进场后|拟派|拟聘|拟投入|拟任")
+
+
+def _check_employment(text: str, assets: Dict) -> List[CheckIssue]:
+    """人员资料库没有可用条目（示例资料不算）时，正文中带肯定性语气的在职/劳动关系/社保断言均为无依据。
+
+    录入了人员资料时不检查：断言是否与资料相符交给模型评审判断，规则层没有判据，避免误报。"""
+    if any(i.get("status") != "example" for i in assets.get("personnel", [])):
+        return []
+    verify_spans = [(m.start(), m.end()) for m in VERIFY_MARK.finditer(text)]
+    issues: List[CheckIssue] = []
+    last_clause = (-1, -1)
+    for m in EMPLOYMENT_CLAIM.finditer(text):
+        a, b = _clause_bounds(text, m.start(), m.end())
+        if a < last_clause[1] and b > last_clause[0]:
+            continue  # 同一分句只报一次（"直接聘用并依法缴纳社会保险的在职员工"命中三处）
+        if _marked(text, m.start(), m.end(), verify_spans):
+            continue
+        if EMPLOYMENT_PLAN_GUARD.search(text, a, b):
+            continue
+        last_clause = (a, b)
+        excerpt, line = _locate(text, m.start(), m.end())
+        issues.append(CheckIssue(level="blocking", code="employment_claim", excerpt=excerpt, line=line,
+                                 message="人员在职、劳动关系、社保缴纳等企业现状断言没有人员资料支撑："
+                                         "只能写“拟派/拟投入”的计划性表述，或改为【待核实：…】"))
+    return issues
 
 
 # ---------------- 质量 ----------------
@@ -492,10 +531,12 @@ def check_section(
         return report
 
     analysed = _mask(text, CODE_BLOCK)  # 架构图代码不参与数值与资料检查
+    snapshot = evidence.asset_snapshot()
     points, point_issues = _check_points(project, node, text)
     commitment_issues, commitment_verify = _check_commitments(_mask(analysed, PLACEHOLDER), project.facts)
-    asset_issues, asset_verify = _check_assets(analysed, evidence.asset_snapshot())
-    issues = point_issues + commitment_issues + asset_issues + _check_quality(text, node)
+    asset_issues, asset_verify = _check_assets(analysed, snapshot)
+    employment_issues = _check_employment(analysed, snapshot)
+    issues = point_issues + commitment_issues + asset_issues + employment_issues + _check_quality(text, node)
     verify = commitment_verify + asset_verify + _placeholders(text)
 
     if llm_review:

@@ -99,6 +99,24 @@ def test_revision_prompt_uses_base_text_and_issues():
     assert "编写任务" not in built["user"]
 
 
+def test_personnel_section_by_member_keyword_gets_employment_discipline(no_retrieval):
+    """评估报告 2026-10-09 优先问题："6.4 拟派26名其他成员"不含"人员/团队"字样，此前既无资料也无纪律约束"""
+    node = OutlineNode(id="sec_6_4", title="6.4 拟派26名其他成员")
+    evidence = select_evidence(_project(node), node)
+    assert "尚未录入" in evidence.asset_context and "社保" in evidence.asset_context
+    built = section_generator.build_prompts(section_title=node.title, section_path=node.title,
+                                            requirements=[], evidence=evidence)
+    assert "在职" in built["system"] and "拟派" in built["system"]  # 团队专项提示按"成员/拟派"命中
+    assert "不得断言" in built["user"]
+
+
+def test_empty_asset_context_still_states_discipline():
+    """选材结果为空（章节没有匹配到任何企业资料）时，提示词仍要写明企业现状纪律"""
+    built = section_generator.build_prompts(section_title="2.1 架构设计", section_path="2.1 架构设计",
+                                            requirements=[], evidence=EvidenceSet())
+    assert "无可用条目" in built["user"] and "不得作肯定性断言" in built["user"]
+
+
 def test_prompts_cap_length_near_the_task():
     """阶段 E：只在开头写目标字数时正文全部超出预算；起草与修订的任务说明里都写明上限（只处理阻塞问题时不提篇幅）"""
     outline = [OutlineNode(id="sec_1_1", title="1.1 运维流程", word_budget=2000)]
@@ -140,12 +158,16 @@ def test_stream_selects_evidence_once_and_saves_asset_refs(client, project_id, m
 
 def test_expired_or_foreign_assets_are_excluded_from_prompts(no_retrieval):
     """证书过期（含投标截止日前到期）、所属主体与投标人不一致的资料不进入提示词，记为已排除"""
+    from datetime import date, timedelta
+
     from app.models.schemas import CompanyQualification
+    soon = date.today() + timedelta(days=6)   # 截止日前到期：日期须相对今天取，写死会在时间过后变成"已过期"
+    deadline = date.today() + timedelta(days=11)
     asset_manager.add_qualification(CompanyQualification(
         id="q_old", name="ISO9001 质量管理体系认证", cert_no="OLD-1", issue_org="某认证中心", expiry_date="2020-01-01"))
     asset_manager.add_qualification(CompanyQualification(
         id="q_soon", name="ISO20000 信息技术服务管理体系认证", cert_no="SOON-1", issue_org="某认证中心",
-        expiry_date="2026-10-15"))
+        expiry_date=soon.isoformat()))
     asset_manager.add_qualification(CompanyQualification(
         id="q_ok", name="ISO27001 信息安全管理体系认证", cert_no="OK-1", issue_org="某认证中心",
         status="unverified"))  # 待核实、无附件：仍可使用（以【待核实】标注）
@@ -154,14 +176,15 @@ def test_expired_or_foreign_assets_are_excluded_from_prompts(no_retrieval):
     node = OutlineNode(id="sec_q", title="5.1 企业资质证书")
     project = _project(node).model_copy(update={
         "facts": GlobalFacts(company_name="重庆某某科技有限公司"),
-        "tender_analysis": TenderAnalysis18(submission_deadline="2026年10月20日09:30"),
+        "tender_analysis": TenderAnalysis18(
+            submission_deadline=f"{deadline.year}年{deadline.month}月{deadline.day}日09:30"),
     })
     evidence = select_evidence(project, node)
     assert [a["asset_id"] for a in evidence.assets] == ["q_ok"]
     assert {a["asset_id"] for a in evidence.excluded_assets} == {"q_old", "q_soon"}
     assert "OLD-1" not in evidence.asset_context and "SOON-1" not in evidence.asset_context
     reasons = {a["asset_id"]: a["reason"] for a in evidence.excluded_assets}
-    assert "早于投标截止日 2026-10-20" in reasons["q_soon"]
+    assert f"早于投标截止日 {deadline.isoformat()}" in reasons["q_soon"]
     assert [r["ref_type"] for r in evidence.ref_records()] == ["asset", "asset_excluded", "asset_excluded"]
 
     # 相关条目全被排除时不改用其他人员，只说明已排除

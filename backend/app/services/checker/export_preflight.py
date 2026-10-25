@@ -3,15 +3,14 @@
 未撰写章节、剩余【待填写】/【待核实】占位、用了待核实资料的章节、证明材料缺口、未校审章节、
 最近一次废标核查中未响应的红线条款、偏离表中仍为"待生成"的条目。
 """
-import re
 from typing import Any, Dict, List, Optional
 
 from app.models.schemas import OutlineNode, Project
 from app.services.assets.asset_manager import asset_manager
 from app.services.assets.evidence import evidence_report
 from app.services.assets.material_check import COMPLETE
+from app.services.checker.placeholders import PLACEHOLDER
 
-PLACEHOLDER = re.compile(r"【(?:待填写|待核实)[^】]{0,60}】")
 MAX_DETAILS = 50
 OK, WARN, UNKNOWN = "ok", "warn", "unknown"
 

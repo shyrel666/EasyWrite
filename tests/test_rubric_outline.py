@@ -189,6 +189,17 @@ def test_is_mentioned_tolerates_rewording():
     assert not is_mentioned("数据清洗", "本章阐述运维流程")
 
 
+def test_is_mentioned_tolerates_enumeration_punctuation():
+    """评估报告 2026-10-09：顿号/虚词差异曾把已写到的要点判为缺失，触发多余的修订轮次"""
+    # 顿号分隔的并列表述：正文分别写"硬件运维方案""软件运维方案"
+    assert is_mentioned("软、硬件的运维方案",
+                        "硬件运维方案：设备健康监测与备件更换。软件运维方案：系统补丁与数据库巡检。")
+    # 正文里多一个"的"、用"与"不用"和"
+    assert is_mentioned("风险的防范和应对", "风险的防范与应对：建立风险登记册，动态管控。")
+    # 正文完全没写时仍应判缺失
+    assert not is_mentioned("软、硬件的运维方案", "本章阐述项目组织与进度管理制度。")
+
+
 def test_quality_report_uses_real_coverage():
     report = quality_inspector.inspect_quality(_outline_with_content(), GlobalFacts(), [], ANALYSIS)
     d7 = next(d for d in report.dimensions if d.dimension_name.startswith("7."))

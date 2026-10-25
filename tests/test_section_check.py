@@ -4,6 +4,7 @@ import pytest
 from app.core.llm_client import llm_client
 from app.models.schemas import GlobalFacts, OutlineNode
 from app.services.checker import section_check as sc
+from app.services.generator.evidence_set import EvidenceSet
 from app.services.project_store import find_node, project_store
 from app.services.rag.retriever import retrieval_service
 
@@ -133,6 +134,38 @@ def test_example_and_unmarked_unverified_assets_are_blocking(project, client):
     # 示例清空后同名文本不再报示例资料
     client.delete("/api/v1/assets/examples")
     assert "example_asset" not in _codes(_check(project, "sec_2", "项目经理由张文远担任。"))
+
+
+def test_employment_claims_blocked_without_personnel_data(project):
+    """评估报告 2026-10-09 优先问题：企业没有人员资料时，在职/劳动关系/社保现状断言为无依据（阻塞）"""
+    no_staff = EvidenceSet(library_snapshot={"personnel": [], "qualifications": [], "cases": []})
+    text = "本项目成员全部为投标人直接聘用并依法缴纳社会保险的在职员工。"
+    r = _check(project, "sec_2", text, evidence=no_staff)
+    claims = [i for i in r.issues if i.code == "employment_claim"]
+    # 同一分句命中"直接聘用""依法缴纳社会保险""在职员工"三处，只报一次
+    assert len(claims) == 1 and claims[0].level == "blocking" and not r.passed
+    assert "在职" in claims[0].message and "拟派" in claims[0].message
+
+    # 已用【待核实】标注的不算（带标签前缀的待核实占位同样有效）
+    marked = "成员名单及用工情况为【在职员工与社保缴纳情况：待核实】，投标前补齐证明。"
+    assert "employment_claim" not in _codes(_check(project, "sec_2", marked, evidence=no_staff))
+
+    # 计划性表述（中标后怎么做）不是企业现状断言
+    plan = "中标后与全体项目成员签订劳动合同并依法缴纳社会保险。"
+    assert "employment_claim" not in _codes(_check(project, "sec_2", plan, evidence=no_staff))
+
+    # 录入了人员资料：断言与资料是否相符交给模型评审，规则层不判
+    with_staff = EvidenceSet(library_snapshot={"personnel": [
+        {"id": "p1", "name": "王工", "role": "项目经理", "status": "confirmed"}]})
+    assert "employment_claim" not in _codes(_check(project, "sec_2", text, evidence=with_staff))
+
+
+def test_labelled_placeholders_are_listed_and_numbers_inside_ignored(project):
+    """【投标人全称：待填写】这类带标签前缀的占位也要列出，其中的数值不算承诺"""
+    r = _check(project, "sec_2", "我方（【投标人全称：待填写】）承诺质保期【质保期：待填写1年】。")
+    texts = [v.text for v in r.pending_verification if v.kind == "placeholder"]
+    assert "【投标人全称：待填写】" in texts and "【质保期：待填写1年】" in texts
+    assert "commitment" not in [v.kind for v in r.pending_verification]
 
 
 def test_quality_checks(project):

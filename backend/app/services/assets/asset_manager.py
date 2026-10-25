@@ -767,11 +767,13 @@ class EnterpriseAssetManager:
                 matched["context_text"] = self._excluded_note(self.KIND_TITLES[kind], len(dropped)) if dropped else missing
             return matched
 
-        # 1. 团队人员/组织架构章节
+        # 1. 团队人员/组织架构章节（"成员""拟派"覆盖"6.4 拟派26名其他成员"这类不含"人员/团队"字样的标题）
         if any(kw in text for kw in ["实施团队", "人员配置", "项目团队", "项目经理", "架构师", "技术人员",
-                                     "人员资质", "人员要求", "团队成员", "项目负责人", "技术负责人"]):
+                                     "人员资质", "人员要求", "团队成员", "项目负责人", "技术负责人", "成员", "拟派"]):
             return fill("personnel", "personnel", "企业资料：拟任团队人员", usable("personnel"),
-                        "【拟任团队人员】企业尚未录入人员资料：人员姓名、证书、从业年限按事实完备纪律处理，不得编造。")
+                        "【拟任团队人员】企业尚未录入人员资料：人员姓名、证书、从业年限，以及劳动关系、"
+                        "社保缴纳、在职状态，都按事实完备纪律处理——不得断言人员为在职、正式员工或已缴纳社保，"
+                        "只写“拟派/拟投入”，或用【待核实：…】占位。")
 
         # 2. 资质资信/合规准入章节
         if any(kw in text for kw in ["资质", "准入", "CMMI", "ISO", "高新", "涉密", "信用"]):

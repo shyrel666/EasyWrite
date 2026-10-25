@@ -19,6 +19,14 @@ from app.services.text_stats import body_chars
 
 MIN_LENGTH_RATIO = 0.3
 FILLER = re.compile(r"方案|措施|计划|情况|内容|的|及|与|和|等|对")
+# 分隔标点（顿号、斜杠、句读等）：要点与正文两侧同样去除后再比对。
+# "软、硬件的运维方案"去顿号后核心词为"软件运维"，正文分别写出"软件运维方案""硬件运维方案"才能对上；
+# 否则顿号会进入二字片段（"软、""、硬"），正文里永远凑不齐 70%，把已写到的要点误判为缺失
+SEP = re.compile(r"[\s、，,。．.；;：:/／()（）【】\[\]·]")
+
+
+def _normalize(text: str) -> str:
+    return FILLER.sub("", SEP.sub("", text))
 
 
 def _subtree(node: OutlineNode) -> List[OutlineNode]:
@@ -40,18 +48,22 @@ def _bigrams(text: str) -> set:
 
 
 def point_overlap(point: str, text: str) -> float:
-    """要点与文本的贴近度：原文或去虚词核心词整体出现记 1，否则为核心词二字片段在文本中出现的比例"""
+    """要点与文本的贴近度：原文或归一化核心词整体出现记 1，否则为核心词二字片段在归一化文本中出现的比例。
+
+    归一化在要点与文本两侧同样进行（去空白、分隔标点与虚词），容忍“软、硬件”对“软硬件”、
+    “风险的防范和应对”对“风险防范与应对”这类标点与虚词差异；阈值仍是 0.7。"""
     compact = re.sub(r"\s+", "", text)
     p = re.sub(r"\s+", "", point)
     if not p or p in compact:
         return 1.0
-    core = FILLER.sub("", p)
-    if len(core) >= 2 and core in compact:
+    core = _normalize(point)
+    norm_text = _normalize(text)
+    if len(core) >= 2 and core in norm_text:
         return 1.0
     grams = _bigrams(core)
     if len(grams) < 2:
         return 0.0
-    return sum(1 for g in grams if g in compact) / len(grams)
+    return sum(1 for g in grams if g in norm_text) / len(grams)
 
 
 def is_mentioned(point: str, text: str) -> bool:
