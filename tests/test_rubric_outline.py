@@ -200,6 +200,15 @@ def test_is_mentioned_tolerates_enumeration_punctuation():
     assert not is_mentioned("软、硬件的运维方案", "本章阐述项目组织与进度管理制度。")
 
 
+def test_is_mentioned_tolerates_inserted_word():
+    """评估报告 2026-10-25：核心词被一个插入词隔开（运维服务体系/应急处置预案）曾各缺一个二字片段（2/3）"""
+    assert is_mentioned("运维体系", "2.1.2 运维服务体系建设：形成分级受理、闭环处置的运维机制。")
+    assert is_mentioned("应急预案", "5.1.6 应急处置预案：每半年演练一次并修订预案。")
+    # 分开写到别处、没有真正论述该要点的仍应判缺失（间隔超过 2 个字符不拼凑）
+    assert not is_mentioned("运维体系", "建立运维窗口制度与值班体系。")
+    assert not is_mentioned("应急预案", "应急响应与故障处置流程如上。")
+
+
 def test_quality_report_uses_real_coverage():
     report = quality_inspector.inspect_quality(_outline_with_content(), GlobalFacts(), [], ANALYSIS)
     d7 = next(d for d in report.dimensions if d.dimension_name.startswith("7."))

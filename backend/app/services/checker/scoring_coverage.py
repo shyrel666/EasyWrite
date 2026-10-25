@@ -29,6 +29,18 @@ def _normalize(text: str) -> str:
     return FILLER.sub("", SEP.sub("", text))
 
 
+def _gap_subsequence(core: str, text: str, max_gap: int = 2) -> bool:
+    """core 各字符按顺序在 text 中出现，相邻字符间最多隔 max_gap 个字符。
+
+    覆盖核心词被一个插入词隔开的写法：要点"运维体系"对正文"运维服务体系建设"、
+    "应急预案"对"应急处置预案"——二字片段各缺一个（2/3），但要点确实写到了。
+    用正则的回溯匹配而不是逐字符贪心，跳过前面凑不齐的出现位置。"""
+    if not core:
+        return False
+    sep = ".{0," + str(max_gap) + "}"
+    return re.search(sep.join(re.escape(ch) for ch in core), text) is not None
+
+
 def _subtree(node: OutlineNode) -> List[OutlineNode]:
     out = [node]
     for c in node.children:
@@ -59,6 +71,8 @@ def point_overlap(point: str, text: str) -> float:
     core = _normalize(point)
     norm_text = _normalize(text)
     if len(core) >= 2 and core in norm_text:
+        return 1.0
+    if len(core) >= 3 and _gap_subsequence(core, norm_text):
         return 1.0
     grams = _bigrams(core)
     if len(grams) < 2:
