@@ -3,7 +3,8 @@
 
 - 创建（propose）：对候选文本做规则检查（C1）、计算输入清单，状态为 checked；同一章节其他待处理的候选稿标为 superseded
 - 输入清单（compute_manifest）：生成时实际使用的依据的内容指纹（SHA-256）——全局事实、本节承接的评分项、
-  评分项关联的资料、知识库引用的锁定与排除、本节标题路径与字数预算、章节要求、所用企业资料（逐条）。由服务端计算，不接受模型自述
+  评分项关联的资料、知识库引用的锁定与排除、所用的知识库片段（按 chunk_id + 内容，文档更新或重建索引后即视为变化）、
+  本节标题路径与字数预算、章节要求、所用企业资料（逐条）。由服务端计算，不接受模型自述
 - 采纳（apply_proposal）：在 project_store.update 的同一写锁与事务内依次判断——已采纳则直接返回原结果（候选稿 ID 即幂等键）；
   修订号与生成时不同 → 409 正文已变化；按当前状态重算的输入清单与记录不一致 → 409 依据已变化；
   否则写入正文（修订号 +1、来源 proposal）、历史版本快照与候选稿 applied 状态，三者同一事务提交
@@ -27,6 +28,7 @@ from app.services.checker.section_check import check_section
 from app.services.generator import rubric_planner as rp
 from app.services.generator.evidence_set import EvidenceSet
 from app.services.project_store import find_node, now_str
+from app.services.rag.indexer import knowledge_index
 from app.services.section_content import save_section_content
 from app.services.text_stats import body_chars
 
@@ -36,6 +38,7 @@ REFINE_ORIGINS = ("refine_draft", "refine")
 # 资料指纹不含附件与确认时间：补传证书附件不改变正文依据；状态（待核实 → 已确认）属于依据
 ASSET_VOLATILE_FIELDS = ("attachments", "confirmed_at")
 ASSET_PREFIX = "asset:"
+KB_PREFIX = "kb:"
 
 
 # ---------------- 输入清单 ----------------
@@ -64,13 +67,20 @@ def evidence_asset_keys(evidence: EvidenceSet) -> List[str]:
     return list(dict.fromkeys(keys))
 
 
+def _kb_sha(chunk_id: str, content: str) -> str:
+    """片段指纹只取 chunk_id 与内容：检索分数随查询变化，不进指纹；文档更新或重建索引后
+    chunk_id 变化或消失时按已删除处理，同样触发「依据已变化」"""
+    return _sha({"chunk_id": chunk_id, "content": content})
+
+
 def compute_manifest(
     project: Project, node: OutlineNode,
     evidence: Optional[EvidenceSet] = None, asset_keys: Optional[List[str]] = None,
+    kb_ids: Optional[List[str]] = None,
 ) -> Dict[str, Dict[str, str]]:
     """
-    输入清单 {键: {label, sha}}。生成时传 evidence（取其中用到的资料）；采纳时传记录中的 asset_keys，
-    逐条按当前资料库重新计算（资料被删除时 sha 为 deleted）。
+    输入清单 {键: {label, sha}}。生成时传 evidence（取其中用到的资料与知识库片段）；采纳时传记录中的
+    asset_keys / kb_ids，逐条按当前资料库与知识库重新计算（被删除时 sha 为 deleted）。
     """
     items = {it.id: it for it in rp.target_items(project.tender_analysis)}
     manifest = {
@@ -85,6 +95,23 @@ def compute_manifest(
                     "sha": _sha({"path": section_path(project.outline, node.id), "word_budget": node.word_budget})},
         "requirements": {"label": "本节要求", "sha": _sha(node.requirements)},
     }
+    if evidence is not None:
+        # 生成时：refs 自带片段内容，直接指纹，不查索引
+        for ref in evidence.refs:
+            cid = ref.get("chunk_id", "")
+            if not cid or KB_PREFIX + cid in manifest:
+                continue
+            title = ref.get("section_title") or cid
+            manifest[KB_PREFIX + cid] = {"label": f"知识库片段：{title}", "sha": _kb_sha(cid, ref.get("content", ""))}
+    else:
+        # 采纳时：按记录的 chunk_id 查当前索引（文档更新或重建索引后旧片段消失，按已删除处理）
+        for cid in (kb_ids or []):
+            chunk = knowledge_index.get_chunk(cid)
+            if chunk is None:
+                manifest[KB_PREFIX + cid] = {"label": f"知识库片段（已删除）：{cid}", "sha": "deleted"}
+                continue
+            title = chunk.get("section_title") or cid
+            manifest[KB_PREFIX + cid] = {"label": f"知识库片段：{title}", "sha": _kb_sha(cid, chunk.get("content", ""))}
     keys = asset_keys if asset_keys is not None else (evidence_asset_keys(evidence) if evidence else [])
     snapshot = evidence.asset_snapshot() if evidence is not None else None
     for key in keys:
@@ -101,6 +128,10 @@ def compute_manifest(
 
 def manifest_asset_keys(manifest: Dict[str, Dict[str, str]]) -> List[str]:
     return [k[len(ASSET_PREFIX):] for k in manifest if k.startswith(ASSET_PREFIX)]
+
+
+def manifest_kb_chunk_ids(manifest: Dict[str, Dict[str, str]]) -> List[str]:
+    return [k[len(KB_PREFIX):] for k in manifest if k.startswith(KB_PREFIX)]
 
 
 def diff_manifest(old: Dict[str, Dict[str, str]], new: Dict[str, Dict[str, str]]) -> List[Dict[str, str]]:
@@ -268,7 +299,8 @@ def proposal_state(project: Project, row: SectionProposal) -> Dict[str, Any]:
         return {"section_exists": False, "current_content": "", "current_revision": None,
                 "content_changed": True, "basis_changes": []}
     stored = json.loads(row.input_manifest_json or "{}")
-    changes = diff_manifest(stored, compute_manifest(project, node, asset_keys=manifest_asset_keys(stored)))
+    changes = diff_manifest(stored, compute_manifest(project, node, asset_keys=manifest_asset_keys(stored),
+                                                     kb_ids=manifest_kb_chunk_ids(stored)))
     return {"section_exists": True, "current_content": node.content, "current_revision": node.revision,
             "current_status": node.status,
             "content_changed": node.revision != row.base_revision, "basis_changes": changes}
@@ -301,6 +333,7 @@ def apply_proposal(project_id: str, section_id: str, proposal_id: str) -> Dict[s
         return _applied(row, already=True)
     stored = json.loads(row.input_manifest_json or "{}")
     asset_keys = manifest_asset_keys(stored)
+    kb_ids = manifest_kb_chunk_ids(stored)
 
     def check(project: Project, node: OutlineNode):
         current = proposal_store.get(project_id, proposal_id)  # 写锁内重新读取：重复采纳只有一次生效
@@ -313,7 +346,7 @@ def apply_proposal(project_id: str, section_id: str, proposal_id: str) -> Dict[s
         if node.revision != current.base_revision:
             raise _conflict("content_changed", "正文已变化：候选稿生成后，本节正文被修改过",
                             current_content=node.content, current_revision=node.revision)
-        changes = diff_manifest(stored, compute_manifest(project, node, asset_keys=asset_keys))
+        changes = diff_manifest(stored, compute_manifest(project, node, asset_keys=asset_keys, kb_ids=kb_ids))
         if changes:
             raise _conflict("basis_changed", "依据已变化：候选稿生成后，" + "、".join(c["label"] for c in changes) + "有变化",
                             changes=changes)

@@ -28,6 +28,14 @@ def pid(client, project_id):
     return project_id
 
 
+@pytest.fixture(autouse=True)
+def kb_chunk(monkeypatch):
+    """知识库桩：c1 片段在索引中可查且内容稳定（采纳校验会按 chunk_id 查当前索引）"""
+    from app.services.rag import indexer
+    chunks = {"c1": {"id": "c1", "doc_id": "doc_1", "section_title": "运维方案", "content": "参考"}}
+    monkeypatch.setattr(indexer.knowledge_index, "get_chunk", lambda cid, _c=chunks: _c.get(cid))
+
+
 def _save(client, pid, sid, content):
     assert client.put(f"/api/v1/project/{pid}/section", json={"section_id": sid, "content": content}).status_code == 200
 
@@ -56,7 +64,7 @@ def test_propose_records_check_manifest_and_supersedes_older(client, pid):
     assert first["status"] == "checked" and first["base_revision"] == 1
     assert first["report"]["section_id"] == "sec_1_1" and first["blocking_count"] == 0
     assert set(first["input_manifest"]) == {"facts", "scoring_items", "evidence_links", "ref_settings", "section", "requirements",
-                                            "asset:personnel:p_li"}
+                                            "asset:personnel:p_li", "kb:c1"}
     assert [e["ref_type"] for e in first["evidence"]] == ["kb", "asset"]
 
     second = _propose(pid, content="第二版")
@@ -122,6 +130,31 @@ def test_apply_rejected_when_basis_changed(client, pid):
     up = client.post("/api/v1/assets/personnel/p_li/attachments", files={"file": ("证书.png", png, "image/png")})
     assert up.status_code == 200
     assert client.post(_url(pid, prop, "apply")).status_code == 200
+
+
+def test_kb_chunk_update_or_delete_invalidates_proposal(client, pid, monkeypatch):
+    """所用知识库片段内容变化或（文档更新/重建索引后）消失，采纳时报"依据已变化"（IMPROVEMENT_PLAN §12 遗留风险①）"""
+    from app.services.rag import indexer
+
+    def serve(content):
+        chunks = {"c1": {"id": "c1", "doc_id": "doc_1", "section_title": "运维方案", "content": content}} if content else {}
+        monkeypatch.setattr(indexer.knowledge_index, "get_chunk", lambda cid, _c=chunks: _c.get(cid))
+
+    prop = _propose(pid)
+    serve("参考（历史标书更新后的改写）")
+    res = client.post(_url(pid, prop, "apply"))
+    assert res.status_code == 409
+    detail = res.json()["detail"]
+    assert detail["reason"] == "basis_changed"
+    assert [c["key"] for c in detail["changes"]] == ["kb:c1"] and "知识库片段" in detail["changes"][0]["label"]
+
+    serve(None)  # 文档删除或重建索引：旧 chunk_id 消失
+    res = client.post(_url(pid, prop, "apply"))
+    assert res.status_code == 409 and res.json()["detail"]["changes"][0]["key"] == "kb:c1"
+
+    serve("参考")  # 内容未变：正常采纳
+    assert client.post(_url(pid, prop, "apply")).status_code == 200
+    assert _node(pid).content == "候选稿正文"
 
 
 @pytest.mark.parametrize("during_generation", [False, True])
