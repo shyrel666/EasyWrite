@@ -22,11 +22,12 @@ def _wait(task_id):
 
 def test_empty_project_needs_attention(client, project_id):
     data, checks = _preflight(client, project_id)
-    assert list(checks) == ["unwritten", "placeholders", "unverified_assets", "material", "unreviewed",
-                            "redlines", "deviation_pending"]
+    assert list(checks) == ["unwritten", "placeholders", "unverified_assets", "book_consistency", "material",
+                            "unreviewed", "redlines", "deviation_pending"]
     assert checks["unwritten"]["status"] == "warn" and checks["unwritten"]["message"] == "尚未规划大纲"
     assert checks["redlines"]["status"] == "unknown"
     assert checks["material"]["status"] == "ok" and checks["deviation_pending"]["status"] == "ok"
+    assert checks["book_consistency"]["status"] == "ok" and "0 个已撰写章节" in checks["book_consistency"]["message"]
     assert not data["ready"] and data["attention"] == 2
 
 
@@ -55,6 +56,50 @@ def test_sections_placeholders_assets_and_review(client, project_id):
     client.post("/api/v1/assets/personnel", json={"id": "p_unv", "name": "李工", "role": "开发", "status": "confirmed"})
     _, checks = _preflight(client, project_id)
     assert checks["unverified_assets"]["status"] == "ok"
+
+
+def test_book_consistency_reports_cross_section_conflicts(client, project_id):
+    """F4：同一承诺类别跨章取值不一致；采纳为全局事实后偏离值按"与全局事实冲突"报，不重复报取值不一致"""
+    outline = [{"id": "sec_1", "title": "第一章 服务", "level": 1, "children": [
+        {"id": "sec_1_1", "title": "3.1 运维保障", "level": 2, "status": "completed",
+         "content": "接到报修后30分钟内响应。"},
+        {"id": "sec_1_2", "title": "5.2 应急说明", "level": 2, "status": "completed",
+         "content": "故障发生后承诺2小时内响应，驻场工程师3名。"},
+    ]}]
+    client.put(f"/api/v1/project/{project_id}/outline", json={"outline": outline})
+    _, checks = _preflight(client, project_id)
+    book = checks["book_consistency"]
+    assert book["status"] == "warn"
+    assert "跨章取值不一致 1 组" in book["message"] and "承诺数值" in book["message"]
+    detail = book["details"][0]["title"]
+    assert "响应时限" in detail and "30分钟" in detail and "2小时" in detail and "3.1" in detail
+
+    client.put(f"/api/v1/project/{project_id}/facts", json={"sla_commitment": "接到报修后30分钟内响应"})
+    _, checks = _preflight(client, project_id)
+    book = checks["book_consistency"]
+    assert "与全局事实冲突 1 处" in book["message"] and "跨章取值" not in book["message"]
+    assert "2小时" in book["details"][0]["title"] and book["details"][0]["section_id"] == "sec_1_2"
+
+
+def test_book_consistency_example_asset_and_clean_book(client, project_id):
+    example = next(p for p in client.get("/api/v1/assets/personnel").json()
+                   if p.get("status") == "example")["name"]
+    outline = [{"id": "sec_1", "title": "第一章 服务", "level": 1, "children": [
+        {"id": "sec_1_1", "title": "3.1 运维保障", "level": 2, "status": "completed",
+         "content": f"项目经理由{example}担任。"},
+    ]}]
+    client.put(f"/api/v1/project/{project_id}/outline", json={"outline": outline})
+    _, checks = _preflight(client, project_id)
+    book = checks["book_consistency"]
+    assert book["status"] == "warn" and "资料问题 1 处" in book["message"]
+    assert book["details"][0]["section_id"] == "sec_1_1" and example in book["details"][0]["title"]
+
+    # 无冲突时为 ok：正文的取值全部以【待填写】占位（占位不参与数值抽取）
+    client.put(f"/api/v1/project/{project_id}/section",
+               json={"section_id": "sec_1_1", "content": "响应时限为【待填写】，人员配置按制度执行。"})
+    _, checks = _preflight(client, project_id)
+    book = checks["book_consistency"]
+    assert book["status"] == "ok" and "1 个已撰写章节未发现跨章冲突" in book["message"]
 
 
 def test_material_and_deviation_gaps(client, project_id):

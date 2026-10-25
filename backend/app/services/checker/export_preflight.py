@@ -9,6 +9,7 @@ from app.models.schemas import OutlineNode, Project
 from app.services.assets.asset_manager import asset_manager
 from app.services.assets.evidence import evidence_report
 from app.services.assets.material_check import COMPLETE
+from app.services.checker.book_consistency import book_consistency
 from app.services.checker.placeholders import PLACEHOLDER
 
 MAX_DETAILS = 50
@@ -74,6 +75,22 @@ def _unverified_assets(nodes: List[OutlineNode]) -> Dict[str, Any]:
                   f"{len(details)} 个章节引用的资料仍待核实" if details else "没有章节使用待核实资料", details)
 
 
+def _book_consistency(project: Project) -> Dict[str, Any]:
+    """F4：全书一致性——事实冲突、跨章取值、资料标注（规则离线，只提示不阻止导出）"""
+    report = book_consistency(project)
+    conflicts = report["fact_conflicts"] + report["value_conflicts"] + report["asset_issues"]
+    note = (f"；另有 {report['commitments_unbacked']} 个承诺数值不在全局事实中，导出前核实"
+            if report["commitments_unbacked"] else "")
+    if not conflicts:
+        return _check("book_consistency", "全书一致性", OK,
+                      f"{report['sections_checked']} 个已撰写章节未发现跨章冲突{note}")
+    kinds = [f"{label} {len(report[key])} {'处' if key != 'value_conflicts' else '组'}"
+             for key, label in (("fact_conflicts", "与全局事实冲突"), ("value_conflicts", "跨章取值不一致"),
+                                ("asset_issues", "资料问题")) if report[key]]
+    details = [_detail(c["detail"], section_id=c["section_id"]) for c in conflicts]
+    return _check("book_consistency", "全书一致性", WARN, "、".join(kinds) + note, details)
+
+
 def _material(project: Project) -> Dict[str, Any]:
     report = evidence_report(project)
     if not report["total"]:
@@ -131,6 +148,7 @@ def build_preflight(project: Project, latest_compliance: Optional[Dict[str, Any]
         _unwritten(leaves),
         _placeholders(nodes),
         _unverified_assets(nodes),
+        _book_consistency(project),
         _material(project),
         _unreviewed(leaves),
         _redlines(project, latest_compliance),
