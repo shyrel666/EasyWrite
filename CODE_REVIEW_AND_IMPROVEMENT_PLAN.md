@@ -18,8 +18,8 @@
 | P0-2 | 知识库指纹口径不一致，旧候选稿缺指纹 | 已修复 | `c41d74a` | pytest 420；Vitest 93；ruff、build 通过 |
 | P0-3 | 跨分包条款去重和响应写回串项 | 已修复 | `3b7e0d8` | pytest 425；Vitest 93；ruff、build 通过 |
 | P0-4 | 删除的证明关联仍可能齐备或被替代 | 已修复 | `d927f14` | pytest 428；Vitest 93；ruff、build 通过 |
-| P0-5 | 承诺单位、比较方向及全书口径错误 | 已修复 | 本项提交，见 git log | pytest 441；Vitest 93；ruff、build 通过 |
-| P0-6 | 资料仅检查首次出现，全书漏父章正文 | 待实施 | — | 计划见下文 |
+| P0-5 | 承诺单位、比较方向及全书口径错误 | 已修复 | `54afadd` | pytest 441；Vitest 93；ruff、build 通过 |
+| P0-6 | 资料仅检查首次出现，全书漏父章正文 | 已修复 | 本项提交，见 git log | pytest 446；Vitest 93；ruff、build 通过 |
 | P0-7 | 导出、回填等操作未可靠等待保存 | 待实施 | — | 计划见下文 |
 | P0-8 | 修改正文后沿用已校审状态 | 待实施 | — | 计划见下文 |
 | P0-9 | 历史示例分类误伤及清理边界 | 待实施 | — | 计划见下文 |
@@ -65,8 +65,10 @@
 
 ### P0-6：检查每次资料出现及所有有正文节点
 
+已按下述方案实施；新增 `tests/test_checker_occurrences.py`，另修复标注跨段借用。
+
 - **风险 / ROI：高 / 高。** `_check_assets` 仅查每个标识第一次出现；首处有待核实标签可能掩盖后续无标注断言。全书扫描只收叶子，父章节自己的正文漏检，而 Word 会导出父章正文。
-- **代码定位：** [backend/app/services/checker/section_check.py · _check_assets](<D:/Pycharm Project/EasyWrite/backend/app/services/checker/section_check.py:425>)、[backend/app/services/checker/book_consistency.py · _written_leaves](<D:/Pycharm Project/EasyWrite/backend/app/services/checker/book_consistency.py:19>)、[backend/app/services/exporter/docx_generator.py · export_project_to_docx](<D:/Pycharm Project/EasyWrite/backend/app/services/exporter/docx_generator.py:728>)。
+- **代码定位：** [backend/app/services/checker/section_check.py · _check_assets](<D:/Pycharm Project/EasyWrite/backend/app/services/checker/section_check.py:425>)、[backend/app/services/checker/book_consistency.py · _written_nodes](<D:/Pycharm Project/EasyWrite/backend/app/services/checker/book_consistency.py:19>)、[backend/app/services/exporter/docx_generator.py · export_project_to_docx](<D:/Pycharm Project/EasyWrite/backend/app/services/exporter/docx_generator.py:728>)。
 - **修改方案：** 遍历全部标识命中，合并重叠标识，逐处判断标注和定位；全书递归收集全部有自有正文的节点，每份正文只扫描一次。
 - **pytest：** 首处标注后续裸写、反向顺序、多处示例引用、重叠证书标识、父章含冲突但子章正常，以及父子均有正文不重复计数；运行报告展示 Vitest。
 

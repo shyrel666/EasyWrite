@@ -446,8 +446,8 @@ def _marked(text: str, start: int, end: int, spans: List[Tuple[int, int]]) -> bo
     if any(a <= start and end <= b for a, b in spans):
         return True
     _, b = _clause_bounds(text, start, end)
-    sentence_end = text.find("。", end)
-    limit = min(b + 40, sentence_end if sentence_end >= 0 else len(text))
+    boundary = re.search(r"[。；;\n]", text[end:])
+    limit = min(b + 40, end + boundary.start() if boundary else len(text))
     return VERIFY_MARK.search(text[end:limit]) is not None
 
 
@@ -463,13 +463,17 @@ def _check_assets(text: str, assets: Dict) -> Tuple[List[CheckIssue], List[Verif
             status = item.get("status", "confirmed")
             if status not in ("example", "unverified"):
                 continue
+            occurrences = set()
             for ident in _identifiers(kind, item):
                 if status == "example" and ident in usable_ids:
                     continue  # 用户录入了同名资料：以用户资料为准
-                idx = compact.find(ident)
-                if idx < 0:
-                    continue
-                start, end = pos[idx], pos[idx + len(ident) - 1] + 1
+                for match in re.finditer(re.escape(ident), compact):
+                    occurrences.add((pos[match.start()], pos[match.end() - 1] + 1))
+            checked_spans = []
+            for start, end in sorted(occurrences, key=lambda pair: (pair[0], -pair[1])):
+                if any(a <= start and end <= b for a, b in checked_spans):
+                    continue  # 资料名称与证书编号在同一位置重叠时只报一次
+                checked_spans.append((start, end))
                 excerpt, line = _locate(text, start, end)
                 name = asset_name(kind, item)
                 if status == "example":
@@ -481,7 +485,6 @@ def _check_assets(text: str, assets: Dict) -> Tuple[List[CheckIssue], List[Verif
                 else:
                     issues.append(CheckIssue(level="blocking", code="unmarked_unverified", excerpt=excerpt, line=line,
                                              message=f"待核实资料「{name}」未用【待核实】标注：未经企业确认的资料只能写作【待核实：…】"))
-                break
     return issues, verify
 
 

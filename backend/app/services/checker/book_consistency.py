@@ -16,13 +16,12 @@ from app.services.assets.asset_manager import asset_manager
 from app.services.checker import section_check as sc
 
 
-def _written_leaves(outline: List[OutlineNode]) -> List[OutlineNode]:
+def _written_nodes(outline: List[OutlineNode]) -> List[OutlineNode]:
     out: List[OutlineNode] = []
     for n in outline:
-        if n.children:
-            out.extend(_written_leaves(n.children))
-        elif n.content.strip():
+        if n.content.strip():
             out.append(n)
+        out.extend(_written_nodes(n.children))
     return out
 
 
@@ -31,7 +30,7 @@ def book_consistency(project: Project) -> Dict[str, Any]:
     全书规则扫描：{sections_checked, fact_conflicts, value_conflicts, asset_issues, commitments_unbacked}。
     冲突条目均为 {detail, section_id}（detail 为可直接展示的完整说明，section_id 供导出前清单链接到章节）。
     """
-    leaves = _written_leaves(project.outline)
+    nodes = _written_nodes(project.outline)
     snapshot = asset_manager.snapshot()
     fact_qs = sc.fact_quantities(project.facts)
     values: List[Dict[str, Any]] = []      # 每处带类别的承诺数值
@@ -39,7 +38,7 @@ def book_consistency(project: Project) -> Dict[str, Any]:
     asset_issues: List[Dict[str, Any]] = []
     unbacked = set()
 
-    for node in leaves:
+    for node in nodes:
         analysed = sc._mask(node.content, sc.CODE_BLOCK)
         for q in sc.extract_quantities(sc._mask(analysed, sc.PLACEHOLDER)):
             topic = q["topic"]
@@ -86,6 +85,6 @@ def book_consistency(project: Project) -> Dict[str, Any]:
                 "detail": f"{sc.TOPIC_LABELS.get(topic, topic)}在不同章节取值不一致：{where}",
             })
 
-    return {"sections_checked": len(leaves), "fact_conflicts": fact_conflicts,
+    return {"sections_checked": len(nodes), "fact_conflicts": fact_conflicts,
             "value_conflicts": value_conflicts, "asset_issues": asset_issues,
             "commitments_unbacked": len(unbacked)}
