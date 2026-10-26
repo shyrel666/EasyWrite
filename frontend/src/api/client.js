@@ -212,6 +212,11 @@ export const api = {
     request(`/project/${id}/tender/apply`, { method: 'POST', body: { analysis, tender_text: tenderText } }),
   // 承诺建议只复述招标要求，用户采纳后经 updateFacts 写入全局事实
   commitmentSuggestions: (id) => request(`/project/${id}/tender/commitment-suggestions`),
+  tenderVersions: (id) => request(`/project/${id}/tender/versions`),
+  addTenderDocument: (id, body) => request(`/project/${id}/tender/documents`, { method: 'POST', body }),
+  uploadAddendum: (id, file, meta) => uploadFile(`/project/${id}/tender/documents/upload`, file, meta),
+  suggestOverride: (id, body) => request(`/project/${id}/tender/overrides`, { method: 'POST', body }),
+  decideOverride: (id, oid, body) => request(`/project/${id}/tender/overrides/${oid}`, { method: 'PUT', body }),
   // 招标原文：章节树（传 sectionId 时附带该章节的要点与相关原文章节）、按章节分段读取
   tenderOutline: (id, sectionId) =>
     request(`/project/${id}/tender/outline${sectionId ? `?section_id=${encodeURIComponent(sectionId)}` : ''}`),

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import api from '@/api/client'
+import TenderAmendments from './TenderAmendments.vue'
 import { formatChars, highlightSegments } from '@/utils/highlight'
 
 // 招标原文：浏览章节树、分段阅读，高亮当前撰写章节的要点
@@ -104,6 +105,7 @@ const hitCount = computed(() => lines.value.reduce((n, l) => n + l.parts.filter(
 
 <template>
   <div class="text-xs">
+    <TenderAmendments :project-id="projectId" @changed="load" />
     <p v-if="error" class="note note-bad mb-3">{{ error }}</p>
 
     <!-- 阅读 -->

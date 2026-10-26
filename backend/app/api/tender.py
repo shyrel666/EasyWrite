@@ -1,11 +1,13 @@
 """招标文件解析（18项拆标）路由：后台任务 + 进度轮询"""
 import logging
+import hashlib
 import uuid
 from pathlib import Path
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Body
+from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.task_manager import task_manager
@@ -15,6 +17,7 @@ from app.services.parser.document_parser import describe_source, parse_document,
 from app.services.parser import tender_reader
 from app.services.parser.tender_analyzer import tender_analyzer
 from app.services.project_store import find_node, project_store
+from app.services import tender_versions as tv
 
 logger = logging.getLogger("easywrite.api.tender")
 router = APIRouter(tags=["招标文件解析"])
@@ -35,6 +38,7 @@ async def analyze_tender_document(file: UploadFile = File(...), project_id: Opti
     def _run(ctx):
         ctx.report(10, "解析 PDF 页面与表格" if saved_path.suffix.lower() == ".pdf" else "解析 Word 文档结构")
         parsed = parse_document(saved_path)  # PDF 扫描件/加密/乱码时抛出可读的 PdfParseError
+        parsed.update(file_sha256=hashlib.sha256(content).hexdigest(), filename=file.filename)
         full_text = parsed.get("full_text", "")
         if not full_text.strip():
             raise ValueError("招标文件解析后无有效文本（可能为扫描件或空文档）")
@@ -68,7 +72,11 @@ def analyze_tender_text(text: str = Body(..., embed=True)):
 def apply_tender_analysis(project_id: str, analysis: TenderAnalysis18, tender_text: str = Body(default="", embed=True)):
     analysis.commitment_requirements = structured_requirements(analysis)
     def mutate(project):
+        if any(x.state == "confirmed" for x in project.tender_versions.overrides):
+            raise HTTPException(409, "已有生效补遗，请从补遗入口追加，不能整体覆盖拆标结果")
         project.tender_analysis = analysis
+        project.tender_versions.base_analysis = analysis.model_copy(deep=True)
+        project.tender_versions.base_deviations = [d.model_copy(deep=True) for d in project.deviation_matrix]
         if analysis.purchaser_name and not project.client_name:
             project.client_name = analysis.purchaser_name
         # 全局事实是企业承诺，不在这里自动填写：工期/质保等只作为 commitment_suggestions 返回，由用户采纳
@@ -89,6 +97,75 @@ def apply_tender_analysis(project_id: str, analysis: TenderAnalysis18, tender_te
         "star_count": len(analysis.star_disqualification_items),
         "commitment_suggestions": suggest_commitments(analysis),
     }
+
+
+class TenderDocumentInput(BaseModel):
+    kind: Literal["addendum", "clarification"] = "addendum"
+    name: str = Field(min_length=1, max_length=200)
+    package: str = ""
+    published_at: str = Field(min_length=10, max_length=40)
+    text: str = Field(min_length=1, max_length=200_000)
+
+
+class OverrideInput(BaseModel):
+    document_id: str
+    clause_id: str
+    package: str = ""
+    action: Literal["replace", "append", "revoke"] = "replace"
+    text: str = Field(default="", max_length=20000)
+    source_page: int = Field(default=1, ge=1)
+    source_excerpt: str = Field(min_length=1, max_length=20000)
+    basis_hash: str
+    points: Optional[float] = Field(default=None, ge=0)
+
+
+@router.get("/project/{project_id}/tender/versions")
+def tender_versions(project_id: str):
+    project = project_store.get(project_id)
+    if not project:
+        raise HTTPException(404, "项目不存在")
+    rows = list(tv.effective_clauses(project).values())
+    return {"documents": project.tender_versions.documents, "overrides": project.tender_versions.overrides,
+            "clauses": rows, "suggestions": tv.mapping_suggestions(project),
+            "package": project.tender_analysis.target_package if project.tender_analysis else ""}
+
+
+@router.post("/project/{project_id}/tender/documents")
+def add_tender_document(project_id: str, req: TenderDocumentInput):
+    return project_store.update(project_id, lambda p: tv.register_document(p, **req.model_dump()))
+
+
+@router.post("/project/{project_id}/tender/documents/upload")
+async def upload_addendum(project_id: str, file: UploadFile = File(...),
+                          kind: Literal["addendum", "clarification"] = Form("addendum"),
+                          package: str = Form(""), published_at: str = Form(...)):
+    if not project_store.get(project_id):
+        raise HTTPException(404, "项目不存在")
+    reason = unsupported_reason(file.filename)
+    if reason:
+        raise HTTPException(400, reason)
+    content = await file.read(20 * 1024 * 1024 + 1)
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(400, "补遗文件不能超过 20MB")
+    path = settings.UPLOAD_DIR / (uuid.uuid4().hex + Path(file.filename).suffix)
+    try:
+        path.write_bytes(content)
+        parsed = parse_document(path)
+        return project_store.update(project_id, lambda p: tv.register_document(
+            p, parsed.get("full_text", ""), kind, file.filename, package, published_at, hashlib.sha256(content).hexdigest()))
+    finally:
+        path.unlink(missing_ok=True)
+
+
+@router.post("/project/{project_id}/tender/overrides")
+def suggest_override(project_id: str, req: OverrideInput):
+    return project_store.update(project_id, lambda p: tv.suggest(p, req))
+
+
+@router.put("/project/{project_id}/tender/overrides/{override_id}")
+def decide_override(project_id: str, override_id: str, state: Literal["confirmed", "withdrawn"] = Body(...),
+                    basis_hash: str = Body("")):
+    return project_store.update(project_id, lambda p: tv.decide(p, override_id, state, basis_hash))
 
 
 @router.get("/project/{project_id}/tender/commitment-suggestions", summary="按已应用的拆标结果给出承诺建议（只复述招标要求，采纳后经 PUT facts 写入）")

@@ -38,6 +38,7 @@ class ProjectModel(SQLModel, table=True):
     # 评分项与企业资料的关联：{评分项ID: ["kind:资料ID", …]}（用户确认后保存）
     evidence_json: str = "{}"
     verification_json: str = "{}"
+    tender_versions_json: str = "{}"
     # 向导流程状态：created / tender_analyzed / outline_confirmed / writing
     stage: str = "created"
     status: str = "active"  # active / archived

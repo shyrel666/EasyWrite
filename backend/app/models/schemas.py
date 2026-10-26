@@ -234,6 +234,43 @@ class ProjectCreate(BaseModel):
     facts: Optional[GlobalFacts] = Field(default_factory=GlobalFacts, description="该项目的全局事实约束")
 
 
+class TenderDocument(BaseModel):
+    id: str
+    kind: Literal["original", "addendum", "clarification"] = "original"
+    name: str = "招标原件"
+    package: str = ""
+    published_at: str = ""
+    sha256: str
+    version: int
+    text: str
+    created_at: str
+
+
+class ClauseOverride(BaseModel):
+    id: str
+    document_id: str
+    clause_id: str
+    package: str = ""
+    action: Literal["replace", "append", "revoke"] = "replace"
+    text: str = ""
+    source_page: int = Field(default=1, ge=1)
+    source_excerpt: str = ""
+    original_text: str = ""
+    basis_hash: str
+    points: Optional[float] = Field(default=None, ge=0)
+    state: Literal["pending", "confirmed", "withdrawn"] = "pending"
+    confirmed_order: int = 0
+    decided_at: str = ""
+
+
+class TenderVersions(BaseModel):
+    documents: List[TenderDocument] = Field(default_factory=list)
+    overrides: List[ClauseOverride] = Field(default_factory=list)
+    base_analysis: Optional[TenderAnalysis18] = None
+    base_deviations: List[DeviationItem] = Field(default_factory=list)
+    active_document_id: str = ""
+
+
 class Project(BaseModel):
     id: str
     name: str
@@ -241,6 +278,7 @@ class Project(BaseModel):
     description: str
     facts: GlobalFacts = Field(default_factory=GlobalFacts)
     tender_analysis: Optional[TenderAnalysis18] = None
+    tender_versions: TenderVersions = Field(default_factory=TenderVersions)
     deviation_matrix: List[DeviationItem] = Field(default_factory=list)
     outline: List[OutlineNode]
     evidence_links: Dict[str, List[str]] = Field(

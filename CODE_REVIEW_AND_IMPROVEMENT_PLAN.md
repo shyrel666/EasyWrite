@@ -119,8 +119,9 @@
 | P1-3 | 已实施 | `f137893` | pytest 75；Vitest 108；ruff、build 通过 |
 | P1-4 | 已实施 | `189db5a` | pytest 25；Vitest 109；ruff、build；Word 4 页渲染核对 |
 | P1-5 | 已实施 | `f581f5b` | pytest 39；Vitest 110；ruff、build；Word 6 页渲染核对 |
-| P1-6 | 已实施 | 本项提交 `feat(diagrams): split dense graphs and check export readability` | pytest 15；Vitest 111；ruff、build；Word 10/30/60 节点图核对 |
-| P1-7～P1-8 | 待实施 | — | — |
+| P1-6 | 已实施 | `b1cd6c1` | pytest 15；Vitest 111；ruff、build；Word 10/30/60 节点图核对 |
+| P1-7 | 已实施 | 本项提交 `feat(tender): archive addenda and confirm traceable clause overrides` | pytest 53；Vitest 112；ruff、build 通过 |
+| P1-8 | 待实施 | — | — |
 | P2-1～P2-3 | 待实施 | — | — |
 
 ### P1-1：分级事实模型与招标要求分离
@@ -185,6 +186,9 @@
 - **验证：** pytest 覆盖图片宽高约束、图题编号、横页与纵页恢复、失败占位；Vitest 覆盖 Mermaid 解析失败、长标签、主题切换与 PNG 输出；人工渲染比较典型 10/30/60 节点图可读性。
 
 ### P1-7：F2 补遗/澄清先实现可追溯覆盖
+
+- **已实施（2026-10-26）：** 原件、补遗、澄清按哈希与版本保存正文和发布日期；支持 DOCX/PDF 登记及文本入口。明确的带引号替换可生成只读映射建议，用户对照原文、来源摘录/页码及影响章节后确认。覆盖支持替换、追加、撤销和撤回，严格限同项目同分包；依据指纹阻止同日冲突静默生效，撤回有依赖的前版须先撤回后版。生效后重算评分、采购要求与相关偏离条款，清除受影响校审，旧候选稿采纳返回 409；企业承诺保持不变。
+- **验证记录：** 53 项 pytest、112 项 Vitest、ruff、build 通过；包含原件留存、重复登记幂等、分包隔离、同日冲突、依赖撤回、候选稿拒收、偏离恢复与规则建议不自动生效。覆盖限已抽取的明确字段/评分项/技术条款；来源页由人工对照，模糊跨文件解释及复杂重组未自动推断。使用合成补遗，真实项目确认另行记录。
 
 - **风险 / ROI：高 / 高。** 当前分析应用整体替换 tender_analysis，原文按项目保存；没有文件版本、条款替代关系或补遗优先级。直接重新上传无法证明最终采用了哪一版要求。
 - **定位：** [backend/app/api/tender.py · apply_tender_analysis](<D:/Pycharm Project/EasyWrite/backend/app/api/tender.py:68>)、[backend/app/services/parser/document_parser.py · parse_document](<D:/Pycharm Project/EasyWrite/backend/app/services/parser/document_parser.py:27>)、[backend/app/services/project_store.py · set_tender_document_in](<D:/Pycharm Project/EasyWrite/backend/app/services/project_store.py:164>)。

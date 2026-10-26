@@ -97,6 +97,10 @@ def compute_manifest(
                                  "diagram_budget": node.diagram_budget})},
         "requirements": {"label": "本节要求", "sha": _sha(node.requirements)},
     }
+    overrides = [x.model_dump() for x in project.tender_versions.overrides if x.state == "confirmed"
+                 and (not x.clause_id.startswith("scoring:") or x.clause_id[8:] in node.scoring_item_ids)]
+    if overrides:
+        manifest["tender_overrides"] = {"label": "已确认补遗依据", "sha": _sha(overrides)}
     if evidence is not None:
         # 生成时：refs 自带片段内容，直接指纹，不查索引
         for ref in evidence.refs:

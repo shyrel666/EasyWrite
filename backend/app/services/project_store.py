@@ -110,6 +110,7 @@ class ProjectStore:
             outline=[OutlineNode(**n) for n in json.loads(row.outline_json or "[]")],
             evidence_links=json.loads(row.evidence_json or "{}"),
             verification_decisions=json.loads(row.verification_json or "{}"),
+            tender_versions=json.loads(row.tender_versions_json or "{}"),
             stage=row.stage,
             created_at=row.created_at,
             updated_at=row.updated_at,
@@ -132,6 +133,7 @@ class ProjectStore:
         )
         row.evidence_json = json.dumps(project.evidence_links, ensure_ascii=False)
         row.verification_json = json.dumps(project.verification_decisions, ensure_ascii=False)
+        row.tender_versions_json = project.tender_versions.model_dump_json()
         row.stage = project.stage
         row.updated_at = now_str()
 
@@ -145,7 +147,10 @@ class ProjectStore:
     def get_tender_text(self, project_id: str) -> str:
         with get_session() as session:
             row = session.get(ProjectModel, project_id)
-            return row.tender_text if row else ""
+            if not row:
+                return ""
+            from app.services.tender_versions import effective_text
+            return effective_text(self._to_domain(row), row.tender_text)
 
     def get_tender_document(self, project_id: str) -> dict:
         """一次读取同一份招标正文、章节树与来源，避免更新期间混合两份文件。"""
@@ -153,6 +158,11 @@ class ProjectStore:
             row = session.get(ProjectModel, project_id)
             if not row:
                 return {"text": "", "structure": None, "source": ""}
+            project = self._to_domain(row)
+            if any(x.state == "confirmed" for x in project.tender_versions.overrides):
+                from app.services.tender_versions import effective_text
+                # 原件章节树保留在版本库；旧页树不能冒充补遗后的生效文本。
+                return {"text": effective_text(project, row.tender_text), "structure": None, "source": "confirmed_addenda"}
             return {"text": row.tender_text,
                     "structure": json.loads(row.tender_structure_json) if row.tender_structure_json else None,
                     "source": row.tender_source}
@@ -168,6 +178,10 @@ class ProjectStore:
         row = session.get(ProjectModel, project_id)
         if row is None:
             raise ProjectNotFound(project_id)
+        from app.services.tender_versions import archive_original
+        project = ProjectStore._to_domain(row)
+        archive_original(project, (text or "")[:TENDER_TEXT_LIMIT], parsed)
+        row.tender_versions_json = project.tender_versions.model_dump_json()
         row.tender_text = (text or "")[:TENDER_TEXT_LIMIT]
         if parsed is None:
             row.tender_structure_json, row.tender_source = "", "text"
