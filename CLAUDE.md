@@ -99,3 +99,5 @@ AppShell 的 beforeExport 回调在打开/刷新导出检查及实际导出前�
 校审绑定 `OutlineNode.reviewed_revision`；`write_node` 在正文变化时统一清除校审，同文保存可保留。`PUT /project/{id}/section` 支持 base_revision，校审按钮携带此值，冲突返回 409；响应以 node_status 为准。旧 reviewed 记录缺绑定字段时沿用原校审声明并绑定记录中的当前 revision。
 
 资料状态迁移前备份为 enterprise_assets.json.migration-<uuid>.bak，来源及变更记录存于 _migration_history。migration_audit 只读，已标 example 的可疑资料不自动改状态；企业资产页提示人工核对后改为待核实或已确认。
+
+Word 导出通过 _save_document 原子分配唯一物理文件（包括 output_filename 参数），调用方使用返回路径；下载显示名由 download_name 单独生成。API FileResponse 发送完毕后由 BackgroundTask 删除本次文件；写入异常清理半成品，不删除其他输出。

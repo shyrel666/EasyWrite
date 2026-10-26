@@ -1,5 +1,7 @@
 import io
+import os
 import re
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -158,6 +160,26 @@ class DocxBidExporter:
 
     def __init__(self):
         self.default_style = DocxStyleConfig()
+
+    @staticmethod
+    def download_name(project_name: str, kind: str = "技术标书") -> str:
+        """下载显示名与物理文件名分离，兼容 Windows 文件名和响应头。"""
+        safe = re.sub(r'[\\/*?:"<>|\x00-\x1f]', '_', project_name).strip(" .") or "项目"
+        return f"{safe[:120]}_{kind}.docx"
+
+    @staticmethod
+    def _save_document(doc: Document, filename: str) -> Path:
+        """原子分配每请求独有的物理路径；保存失败只删除本次创建的文件。"""
+        safe = re.sub(r'[\\/*?:"<>|\x00-\x1f]', '_', filename)
+        fd, name = tempfile.mkstemp(prefix=f"{Path(safe).stem[:80]}-", suffix=".docx", dir=settings.OUTPUT_DIR)
+        os.close(fd)  # Windows 下关闭占位句柄后交给 python-docx 写入
+        path = Path(name)
+        try:
+            doc.save(str(path))
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        return path
 
     # ---------------- 基础样式工具 ----------------
 
@@ -755,10 +777,7 @@ class DocxBidExporter:
         for root_node in outline:
             render_node(root_node)
 
-        safe_name = re.sub(r'[\\/*?:"<>|]', '_', project_name)
-        out_path = settings.OUTPUT_DIR / (output_filename or f"{safe_name}_技术标书.docx")
-        doc.save(str(out_path))
-        return out_path
+        return self._save_document(doc, output_filename or self.download_name(project_name))
 
     def export_deviation_table(
         self,
@@ -813,10 +832,7 @@ class DocxBidExporter:
             summary += f"，尚有 {pending} 条未填写响应或待核实"
         self._set_run_font(note.add_run(summary + "。"), cfg.primary_font, 10.5, color=RGBColor(90, 90, 90))
 
-        safe_name = re.sub(r'[\\/*?:"<>|]', '_', project_name)
-        out_path = settings.OUTPUT_DIR / (output_filename or f"{safe_name}_技术偏离表.docx")
-        doc.save(str(out_path))
-        return out_path
+        return self._save_document(doc, output_filename or self.download_name(project_name, "技术偏离表"))
 
 
 class _Tok:

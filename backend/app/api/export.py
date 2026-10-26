@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 
 from app.core.task_manager import task_manager
 from app.services.checker.export_preflight import build_preflight
@@ -54,7 +55,8 @@ def _export_bid(project_id: str, template_id: Optional[str], diagrams: Optional[
         style_cfg=template_manager.get_template(template_id or "gov_standard"),
         diagrams=diagrams,
     )
-    return FileResponse(path=str(out_path), filename=out_path.name, media_type=DOCX_MEDIA_TYPE)
+    return FileResponse(path=str(out_path), filename=docx_exporter.download_name(project.name), media_type=DOCX_MEDIA_TYPE,
+                        background=BackgroundTask(out_path.unlink, missing_ok=True))
 
 
 @router.get("/templates/list", summary="获取可用的标书 Word 格式排版模板")
@@ -114,4 +116,5 @@ def export_deviation_table(project_id: str, template_id: Optional[str] = "gov_st
         items=project.deviation_matrix,
         style_cfg=template_manager.get_template(template_id or "gov_standard"),
     )
-    return FileResponse(path=str(out_path), filename=out_path.name, media_type=DOCX_MEDIA_TYPE)
+    return FileResponse(path=str(out_path), filename=docx_exporter.download_name(project.name, "技术偏离表"),
+                        media_type=DOCX_MEDIA_TYPE, background=BackgroundTask(out_path.unlink, missing_ok=True))
