@@ -93,26 +93,31 @@ def generate_project_deviations(project_id: str):
     skipped = len(project.deviation_matrix) - len(pending)
     if not pending:
         raise HTTPException(status_code=400, detail="没有“待生成”的条目；如需重写某条响应，请先将其状态改为“待生成”")
+    originals = {deviation_engine.response_key(it): it.model_dump() for it in pending}
 
     def _run(ctx):
         answered = deviation_engine.batch_generate_responses(
             pending, project.facts, progress=ctx, exclude=generation_filter(project))
-        by_clause = {it.clause_title: it for it in answered if it.response_status != "待生成"}
+        by_clause = {deviation_engine.response_key(it): it for it in answered if it.response_status != "待生成"}
+        applied = 0
 
         def merge(latest):
+            nonlocal applied
             # 写回最新偏离表：只回填仍为“待生成”的同一条款，生成期间的人工编辑优先
             for item in latest.deviation_matrix:
-                src = by_clause.get(item.clause_title)
-                if src and item.response_status == "待生成":
+                key = deviation_engine.response_key(item)
+                src = by_clause.get(key)
+                if src and item.model_dump() == originals.get(key):
                     item.response_status = src.response_status
                     item.response_detail = src.response_detail
                     item.response_source = src.response_source
+                    applied += 1
             return latest.deviation_matrix
 
         items = project_store.update(project_id, merge)
         return {
             "total_items": len(items),
-            "generated_count": len(by_clause),
+            "generated_count": applied,
             "skipped_count": skipped,
             "pending_count": sum(1 for it in items if it.response_status == "待生成"),
             "items": [it.model_dump() for it in items],

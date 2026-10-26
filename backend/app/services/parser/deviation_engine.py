@@ -121,10 +121,11 @@ class DeviationEngine:
         def add(text: str, section_path: str, inherited: Optional[str], package: str):
             text = text.strip()
             fp = _fingerprint(text)
-            if fp in seen:
-                return
-            seen.add(fp)
             level = resolver.level_of(text) or inherited or "normal"
+            key = (package, section_path, level, fp)
+            if key in seen:
+                return
+            seen.add(key)
             items.append(DeviationItem(
                 index=len(items) + 1, clause_title=text, is_star=level == "redline", level=level,
                 section=section_path, package=package, response_status="待生成", response_detail="",
@@ -345,6 +346,11 @@ class DeviationEngine:
         }
 
     # ---------------- LLM 点对点响应 ----------------
+
+    @staticmethod
+    def response_key(item: DeviationItem) -> tuple:
+        """写回定位包含分包、章节、等级、当前条文和行号；不依赖可能过期的原文指纹。"""
+        return (item.package, item.section, item.level, _fingerprint(item.clause_title), item.index)
 
     @staticmethod
     def _facts_text(facts: GlobalFacts) -> str:

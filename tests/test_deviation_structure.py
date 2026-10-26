@@ -7,6 +7,8 @@
 
 import time
 
+import pytest
+
 from app.core.llm_client import llm_client
 from app.models.schemas import DeviationItem, GlobalFacts
 from app.services.parser import deviation_engine as de_module
@@ -145,3 +147,41 @@ def test_batch_api_persists_ai_source_and_keeps_manual_edits(client, project_id,
     assert [it["response_source"] for it in stored] == ["ai", "manual", "manual", "ai"]
     assert [it["response_detail"] for it in stored] == ["AI应答1", "此前人工应答", "生成期间人工确认的应答", "AI应答3"]
     assert task["result"]["items"] == stored
+
+
+@pytest.mark.parametrize("edit", [None, "clause_title", "response_detail", "package"])
+def test_generation_merges_by_scope_and_preserves_pending_manual_edits(client, project_id, monkeypatch, edit):
+    url = f"/api/v1/project/{project_id}/deviation"
+    rows = [{"index": i, "clause_title": "系统须支持审计。", "package": f"包{i}", "section": "技术要求",
+             "response_status": "待生成"} for i in (1, 2)]
+    assert client.put(url, json=rows).status_code == 200
+
+    def generated(**kwargs):
+        if edit:
+            current = client.get(url).json()["items"]
+            current[0][edit] = "人工修改，保留待生成状态"
+            assert client.put(url, json=current).status_code == 200
+        return {"responses": [{"no": 1, "response_status": "待核实", "response_detail": "第一包需补齐证明"},
+                              {"no": 2, "response_status": "负偏离", "response_detail": "第二包能力不满足"}]}
+
+    monkeypatch.setattr(llm_client, "is_configured", True)
+    monkeypatch.setattr(llm_client, "get_mode", lambda: "llm")
+    monkeypatch.setattr(llm_client, "chat_completion_structured", generated)
+    monkeypatch.setattr(deviation_engine, "_item_context", lambda *a, **kw: ("", ""))
+    result = client.post(f"{url}/generate")
+    assert result.status_code == 200
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        task = client.get(f"/api/v1/tasks/{result.json()['task_id']}").json()
+        if task["status"] in ("completed", "failed"):
+            break
+        time.sleep(0.02)
+    assert task["status"] == "completed"
+    stored = client.get(url).json()["items"]
+    assert stored[1]["response_detail"] == "第二包能力不满足"
+    if edit:
+        assert stored[0][edit] == "人工修改，保留待生成状态"
+        assert stored[0]["response_status"] == "待生成"
+    else:
+        assert stored[0]["response_detail"] == "第一包需补齐证明"
+    assert task["result"]["generated_count"] == (1 if edit else 2)

@@ -122,6 +122,21 @@ def test_unmatched_target_package_is_not_filtered():
     assert info["found"] == [] and info["note"] == "" and items[0].package == ""
 
 
+def test_identical_requirements_remain_distinct_across_packages_and_sections():
+    clause = "系统须支持7×24小时监控。"
+    sections = [_sec("第二篇 项目服务需求", subs=[
+        _sec("包1服务要求", [clause, clause]),
+        _sec("包2服务要求", [clause]),
+        _sec("三、验收标准", [clause]),
+    ])]
+    items, _, _ = deviation_engine.extract_from_structure(sections)
+    assert len(items) == 3
+    assert {it.package for it in items} == {"包1", "包2", ""}
+    selected, _, info = deviation_engine.extract_from_structure(sections, target_package="包2")
+    assert len(selected) == 2 and {it.package for it in selected} == {"包2", ""}
+    assert info["excluded"] == 1
+
+
 @pytest.mark.parametrize("text,expected", [
     ("第2包", "包2"),
     ("A包:", "A包"),
