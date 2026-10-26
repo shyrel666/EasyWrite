@@ -91,6 +91,10 @@ async function cancel() {
       </p>
 
       <section class="card px-4 py-3.5 space-y-3">
+        <p v-if="result.length?.word_budget" class="note" :class="Math.abs(result.length.length_deviation) > 0.3 ? 'note-warn' : 'note-info'">
+          正文 {{ result.length.char_count }} / {{ result.length.word_budget }} 字，偏离 {{ (result.length.length_deviation * 100).toFixed(1) }}%；图表代码 {{ result.length.diagram_chars }} 字符单独计量。
+          <span v-if="result.length.length_deviation > 0.3">仍超限 {{ result.length.excess_chars }} 字，需要继续压缩或调整预算。</span>
+        </p>
         <div class="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs text-ink-2">
           <span>修订 <b class="num text-ink">{{ result.rounds }}</b> / {{ result.max_rounds }} 轮</span>
           <span class="num">{{ budgetText(result.budget) }}</span>
@@ -100,7 +104,7 @@ async function cancel() {
         </div>
         <table v-if="result.history?.length" class="table-clean w-full text-xs">
           <thead>
-            <tr><th class="text-left">版本</th><th class="text-left">修订方式</th><th class="!text-right">阻塞问题</th><th class="!text-right">质量问题</th></tr>
+            <tr><th class="text-left">版本</th><th class="text-left">修订方式</th><th class="!text-right">阻塞问题</th><th class="!text-right">质量问题</th><th>正文字数 / 预算</th></tr>
           </thead>
           <tbody>
             <tr v-for="(h, i) in result.history" :key="i" :class="{ 'font-medium': h.proposal_id && h.proposal_id === result.final_proposal_id }">
@@ -108,6 +112,7 @@ async function cancel() {
               <td class="text-ink-3">{{ MODE_LABELS[h.mode] || '—' }}</td>
               <td class="text-right num" :class="h.blocking_count ? 'text-bad' : 'text-ok'">{{ h.blocking_count }}</td>
               <td class="text-right num text-ink-2">{{ h.quality_count }}</td>
+              <td class="num">{{ h.char_count ?? '—' }} / {{ h.word_budget || '—' }}<span v-if="h.reverted" class="text-warn"> 已回退</span></td>
             </tr>
           </tbody>
         </table>

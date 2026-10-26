@@ -43,6 +43,7 @@ CHAPTER_SPECIALIZED_PROMPTS = {
 
 # 智能完善的修订方式（policy.decide 给出）：上一轮没有进展时换方法；连续两轮没有进展时只处理阻塞问题
 REVISION_MODE_HINTS = {
+    "compress": "执行压缩计划，按评分点重组并压缩正文；优先删套话、无关背景和重复段。保留全部评分点、事实依据及图表，不能截断正文凑字数。",
     "alternate": "上一轮修订后，这些问题仍未解决。请换一种修改方式：不要只在原句上做局部替换，改为重写涉及问题的段落；"
                  "缺失的评分要点单独成条论述（资料不足处用【待填写】占位）。",
     "minimal": "本轮只处理上面列出的阻塞问题，其余段落（包括篇幅与措辞）一律保持原样，不做其他改动。",
@@ -175,11 +176,14 @@ class SectionGenerator:
         # ---- 字数预算 ----
         budget_line = ""
         found_budget = []
+        diagram_limits = []
 
         def find_budget(nodes):
             for n in nodes:
                 if n.id == section_id and n.word_budget:
                     found_budget.append(n.word_budget)
+                if n.id == section_id and n.diagram_budget:
+                    diagram_limits.append(n.diagram_budget)
                 find_budget(n.children)
 
         if outline and section_id:
@@ -191,6 +195,8 @@ class SectionGenerator:
             budget_line = f"\n【本章节目标正文字数】：约 {budget} 字（±15% 以内，不含 Mermaid 图代码）"
             length_rule = (f"篇幅：正文约 {budget} 字，不超过 {round(budget * 1.15)} 字（不含 Mermaid 图代码）；"
                            "篇幅按评分要点分配，不为凑字数重复论述或堆砌通用内容")
+        if diagram_limits:
+            budget_line += f"\n【独立图表预算】：Mermaid 代码不超过 {diagram_limits[0]} 字符，正文仍须满足其独立预算。"
 
         req_lines = "\n".join(f"- {r}" for r in requirements) if requirements else "- 详实阐述该模块的具体设计与方案保障"
 

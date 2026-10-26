@@ -20,7 +20,27 @@ MAX_ROUNDS_LIMIT = 3
 # 质量问题（篇幅、套话、# 标题等）不超过该数目即视为目标达成
 QUALITY_THRESHOLD = 2
 
-MODE_LABELS = {"normal": "逐条修订", "alternate": "换一种修改方式", "minimal": "只处理阻塞问题"}
+MODE_LABELS = {"normal": "逐条修订", "alternate": "换一种修改方式", "minimal": "只处理阻塞问题", "compress": "按评分点压缩篇幅"}
+
+
+def value(report: Any, key: str, default=None):
+    return report.get(key, default) if isinstance(report, dict) else getattr(report, key, default)
+
+
+def length_distance(report: Any) -> float:
+    budget = value(report, "word_budget")
+    return abs(value(report, "char_count", 0) / budget - 1) if budget else 0
+
+
+def regressed(prev: Any, cur: Any) -> bool:
+    """字数改善不能抵消新阻塞或已覆盖评分点的丢失。"""
+    def covered(r):
+        return {(value(p, "item_id"), value(p, "point")) for p in value(r, "points", []) if value(p, "mentioned")}
+
+    def blockers(r):
+        return {(value(i, "code"), value(i, "message")) for i in value(r, "issues", []) if value(i, "level") == "blocking"}
+
+    return counts(cur)[0] > counts(prev)[0] or bool(covered(prev) - covered(cur)) or bool(blockers(cur) - blockers(prev))
 
 
 @dataclass(frozen=True)
@@ -43,16 +63,18 @@ def has_length_issue(report: Any) -> bool:
     get = report.get if isinstance(report, dict) else (lambda k, d=None: getattr(report, k, d))
     issues = get("issues") or []
     code = (lambda i: i.get("code")) if issues and isinstance(issues[0], dict) else (lambda i: getattr(i, "code", ""))
-    return any(code(i) == "length" for i in issues)
+    return any(code(i) in ("length", "diagram_length") for i in issues)
 
 
 def progressed(prev: Any, cur: Any) -> bool:
     """cur 相对 prev 是否有进展：阻塞问题数下降；或阻塞问题已清零时，质量问题数下降"""
     pb, pq = counts(prev)
     cb, cq = counts(cur)
+    if regressed(prev, cur):
+        return False
     if cb < pb:
         return True
-    return pb == 0 and cb == 0 and cq < pq
+    return (pb == 0 and cb == 0 and cq < pq) or (cb <= pb and cq <= pq and length_distance(cur) < length_distance(prev))
 
 
 def stalls(reports: Sequence[Any]) -> Tuple[int, int]:
@@ -88,4 +110,7 @@ def decide(
         return Action("stop", outcome="partial", stop_reason="rounds_exhausted",
                       message=(f"修订轮数已用完（{max_rounds} 轮）：{left}" if max_rounds else f"未设置修订轮数：{left}"))
     mode = "minimal" if minimal else "alternate" if trailing == 1 else "normal"
+    last = reports[-1]
+    if blocking == 0 and value(last, "word_budget") and value(last, "length_deviation", 0) > 0.3:
+        mode = "compress"
     return Action("revise", mode=mode, message=f"第 {rounds_used + 1} 轮修订：{MODE_LABELS[mode]}")

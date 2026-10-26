@@ -25,6 +25,7 @@ export const MODE_LABELS = {
   normal: '逐条修订',
   alternate: '换一种修改方式',
   minimal: '只处理阻塞问题',
+  compress: '按评分点压缩篇幅',
 }
 
 // 这些原因停下时，最后一版候选稿仍可接着修订（轮数不会重新计算）

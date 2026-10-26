@@ -114,8 +114,9 @@
 
 | 编号 | 状态 | 单项提交 | 本地验证 |
 |---|---|---|---|
-| P1-1 | 已实施 | 本项提交 `feat(facts): add confirmed scoped commitments separate from tender requirements` | pytest 59；Vitest 105；ruff、build 通过 |
-| P1-2～P1-8 | 待实施 | — | — |
+| P1-1 | 已实施 | `7f7cc4a` | pytest 59；Vitest 105；ruff、build 通过 |
+| P1-2 | 已实施 | 本项提交 `feat(refine): measure compression progress and roll back degraded drafts` | pytest 64；Vitest 106；ruff、build 通过 |
+| P1-3～P1-8 | 待实施 | — | — |
 | P2-1～P2-3 | 待实施 | — | — |
 
 ### P1-1：分级事实模型与招标要求分离
@@ -129,6 +130,9 @@
 - **验证：** pytest 覆盖同级冲突、跨级不同值合法、未限定事实遇到分级正文、单位等价及旧文本兼容；Vitest 覆盖承诺卡片分级编辑、确认、拒绝及保存恢复。
 
 ### P1-2：篇幅压缩有独立策略及连续进展度量
+
+- **已实施（2026-10-26）：** 报告记录正文、预算、偏离率和超出字数，图表代码独立预算；持续缩短计为进展。独立 `compress` 策略列出须保留评分点、承诺/依据、优先删除或合并的重复段，禁止截断凑字数。丢失评分点或新增阻塞时保存被拒稿并回退前版，回退仍消耗轮数；恢复运行保留完整原稿检查指标。前端显示逐版字数、回退及仍超限原因。
+- **验证记录：** `tests/test_refine_compression.py` 覆盖持续压缩、停滞、删除评分点、极小预算、仅有图表和分开计量；与策略、运行器、章节、候选稿、字数回归共 64 项 pytest 通过。前端全量 106 项、ruff、生产构建通过。
 
 - **风险 / ROI：中 / 高。** `length` 仅是一个质量问题，篇幅从超限 80% 压到超限 35% 仍计为一个问题；progressed 只比较问题个数，会误判没有进展，最终 minimal 只处理阻塞，压缩任务被放弃。
 - **定位：** [backend/app/services/checker/section_check.py · _check_quality](<D:/Pycharm Project/EasyWrite/backend/app/services/checker/section_check.py:531>)、[backend/app/services/refine/policy.py · progressed](<D:/Pycharm Project/EasyWrite/backend/app/services/refine/policy.py:49>)、[backend/app/services/refine/policy.py · decide](<D:/Pycharm Project/EasyWrite/backend/app/services/refine/policy.py:67>)、[backend/app/services/generator/section_generator.py · build_prompts](<D:/Pycharm Project/EasyWrite/backend/app/services/generator/section_generator.py:140>)。

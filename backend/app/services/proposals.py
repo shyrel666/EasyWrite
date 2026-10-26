@@ -93,7 +93,8 @@ def compute_manifest(
         "ref_settings": {"label": "知识库引用的锁定与排除",
                          "sha": _sha({"pinned": sorted(node.pinned_refs), "excluded": sorted(node.excluded_refs)})},
         "section": {"label": "本节标题路径与字数预算",
-                    "sha": _sha({"path": section_path(project.outline, node.id), "word_budget": node.word_budget})},
+                    "sha": _sha({"path": section_path(project.outline, node.id), "word_budget": node.word_budget,
+                                 "diagram_budget": node.diagram_budget})},
         "requirements": {"label": "本节要求", "sha": _sha(node.requirements)},
     }
     if evidence is not None:

@@ -17,3 +17,8 @@ def body_chars(text: str) -> int:
     t = BULLET.sub("", t)
     t = MARKUP.sub("", t)
     return len(WHITESPACE.sub("", t))
+
+
+def diagram_chars(text: str) -> int:
+    """图表代码单独计量，不能用删图来假装正文压缩成功。"""
+    return sum(len(WHITESPACE.sub("", m.group())) for m in re.finditer(r"```mermaid\b.*?(?:```|$)", text or "", re.S))

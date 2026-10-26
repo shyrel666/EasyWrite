@@ -70,4 +70,19 @@ describe('RefinePanel', () => {
     expect(wrapper.text()).toContain('已按采纳流程写入正文')
     expect(wrapper.findAll('button').some((b) => b.text().includes('继续'))).toBe(false)
   })
+
+  it('连续压缩仍超限时显示字数进展、回退及部分完成', async () => {
+    const wrapper = mountPanel({ id: 't1', status: 'completed', result: result({
+      stop_reason: 'rounds_exhausted', message: '修订轮数用完',
+      length: { char_count: 1350, word_budget: 1000, length_deviation: 0.35, excess_chars: 350, diagram_chars: 90 },
+      history: [{ label: '第 2 轮', mode: 'compress', char_count: 1350, word_budget: 1000, reverted: true }],
+    }) })
+    await flushPromises()
+    expect(wrapper.text()).toContain('仍超限 350 字')
+    expect(wrapper.text()).toContain('1350 / 1000')
+    expect(wrapper.text()).toContain('已回退')
+    expect(wrapper.text()).toContain('部分完成')
+    expect(wrapper.text()).not.toContain('已达成检查目标')
+    wrapper.unmount()
+  })
 })

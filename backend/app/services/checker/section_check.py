@@ -31,7 +31,7 @@ from app.services.generator import rubric_planner as rp
 from app.services.generator.evidence_set import EvidenceSet
 from app.services.generator.section_generator import strip_title_heading
 from app.services.project_store import now_str
-from app.services.text_stats import body_chars
+from app.services.text_stats import body_chars, diagram_chars
 
 logger = logging.getLogger("easywrite.section_check")
 
@@ -579,6 +579,8 @@ def _check_quality(text: str, node: OutlineNode) -> List[CheckIssue]:
     issues: List[CheckIssue] = []
     chars = body_chars(text)
     budget = node.word_budget
+    if node.diagram_budget and diagram_chars(text) > node.diagram_budget:
+        issues.append(CheckIssue(level="quality", code="diagram_length", message=f"图表代码超出独立预算：{diagram_chars(text)} / {node.diagram_budget} 字符"))
     if budget:
         ratio = chars / budget - 1
         if abs(ratio) > LENGTH_TOLERANCE:
@@ -672,7 +674,10 @@ def check_section(
     """检查 node 的候选文本 text（不改动正文）；llm_review=True 且已配置模型时加做模型评审"""
     evidence = evidence or EvidenceSet()
     report = SectionCheckReport(section_id=node.id, section_title=node.title, checked_at=now_str(),
-                                char_count=body_chars(text), word_budget=node.word_budget)
+                                char_count=body_chars(text), word_budget=node.word_budget,
+                                diagram_chars=diagram_chars(text), diagram_budget=node.diagram_budget,
+                                length_deviation=body_chars(text) / node.word_budget - 1 if node.word_budget else 0,
+                                excess_chars=max(0, body_chars(text) - node.word_budget) if node.word_budget else 0)
     if not (text or "").strip():
         report.issues = [CheckIssue(level="blocking", code="empty", message="正文为空")]
         report.blocking_count = 1

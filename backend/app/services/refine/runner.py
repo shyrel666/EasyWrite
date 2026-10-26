@@ -25,8 +25,9 @@ from app.services.checker.section_check import check_section, revision_issues
 from app.services.generator.evidence_set import EvidenceSet, select_evidence
 from app.services.generator.section_generator import section_generator, writing_inputs
 from app.services.project_store import find_node, project_store
-from app.services.proposals import REFINE_ORIGINS, apply_proposal, proposal_store, propose
-from app.services.refine.policy import DEFAULT_MAX_ROUNDS, MODE_LABELS, Action, counts, decide
+from app.services.proposals import REFINE_ORIGINS, apply_proposal, proposal_store, propose, reject_proposal
+from app.services.refine.policy import DEFAULT_MAX_ROUNDS, MODE_LABELS, Action, counts, decide, regressed, value
+from app.services.refine.compression import compression_plan
 
 logger = logging.getLogger("easywrite.refine")
 
@@ -130,7 +131,8 @@ class RefineRun:
     def _record(self, label: str, report: Any, round_no: int, mode: str, proposal_id: Optional[str]):
         blocking, quality = counts(report)
         self.history.append({"round": round_no, "label": label, "mode": mode, "proposal_id": proposal_id,
-                             "blocking_count": blocking, "quality_count": quality})
+                             "blocking_count": blocking, "quality_count": quality,
+                             **{k: value(report, k) for k in ("char_count", "word_budget", "length_deviation", "excess_chars", "diagram_chars")}})
 
     def _save(self, content: str, round_no: int, mode: str, origin: str):
         """存为候选稿（自动做规则检查）；本版成为下一轮修订的原稿"""
@@ -138,6 +140,17 @@ class RefineRun:
                 "instruction": self.instruction, "apply_if_blank": self.apply_if_blank}
         if origin == "refine" and not self.parent and self.base_counts:
             meta["base"] = self.base_counts  # 以当前正文为原稿：记下原稿的检查结果，继续执行时据此判断进展
+        if mode == "compress" and self.last_report:
+            candidate = check_section(self.project, self.node, content, self.evidence)
+            if regressed(self.last_report, candidate):
+                rejected = propose(self.project, self.node, content, self.evidence, origin=origin,
+                                   task_id=self.ctx.task_id, parent_id=self.parent, refine=meta,
+                                   base_revision=self.base_revision, supersede=False)
+                reject_proposal(self.project_id, self.section_id, rejected["id"])
+                self._record(f"第 {round_no} 轮压缩退化，已回退", candidate, round_no, mode, rejected["id"])
+                self.history[-1]["reverted"] = True
+                meta["reverted_proposal_id"] = rejected["id"]
+                content = self.base_text
         proposal = propose(self.project, self.node, content, self.evidence, origin=origin,
                            task_id=self.ctx.task_id, parent_id=self.parent, refine=meta,
                            base_revision=self.base_revision)
@@ -232,7 +245,7 @@ class RefineRun:
             self.base = "current"
             ctx.report(30, "检查当前正文")
             report = check_section(project, node, node.content, self.evidence)
-            self.base_counts = {"blocking_count": report.blocking_count, "quality_count": report.quality_count}
+            self.base_counts = report.model_dump()
             self.reports.append(report)
             self.last_report = report
             self._record("当前正文", report, 0, "", None)
@@ -249,6 +262,8 @@ class RefineRun:
             mode = action.mode if action.kind == "revise" else "normal"
             issues = revision_issues(self.last_report, self.instruction if pending_instruction else "",
                                      blocking_only=mode == "minimal")
+            if mode == "compress":
+                issues += compression_plan(self.last_report, self.base_text)
             pending_instruction = False
             if not issues:
                 self._finish(action)
@@ -312,6 +327,7 @@ class RefineRun:
             "history": self.history,
             "blocking_count": report.blocking_count if report else None,
             "quality_count": report.quality_count if report else None,
+            "length": {k: value(report, k) for k in ("char_count", "word_budget", "length_deviation", "excess_chars", "diagram_chars")},
             "unresolved": [i.model_dump() for i in report.issues] if report and self.final_id else [],
             "pending_verification": len(report.pending_verification) if report and self.final_id else 0,
             "evidence_gaps": evidence_gaps(self.evidence) if self.evidence else [],

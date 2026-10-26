@@ -16,6 +16,7 @@ class OutlineNode(BaseModel):
     status: str = Field(default="pending", description="状态: pending, generating, completed, reviewed")
     # 字数预算（评分项对齐时按评分比重分配）
     word_budget: Optional[int] = Field(default=None, description="目标正文字数")
+    diagram_budget: Optional[int] = Field(default=None, ge=1, description="图表代码字符预算，与正文独立")
     # 内容模式：ai_generate=AI撰写 / point_to_point=点对点应答表 / template_fill=模板填充
     content_mode: str = Field(default="ai_generate")
     # 引用溯源（人工在环）：锁定的知识库块在重新生成时必注入；排除的永不注入
@@ -496,6 +497,10 @@ class SectionCheckReport(BaseModel):
     checked_at: str = ""
     char_count: int = 0
     word_budget: Optional[int] = None
+    diagram_chars: int = 0
+    diagram_budget: Optional[int] = None
+    length_deviation: float = 0
+    excess_chars: int = 0
     passed: bool = Field(default=False, description="没有阻塞问题")
     blocking_count: int = 0
     quality_count: int = 0
