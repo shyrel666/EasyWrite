@@ -7,6 +7,7 @@ describe('material helpers', () => {
     expect(materialChip('缺附件')).toBe('chip-warn')
     expect(materialChip('过期')).toBe('chip-bad')
     expect(materialChip('未关联')).toBe('chip-bad')
+    expect(materialChip('关联失效')).toBe('chip-bad')
     expect(materialChip('其他')).toBe('chip-mute')
   })
 

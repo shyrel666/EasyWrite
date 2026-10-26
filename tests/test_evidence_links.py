@@ -49,6 +49,25 @@ def test_code_tokens_must_match():
     assert phrase_ratio("信息系统安全集成服务资质（一级）", "信息系统安全集成服务认证证书（一级）") > 0.8
 
 
+def test_deleted_link_prevents_complete_status_when_another_link_is_valid(client, project_id):
+    _setup(client, project_id)
+    url = f"/api/v1/project/{project_id}/evidence"
+    for asset in ASSETS["qualifications"]:
+        client.post(f"/api/v1/assets/qualifications/{asset['id']}/attachments",
+                    files={"file": ("证书.pdf", PDF_BYTES, "application/pdf")})
+    keys = [f"qualifications:{a['id']}" for a in ASSETS["qualifications"]]
+    assert client.put(f"{url}/s2", json={"asset_keys": keys}).status_code == 200
+    assert client.get(url).json()["complete"] == 1
+    client.delete("/api/v1/assets/qualifications/q_iso9001")
+    report = client.get(url).json()
+    assert report["complete"] == 0
+    s2 = next(i for i in report["items"] if i["item_id"] == "s2")
+    assert s2["status"] == "关联失效" and s2["links"][0]["status"] == "齐备"
+    preflight = client.get(f"/api/v1/project/{project_id}/export/preflight").json()
+    material = next(c for c in preflight["checks"] if c["key"] == "material")
+    assert material["status"] == "warn" and "关联资料已被删除" in material["details"][0]["detail"]
+
+
 def test_suggestions_match_by_name_and_skip_examples(client, project_id):
     _setup(client, project_id)
     res = client.get(f"/api/v1/project/{project_id}/evidence/suggestions")
@@ -97,7 +116,7 @@ def test_link_validation_and_material_status(client, project_id):
     # 资料被删除后关联失效；空列表取消关联
     client.delete("/api/v1/assets/qualifications/q_iso20000")
     s2 = next(it for it in client.get(url).json()["items"] if it["item_id"] == "s2")
-    assert s2["status"] == "未关联" and s2["missing_links"] == ["qualifications:q_iso20000"]
+    assert s2["status"] == "关联失效" and s2["missing_links"] == ["qualifications:q_iso20000"]
     assert client.put(f"{url}/s2", json={"asset_keys": []}).status_code == 200
     assert "s2" not in client.get(f"/api/v1/project/{project_id}").json()["evidence_links"]
 

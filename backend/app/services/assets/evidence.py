@@ -143,7 +143,8 @@ def evidence_report(project: Project) -> Dict[str, Any]:
             "criteria": item.criteria,
             "note": item.note,
             "needs_material": needs_material(item),
-            "status": worst_status(c.status for c in checks) if checks else NOT_LINKED,
+            "status": worst_status([c.status for c in checks] + (["关联失效"] if missing else []))
+                      if checks or missing else NOT_LINKED,
             "links": [c.model_dump() for c in checks],
             "missing_links": missing,
         })

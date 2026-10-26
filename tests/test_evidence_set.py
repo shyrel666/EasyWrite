@@ -77,6 +77,19 @@ def test_only_relevant_assets_are_selected(no_retrieval):
     assert [a["asset_id"] for a in evidence.assets] == ["p_pm"]  # 只取相关条目，不整库注入
 
 
+@pytest.mark.parametrize("retain_one", [False, True])
+def test_deleted_links_are_reported_without_falling_back(no_retrieval, retain_one):
+    _add_people()
+    node = OutlineNode(id="sec_9", title="人员配置", scoring_item_ids=["s_team"])
+    keys = ["personnel:deleted"] + (["personnel:p_dev"] if retain_one else [])
+    evidence = select_evidence(_project(node, links={"s_team": keys}, scoring=SCORING), node)
+    assert [a["asset_id"] for a in evidence.assets] == (["p_dev"] if retain_one else [])
+    assert "王工" not in evidence.asset_context
+    assert "1 条用户关联资料已被删除" in evidence.asset_context
+    missing = evidence.excluded_assets[0]
+    assert (missing["asset_id"], missing["status"], missing["source"]) == ("deleted", "missing", "linked")
+
+
 def test_linked_assets_take_priority_and_tender_text_included(no_retrieval):
     _add_people()
     node = OutlineNode(id="sec_9", title="9.1 人员资质", scoring_item_ids=["s_team"])

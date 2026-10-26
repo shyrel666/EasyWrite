@@ -23,7 +23,7 @@ PROBLEM_STATUS = {
     "unverified": "待核实",
     "expiry_unknown": "待核实",
 }
-STATUS_ORDER = ["示例资料", "过期", "主体不符", "缺附件", "待核实", "齐备"]
+STATUS_ORDER = ["示例资料", "过期", "主体不符", "关联失效", "缺附件", "待核实", "齐备"]
 COMPLETE = "齐备"
 NOT_LINKED = "未关联"
 

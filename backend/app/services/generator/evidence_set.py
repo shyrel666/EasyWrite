@@ -126,8 +126,8 @@ def select_evidence(
     snapshot = asset_manager.snapshot()
     exclude = generation_filter(project)
     keys = list(dict.fromkeys(k for sid in node.scoring_item_ids for k in project.evidence_links.get(sid, [])))
-    found, _missing = resolve_links(keys, snapshot=snapshot)
-    if found:
+    found, missing = resolve_links(keys, snapshot=snapshot)
+    if keys:
         # 用户为本节评分项关联了资料：只用这些资料；全部被排除时不改用其他资料，只说明已排除
         asset_context, models, dropped = asset_manager.linked_context(found, exclude)
         assets = [_asset_record(kind, m.model_dump(), "linked") for kind, m in models]
@@ -138,6 +138,12 @@ def select_evidence(
         assets = [_asset_record(matched["kind"], item, "matched") for item in matched.get("items", [])]
         source = "matched"
     excluded = [dict(_asset_record(d["kind"], d["item"], source), reason=d["reason"]) for d in dropped]
+    for key in missing:
+        kind, _, asset_id = key.partition(":")
+        excluded.append({"kind": kind, "asset_id": asset_id, "name": asset_id, "status": "missing",
+                         "source": "linked", "reason": "关联资料已被删除，请重新关联"})
+    if missing:
+        asset_context += f"\n【资料缺口】{len(missing)} 条用户关联资料已被删除，须重新关联，不得替换成其他资料作承诺。"
 
     return EvidenceSet(
         refs=retrieval["refs"],

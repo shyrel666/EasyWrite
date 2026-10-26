@@ -12,6 +12,7 @@ export const MATERIAL_CHIP = {
   主体不符: 'chip-bad',
   示例资料: 'chip-mute',
   未关联: 'chip-bad',
+  关联失效: 'chip-bad',
 }
 
 export const ATTACHMENT_ACCEPT = '.pdf,.png,.jpg,.jpeg,.gif,.bmp,.webp,.tif,.tiff'

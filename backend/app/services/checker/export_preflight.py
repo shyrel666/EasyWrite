@@ -100,7 +100,9 @@ def _material(project: Project) -> Dict[str, Any]:
         if it["status"] == COMPLETE:
             continue
         problems = [p["message"] for c in it["links"] for p in c["problems"]]
-        gaps.append(_detail(it["name"], it["status"] + (f"：{problems[0]}" if problems else "")))
+        if it["missing_links"]:
+            problems.append(f"{len(it['missing_links'])} 条关联资料已被删除，请重新关联")
+        gaps.append(_detail(it["name"], it["status"] + (f"：{'；'.join(problems)}" if problems else "")))
     return _check("material", "证明材料缺口", WARN if gaps else OK,
                   f"{len(gaps)}/{report['total']} 个评分项证明材料不齐备" if gaps
                   else f"{report['total']} 个评分项证明材料齐备", gaps)
