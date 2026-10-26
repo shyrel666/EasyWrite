@@ -50,7 +50,7 @@ export const useProjectStore = defineStore('project', {
     },
     async saveSection(sectionId, content, status = 'completed') {
       const res = await api.saveSection(this.id, sectionId, content, status)
-      this.setSectionStatus(sectionId, status)
+      this.setSectionContent(sectionId, content, res.node_status || status, res.revision)
       return res
     },
     setSectionStatus(sectionId, status) {
@@ -74,6 +74,7 @@ export const useProjectStore = defineStore('project', {
             n.content = content
             n.status = status
             if (revision !== undefined) n.revision = revision
+            n.reviewed_revision = status === 'reviewed' ? (n.revision || 0) : null
             return true
           }
           if (n.children && walk(n.children)) return true

@@ -35,8 +35,16 @@ def write_node(node: OutlineNode, content: str, status: str, source: str) -> str
     if content != old:
         node.revision += 1
         node.content_source = source
+        node.reviewed_revision = None
+        if status == "reviewed":
+            status = "completed" if content.strip() else "pending"
+    elif node.status == "reviewed" and node.reviewed_revision == node.revision and status == "completed":
+        status = "reviewed"  # 同文自动保存不取消已有校审
+    if status == "reviewed" and not content.strip():
+        status = "pending"
     node.content = content
     node.status = status
+    node.reviewed_revision = node.revision if status == "reviewed" else None
     return old
 
 

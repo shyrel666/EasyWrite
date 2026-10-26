@@ -93,7 +93,11 @@ def test_polish_and_implicit_saves_do_not_mark_reviewed(client, project_id):
     put = f"/api/v1/project/{project_id}/section"
     assert client.put(put, json={"section_id": "sec_1_1", "content": "人工稿"}).json()["node_status"] == "completed"
     assert client.put(put, json={"section_id": "sec_1_1", "content": ""}).json()["node_status"] == "pending"
-    assert client.put(put, json={"section_id": "sec_1_1", "content": "定稿", "status": "reviewed"}).json()["node_status"] == "reviewed"
+    saved = client.put(put, json={"section_id": "sec_1_1", "content": "定稿", "status": "reviewed"}).json()
+    assert saved["node_status"] == "completed"  # 修改并保存正文后，需针对该版本明确校审
+    reviewed = client.put(put, json={"section_id": "sec_1_1", "content": "定稿", "status": "reviewed",
+                                     "base_revision": saved["revision"]}).json()
+    assert reviewed["node_status"] == "reviewed" and reviewed["reviewed_revision"] == saved["revision"]
 
 
 def test_version_failure_rolls_back_content(client, project_id, monkeypatch):

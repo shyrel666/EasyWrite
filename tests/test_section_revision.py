@@ -1,6 +1,10 @@
 """阶段 C2：章节修订号与内容来源；大纲整树保存只合并结构，不覆盖正文"""
+import pytest
+
+from app.models.schemas import OutlineNode
 from app.services.generator.section_generator import section_generator
 from app.services.project_store import find_node, project_store
+from app.services.section_content import save_section_content
 
 OUTLINE = [
     {"id": "sec_1", "title": "第一章 方案", "level": 1, "children": [
@@ -90,3 +94,45 @@ def test_deviation_inject_counts_as_revision_and_keeps_manual_draft(client, proj
     versions = client.get(f"/api/v1/project/{project_id}/section/sec_1_2/versions").json()["versions"]
     assert [v["source"] for v in versions] == ["deviation", "manual"] and versions[1]["preview"] == "人工写的应答说明"
     assert client.post(f"/api/v1/project/{project_id}/deviation/inject", json={"section_id": "nope"}).status_code == 404
+
+
+def test_review_binds_revision_and_changes_require_explicit_rereview(client, project_id):
+    client.put(f"/api/v1/project/{project_id}/outline", json={"outline": OUTLINE})
+    url = f"/api/v1/project/{project_id}/section"
+    body = {"section_id": "sec_1_1", "content": "已核对正文"}
+    assert client.put(url, json=body).json()["revision"] == 1
+    reviewed = client.put(url, json={**body, "status": "reviewed", "base_revision": 1}).json()
+    assert reviewed["node_status"] == "reviewed" and reviewed["reviewed_revision"] == 1
+    assert client.put(url, json={**body, "status": "completed"}).json()["node_status"] == "reviewed"
+    changed = {**body, "content": "修改后的正文"}
+    saved = client.put(url, json={**changed, "status": "reviewed"}).json()  # 兼容旧客户端沿用 reviewed
+    assert (saved["node_status"], saved["revision"], saved["reviewed_revision"]) == ("completed", 2, None)
+    report = client.get(f"/api/v1/project/{project_id}/export/preflight").json()
+    check = next(c for c in report["checks"] if c["key"] == "unreviewed")
+    assert check["status"] == "warn" and check["details"][0]["section_id"] == body["section_id"]
+    assert client.put(url, json={**body, "status": "reviewed", "base_revision": 1}).status_code == 409
+    assert _node(project_id, "sec_1_1").content == "修改后的正文"
+    confirmed = client.put(url, json={**changed, "status": "reviewed", "base_revision": 2}).json()
+    assert confirmed["node_status"] == "reviewed" and confirmed["reviewed_revision"] == 2
+
+
+@pytest.mark.parametrize("source", ["ai_generate", "batch", "polish", "restore", "proposal", "deviation"])
+def test_all_content_writers_invalidate_previous_review(client, project_id, source):
+    client.put(f"/api/v1/project/{project_id}/outline", json={"outline": OUTLINE})
+    _save(client, project_id, "sec_1_1", "原稿")
+    _save(client, project_id, "sec_1_1", "原稿", "reviewed")
+    save_section_content(project_id, "sec_1_1", "新稿", "reviewed", content_source=source)
+    n = _node(project_id, "sec_1_1")
+    assert (n.status, n.revision, n.reviewed_revision) == ("completed", 2, None)
+
+
+def test_legacy_review_is_bound_on_read_and_parent_stale_review_is_reported(project_id):
+    from app.services.checker.export_preflight import build_preflight
+    node = OutlineNode(id="parent", title="父章", content="正文", status="reviewed", revision=7,
+                       children=[OutlineNode(id="child", title="子章")])
+    assert node.reviewed_revision == 7
+    node.revision = 8
+    project = project_store.get(project_id)
+    project.outline = [node]
+    check = next(c for c in build_preflight(project)["checks"] if c["key"] == "unreviewed")
+    assert check["details"][0]["section_id"] == "parent"

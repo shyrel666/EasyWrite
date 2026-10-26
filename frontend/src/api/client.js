@@ -225,8 +225,8 @@ export const api = {
 
   // 章节
   generateSection: (id, payload) => request(`/project/${id}/section/generate`, { method: 'POST', body: payload }),
-  saveSection: (id, sectionId, content, status) =>
-    request(`/project/${id}/section`, { method: 'PUT', body: { section_id: sectionId, content, status } }),
+  saveSection: (id, sectionId, content, status, baseRevision) =>
+    request(`/project/${id}/section`, { method: 'PUT', body: { section_id: sectionId, content, status, base_revision: baseRevision } }),
   polishSection: (id, payload) => request(`/project/${id}/section/polish`, { method: 'POST', body: payload }),
   generateBatch: (id, includeWritten = false) =>
     request(`/project/${id}/sections/generate-batch`, { method: 'POST', body: { include_written: includeWritten } }),

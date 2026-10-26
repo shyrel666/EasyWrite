@@ -108,8 +108,9 @@ def _material(project: Project) -> Dict[str, Any]:
                   else f"{report['total']} 个评分项证明材料齐备", gaps)
 
 
-def _unreviewed(leaves: List[OutlineNode]) -> Dict[str, Any]:
-    pending = [_detail(n.title, section_id=n.id) for n in leaves if n.content.strip() and n.status != "reviewed"]
+def _unreviewed(nodes: List[OutlineNode]) -> Dict[str, Any]:
+    pending = [_detail(n.title, section_id=n.id) for n in nodes if n.content.strip()
+               and (n.status != "reviewed" or n.reviewed_revision != n.revision)]
     return _check("unreviewed", "未校审的章节", WARN if pending else OK,
                   f"{len(pending)} 个已撰写章节尚未人工校审" if pending else "已撰写的章节均已校审", pending)
 
@@ -152,7 +153,7 @@ def build_preflight(project: Project, latest_compliance: Optional[Dict[str, Any]
         _unverified_assets(nodes),
         _book_consistency(project),
         _material(project),
-        _unreviewed(leaves),
+        _unreviewed(nodes),
         _redlines(project, latest_compliance),
         _deviation_pending(project),
     ]

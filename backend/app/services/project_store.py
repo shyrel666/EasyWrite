@@ -50,7 +50,7 @@ def find_node(nodes: List[OutlineNode], section_id: str) -> Optional[OutlineNode
 
 
 # 只经章节接口修改的字段：大纲整树保存时，已存在节点保留服务端的值
-SERVER_OWNED_FIELDS = ("content", "status", "last_refs", "revision", "content_source", "pinned_refs", "excluded_refs")
+SERVER_OWNED_FIELDS = ("content", "status", "last_refs", "revision", "reviewed_revision", "content_source", "pinned_refs", "excluded_refs")
 
 
 def merge_outline(server: List[OutlineNode], client: List[OutlineNode]) -> Tuple[List[OutlineNode], List[str]]:
@@ -71,6 +71,7 @@ def merge_outline(server: List[OutlineNode], client: List[OutlineNode]) -> Tuple
                 setattr(merged, field, getattr(current, field))
         else:
             merged.revision = 0
+            merged.reviewed_revision = 0 if merged.status == "reviewed" else None
             merged.content_source = "manual" if merged.content.strip() else ""
         return merged
 

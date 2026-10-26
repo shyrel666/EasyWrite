@@ -61,7 +61,7 @@ def test_same_section_conflict_preserves_human_text_and_ai_candidate(client, sec
         detail = res.json()["detail"]
     node = find_node(project_store.get(pid).outline, "s1")
     assert node.content == ("并发人工修改" if edit == "content" else "人工原稿")
-    assert node.status == ("completed" if edit == "reverted" else "reviewed")
+    assert node.status == ("reviewed" if edit == "reviewed" else "completed")
     assert detail["reason"] == "content_changed" and detail["current_revision"] == node.revision
     proposal = proposal_store.get(pid, detail["proposal_id"])
     assert proposal.content == "AI结果" and proposal.base_revision == 1

@@ -243,8 +243,10 @@ def update_section_content(project_id: str, req: UpdateSectionRequest):
         status = req.status
     else:
         status = "completed" if req.content.strip() else "pending"
-    _, revision = _save_with_revision(project_id, req.section_id, req.content, status)
-    return {"status": "success", "section_id": req.section_id, "node_status": status, "revision": revision}
+    status, revision = _save_with_revision(project_id, req.section_id, req.content, status,
+                                           expected_revision=req.base_revision)
+    return {"status": "success", "section_id": req.section_id, "node_status": status, "revision": revision,
+            "reviewed_revision": revision if status == "reviewed" else None}
 
 
 @router.post("/project/{project_id}/section/polish", response_model=PolishSectionResponse, summary="单章节深度降AI味与公文严肃化润色")

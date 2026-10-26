@@ -1,5 +1,5 @@
 from typing import List, Literal, Optional, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # 哨兵值：字段未在招标文件中出现时的显式占位（绝不静默编造默认值）
 NOT_MENTIONED = "未提及"
@@ -26,8 +26,17 @@ class OutlineNode(BaseModel):
     scoring_item_ids: List[str] = Field(default_factory=list)
     # 正文修订号与来源：每次正文变化加 1（只经章节写入接口修改；候选稿采纳时据此判断正文是否变化）
     revision: int = Field(default=0, description="正文修订号")
+    reviewed_revision: Optional[int] = Field(default=None, description="人工校审对应的正文修订号；正文改动后失效")
     content_source: str = Field(default="", description="最近一次正文写入的来源：manual / ai_generate / batch / polish / restore / proposal / deviation")
     children: List['OutlineNode'] = Field(default_factory=list, description="子章节节点")
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_review_revision(cls, data):
+        # 旧记录没有绑定字段：保留其已有校审声明，绑定到该条记录的当前正文；后续修改必须失效。
+        if isinstance(data, dict) and data.get("status") == "reviewed" and "reviewed_revision" not in data:
+            return dict(data, reviewed_revision=data.get("revision", 0))
+        return data
 
 
 OutlineNode.model_rebuild()
@@ -245,6 +254,7 @@ class UpdateSectionRequest(BaseModel):
     section_id: str
     content: str
     status: Optional[str] = Field(default=None, description="目标状态 pending/completed/reviewed；未传时按正文是否为空取 completed/pending")
+    base_revision: Optional[int] = Field(default=None, ge=0, description="保存/校审针对的正文修订号，变化时返回 409")
 
 
 class OutlineUpdateRequest(BaseModel):

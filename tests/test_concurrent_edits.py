@@ -59,7 +59,8 @@ def test_stream_save_keeps_concurrent_edit(client, project_id, monkeypatch):
     generated = find_node(project.outline, "sec_1_1")
     edited = find_node(project.outline, "sec_1_2")
     assert edited.content == "用户在流式期间编辑的安全设计", "流式写回覆盖了并发编辑"
-    assert edited.status == "reviewed"
+    assert edited.status == "completed"  # 正文发生变化，旧客户端沿用的 reviewed 不能保留
+    assert edited.reviewed_revision is None
     assert generated.content == "生成的架构设计正文"
     assert generated.last_refs == fake_refs, "生成引用应随正文持久化"
 

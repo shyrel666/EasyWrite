@@ -74,6 +74,22 @@ afterEach(async () => {
 })
 
 describe('批量完成与编辑器刷新', () => {
+  it('编辑已校审正文后自动保存降级，再校审携带当前修订号', async () => {
+    const store = useProjectStore()
+    store.id = 'p1'
+    store.project = project()
+    Object.assign(store.findNode('s1'), { status: 'reviewed', reviewed_revision: 1 })
+    const wrapper = mount(SectionEditor, { projectId: 'p1', node: store.findNode('s1') })
+    await wrapper.get('textarea').setValue('修改后的正文')
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(api.saveSection).toHaveBeenLastCalledWith('p1', 's1', '修改后的正文', 'completed')
+    expect(store.findNode('s1')).toMatchObject({ status: 'completed', revision: 2, reviewed_revision: null })
+    api.saveSection.mockResolvedValue({ revision: 2, node_status: 'reviewed' })
+    await wrapper.get('[title="标记校审"]').trigger('click')
+    await flushPromises()
+    expect(api.saveSection).toHaveBeenLastCalledWith('p1', 's1', '修改后的正文', 'reviewed', 2)
+    expect(store.findNode('s1')).toMatchObject({ status: 'reviewed', reviewed_revision: 2 })
+  })
   it('编纂页的顶栏导出接入当前编辑器保存，并传回失败', async () => {
     const saving = deferred()
     api.saveSection.mockReturnValue(saving.promise)

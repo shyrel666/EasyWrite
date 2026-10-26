@@ -85,11 +85,11 @@ export function useSectionSave({ node, projectId, paused }) {
     const nodeId = current.id
     const text = content.value
     // 手写正文的待撰写章节视为已完成，计入进度
-    const status = current.status === 'pending' && text.trim() ? 'completed' : (current.status || 'completed')
+    const status = text.trim() ? 'completed' : 'pending'
     savePromise = (async () => {
       try {
         const res = await api.saveSection(projectId(), nodeId, text, status)
-        markSaved(nodeId, text, status, res.revision)
+        markSaved(nodeId, text, res.node_status || status, res.revision)
         return true
       } catch (e) {
         ElMessage.error('自动保存失败：' + e.message)

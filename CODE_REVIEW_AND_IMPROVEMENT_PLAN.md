@@ -20,8 +20,8 @@
 | P0-4 | 删除的证明关联仍可能齐备或被替代 | 已修复 | `d927f14` | pytest 428；Vitest 93；ruff、build 通过 |
 | P0-5 | 承诺单位、比较方向及全书口径错误 | 已修复 | `54afadd` | pytest 441；Vitest 93；ruff、build 通过 |
 | P0-6 | 资料仅检查首次出现，全书漏父章正文 | 已修复 | `4ce44bf` | pytest 446；Vitest 93；ruff、build 通过 |
-| P0-7 | 导出、回填等操作未可靠等待保存 | 已修复 | 本项提交，见 git log | pytest 446；Vitest 101；ruff、build 通过 |
-| P0-8 | 修改正文后沿用已校审状态 | 待实施 | — | 计划见下文 |
+| P0-7 | 导出、回填等操作未可靠等待保存 | 已修复 | `7e0b130` | pytest 446；Vitest 101；ruff、build 通过 |
+| P0-8 | 修改正文后沿用已校审状态 | 已修复 | 本项提交，见 git log | pytest 454；Vitest 102；ruff、build 通过 |
 | P0-9 | 历史示例分类误伤及清理边界 | 待实施 | — | 计划见下文 |
 | P0-10 | 同名 Word 导出覆盖和文件生命周期 | 待实施 | — | 计划见下文 |
 
@@ -82,6 +82,8 @@
 - **Vitest：** 延迟保存时不调用检查/导出/生成/回填；失败不继续；导出弹窗打开后又编辑必须再次保存；流式进行中拒绝视为已保存；保留最新草稿。pytest 回归导出与偏离 API。
 
 ### P0-8：校审应绑定正文修订号
+
+已按下述方案实施。旧记录仅沿用既有校审声明并绑定当时存储的 revision，无法追认历史误标；后续正文改动必须重新校审。
 
 - **风险 / ROI：高 / 高。** 自动保存沿用 reviewed，正文变化后仍显示已校审，导出检查无法识别校审过期。
 - **代码定位：** [frontend/src/composables/useSectionSave.js · autosave](<D:/Pycharm Project/EasyWrite/frontend/src/composables/useSectionSave.js:77>)、[frontend/src/components/workspace/SectionEditor.vue · markReviewed](<D:/Pycharm Project/EasyWrite/frontend/src/components/workspace/SectionEditor.vue:189>)、[backend/app/services/section_content.py · write_node](<D:/Pycharm Project/EasyWrite/backend/app/services/section_content.py:32>)、[backend/app/api/sections.py · update_section_content](<D:/Pycharm Project/EasyWrite/backend/app/api/sections.py:240>)。

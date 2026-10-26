@@ -190,9 +190,10 @@ async function markReviewed() {
   if (!await flushSave()) return
   const text = content.value
   try {
-    const res = await api.saveSection(props.projectId, props.node.id, text, 'reviewed')
-    markSaved(props.node.id, text, 'reviewed', res.revision)
-    ElMessage.success('已标记校审')
+    const res = await api.saveSection(props.projectId, props.node.id, text, 'reviewed', savedRevision.value)
+    markSaved(props.node.id, text, res.node_status || 'reviewed', res.revision)
+    if (res.node_status && res.node_status !== 'reviewed') ElMessage.warning('正文已变化，请重新校审')
+    else ElMessage.success('已标记校审')
   } catch (e) {
     ElMessage.error('保存失败：' + e.message)
   }
@@ -510,7 +511,7 @@ onBeforeUnmount(() => {
       <el-button text title="历史版本" :disabled="generating" @click="openVersions">
         <el-icon class="sm:mr-1.5"><Clock /></el-icon><span class="hidden sm:inline">历史</span>
       </el-button>
-      <el-button text title="标记校审" :type="node.status === 'reviewed' ? 'success' : ''" :disabled="!content || generating || node.status === 'reviewed'" @click="markReviewed">
+      <el-button text title="标记校审" :type="node.status === 'reviewed' && !dirty ? 'success' : ''" :disabled="!content || generating || (node.status === 'reviewed' && !dirty)" @click="markReviewed">
         <el-icon class="sm:mr-1.5"><Select /></el-icon><span class="hidden sm:inline">{{ node.status === 'reviewed' ? '已校审' : '标记校审' }}</span>
       </el-button>
 
