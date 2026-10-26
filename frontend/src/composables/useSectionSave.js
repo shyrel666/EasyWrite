@@ -101,7 +101,10 @@ export function useSectionSave({ node, projectId, paused }) {
 
   /** 保存到没有未保存修改为止（保存期间又有输入会接着保存）；保存失败返回 false */
   async function flushSave() {
-    if (paused.value) return true // 流式结果由服务端写回；刷新也不会替换它
+    if (paused.value) {
+      ElMessage.warning('正文正在生成，请等待生成结束后再操作')
+      return false
+    }
     do {
       if (!await autosave()) return false
     } while (dirty.value)

@@ -17,6 +17,7 @@ const props = defineProps({
   projectName: { type: String, default: '' },
   active: { type: String, default: '' },
   exportEnabled: { type: Boolean, default: false },
+  beforeExport: { type: Function, default: null },
   // 内容区撑满视口、自行管理滚动（编纂台三栏布局）
   fill: { type: Boolean, default: false },
 })
@@ -103,10 +104,20 @@ const PREFLIGHT_ICON = {
   unknown: { icon: 'QuestionFilled', cls: 'text-ink-3' },
 }
 
+async function prepareExport() {
+  try {
+    return !props.beforeExport || await props.beforeExport() !== false
+  } catch (e) {
+    ElMessage.error('保存失败，未继续导出：' + e.message)
+    return false
+  }
+}
+
 async function loadPreflight() {
   preflightLoading.value = true
   openChecks.value = new Set()
   try {
+    if (!await prepareExport()) return false
     preflight.value = await api.exportPreflight(props.projectId)
   } catch (e) {
     preflight.value = null
@@ -114,6 +125,7 @@ async function loadPreflight() {
   } finally {
     preflightLoading.value = false
   }
+  return true
 }
 
 function toggleCheck(key) {
@@ -130,8 +142,8 @@ function locateSection(sectionId) {
 
 async function openExport() {
   mobileOpen.value = false
+  if (!await loadPreflight()) return
   exportDialog.value = true
-  loadPreflight()
   try {
     templateId.value = localStorage.getItem(TEMPLATE_KEY) || 'gov_standard'
   } catch { /* 存储不可用时使用默认模板 */ }
@@ -154,11 +166,13 @@ const exporting = ref(false)
 const exportProgress = ref('')
 
 async function exportWord() {
+  if (exporting.value) return
   try {
     localStorage.setItem(TEMPLATE_KEY, templateId.value)
   } catch { /* 忽略 */ }
   exporting.value = true
   try {
+    if (!await prepareExport()) return
     exportProgress.value = '读取标书内容…'
     const project = await api.getProject(props.projectId)
     const { renderOutlineDiagrams } = await import('@/utils/mermaid')

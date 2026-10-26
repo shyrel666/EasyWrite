@@ -19,8 +19,8 @@
 | P0-3 | 跨分包条款去重和响应写回串项 | 已修复 | `3b7e0d8` | pytest 425；Vitest 93；ruff、build 通过 |
 | P0-4 | 删除的证明关联仍可能齐备或被替代 | 已修复 | `d927f14` | pytest 428；Vitest 93；ruff、build 通过 |
 | P0-5 | 承诺单位、比较方向及全书口径错误 | 已修复 | `54afadd` | pytest 441；Vitest 93；ruff、build 通过 |
-| P0-6 | 资料仅检查首次出现，全书漏父章正文 | 已修复 | 本项提交，见 git log | pytest 446；Vitest 93；ruff、build 通过 |
-| P0-7 | 导出、回填等操作未可靠等待保存 | 待实施 | — | 计划见下文 |
+| P0-6 | 资料仅检查首次出现，全书漏父章正文 | 已修复 | `4ce44bf` | pytest 446；Vitest 93；ruff、build 通过 |
+| P0-7 | 导出、回填等操作未可靠等待保存 | 已修复 | 本项提交，见 git log | pytest 446；Vitest 101；ruff、build 通过 |
 | P0-8 | 修改正文后沿用已校审状态 | 待实施 | — | 计划见下文 |
 | P0-9 | 历史示例分类误伤及清理边界 | 待实施 | — | 计划见下文 |
 | P0-10 | 同名 Word 导出覆盖和文件生命周期 | 待实施 | — | 计划见下文 |
@@ -73,6 +73,8 @@
 - **pytest：** 首处标注后续裸写、反向顺序、多处示例引用、重叠证书标识、父章含冲突但子章正常，以及父子均有正文不重复计数；运行报告展示 Vitest。
 
 ### P0-7：保存成功是导出等操作的前置条件
+
+已按下述方案实施；新增 AppShell 导出等待测试，扩展偏离表与编辑器 Vitest。
 
 - **风险 / ROI：高 / 高。** 顶栏导出读取服务器正文，不等待编辑器防抖；偏离表保存吞掉异常后继续导出/生成，回填不先保存；流式生成期间 flushSave 返回成功但内容尚未落库。
 - **代码定位：** [frontend/src/components/layout/AppShell.vue · openExport](<D:/Pycharm Project/EasyWrite/frontend/src/components/layout/AppShell.vue:131>)、[frontend/src/components/layout/AppShell.vue · exportWord](<D:/Pycharm Project/EasyWrite/frontend/src/components/layout/AppShell.vue:156>)、[frontend/src/composables/useSectionSave.js · flushSave](<D:/Pycharm Project/EasyWrite/frontend/src/composables/useSectionSave.js:103>)、[frontend/src/views/DeviationView.vue · saveEdits](<D:/Pycharm Project/EasyWrite/frontend/src/views/DeviationView.vue:115>)、[frontend/src/views/DeviationView.vue · injectToOutline](<D:/Pycharm Project/EasyWrite/frontend/src/views/DeviationView.vue:176>)。

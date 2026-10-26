@@ -8,12 +8,13 @@ import { useProjectStore } from '@/stores/project'
 import SectionEditor from '@/components/workspace/SectionEditor.vue'
 import TaskProgress from '@/components/common/TaskProgress.vue'
 import WorkspaceView from '@/views/WorkspaceView.vue'
+import AppShell from '@/components/layout/AppShell.vue'
 
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { id: 'p1' }, query: {} }) }))
 
 const slot = { template: '<div><slot /></div>' }
 const stubs = {
-  AppShell: slot, SectionEditor: false, ElTooltip: slot, ElDialog: slot,
+  AppShell: { props: ['beforeExport'], template: '<div><slot /></div>' }, SectionEditor: false, ElTooltip: slot, ElDialog: slot,
   ReferencePanel: { template: '<div />', methods: { open() {} } },
   ElButton: { props: ['disabled'], template: '<button :disabled="disabled"><slot /></button>' },
 }
@@ -73,6 +74,18 @@ afterEach(async () => {
 })
 
 describe('批量完成与编辑器刷新', () => {
+  it('编纂页的顶栏导出接入当前编辑器保存，并传回失败', async () => {
+    const saving = deferred()
+    api.saveSection.mockReturnValue(saving.promise)
+    const wrapper = mount(WorkspaceView)
+    await flushPromises()
+    await wrapper.get('textarea').setValue('尚未防抖保存的正文')
+    const result = wrapper.getComponent(AppShell).props('beforeExport')()
+    expect(api.saveSection).toHaveBeenCalledWith('p1', 's1', '尚未防抖保存的正文', 'completed')
+    saving.reject(new Error('磁盘不可用'))
+    expect(await result).toBe(false)
+    expect(wrapper.get('textarea').element.value).toBe('尚未防抖保存的正文')
+  })
   it('防抖期间批量结束：先等待保存，再刷新项目，编辑器不重挂载', async () => {
     const saving = deferred()
     api.saveSection.mockReturnValue(saving.promise)
@@ -337,6 +350,8 @@ describe('润色与单章生成的并发保护', () => {
     expect(api.streamSection.mock.calls[0][1].base_revision).toBe(1)
     onEvent({ token: '生成中的AI正文' })
     await nextTick()
+    expect(await wrapper.vm.flushSave()).toBe(false)
+    expect(ElMessage.warning).toHaveBeenCalledWith(expect.stringContaining('正在生成'))
     onEvent({ done: false, status_code: 409, error: '正文已变化，已存候选稿', current_content: '另一页已校审的正文',
       current_revision: 2, current_status: 'reviewed', proposal_id: 'prop1' })
     onClose()

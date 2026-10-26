@@ -93,6 +93,7 @@ const batchIncludeWritten = ref(false)
 const batchTaskId = ref('')
 const batchStarting = ref(false)
 const editorRef = ref(null)
+const saveBeforeExport = () => editorRef.value?.flushSave() ?? true
 
 function collectLeaves(nodes, out = []) {
   for (const n of nodes || []) {
@@ -158,7 +159,7 @@ const progress = computed(() => {
 </script>
 
 <template>
-  <AppShell :project-id="projectId" :project-name="store.project?.name" active="workspace" export-enabled fill>
+  <AppShell :project-id="projectId" :project-name="store.project?.name" active="workspace" export-enabled :before-export="saveBeforeExport" fill>
     <div class="h-full flex relative">
       <!-- 窄屏：浮层面板的遮罩 -->
       <div

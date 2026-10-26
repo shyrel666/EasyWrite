@@ -112,19 +112,33 @@ function markManual(item) {
   dirty.value = true
 }
 
+let savePromise = null
 async function saveEdits() {
-  try {
-    await api.saveDeviations(projectId, items.value)
-    dirty.value = false
-    ElMessage.success('偏离表已保存（人工编辑持久化）')
-  } catch (e) {
-    ElMessage.error('保存失败：' + e.message)
+  if (savePromise) {
+    if (!await savePromise) return false
+    return saveEdits()
   }
+  if (!dirty.value) return true
+  const snapshot = JSON.stringify(items.value)
+  savePromise = (async () => {
+    try {
+      await api.saveDeviations(projectId, JSON.parse(snapshot))
+      if (JSON.stringify(items.value) === snapshot) dirty.value = false
+      return true
+    } catch (e) {
+      ElMessage.error('保存失败：' + e.message)
+      return false
+    }
+  })()
+  try { if (!await savePromise) return false } finally { savePromise = null }
+  if (dirty.value) return saveEdits()
+  ElMessage.success('偏离表已保存（人工编辑持久化）')
+  return true
 }
 
 // 单独导出偏离表 Word（原生表格）；AI 拟稿与未填写的条款先提醒核实
 async function exportTable() {
-  if (dirty.value) await saveEdits()
+  if (!await saveEdits()) return
   const { aiDraft, pending, negative } = stats.value
   const warnings = []
   if (aiDraft) warnings.push(`${aiDraft} 条响应为 AI 拟稿、尚未人工核实`)
@@ -149,7 +163,7 @@ async function exportTable() {
 }
 
 async function generate() {
-  if (dirty.value) await saveEdits()
+  if (!await saveEdits()) return
   try {
     const res = await api.generateDeviations(projectId)
     generatingTaskId.value = res.task_id
@@ -182,6 +196,7 @@ async function injectToOutline() {
     await ElMessageBox.confirm('将偏离表 Markdown 表格覆盖写入目标章节正文，是否继续？', '回填确认', { type: 'warning' })
   } catch { return }
   try {
+    if (!await saveEdits()) return
     await api.injectDeviations(projectId, injectSectionId.value)
     ElMessage.success('已回填至目标章节')
   } catch (e) {
@@ -219,7 +234,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <AppShell :project-id="projectId" :project-name="store.project?.name" active="deviation" export-enabled>
+  <AppShell :project-id="projectId" :project-name="store.project?.name" active="deviation" export-enabled :before-export="saveEdits">
     <div class="max-w-7xl mx-auto px-4 sm:px-8 py-6 sm:py-10">
       <PageHeader
         eyebrow="技术偏离表"
