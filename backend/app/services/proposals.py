@@ -29,6 +29,7 @@ from app.services.generator import rubric_planner as rp
 from app.services.generator.evidence_set import EvidenceSet
 from app.services.project_store import find_node, now_str
 from app.services.rag.indexer import knowledge_index
+from app.services.rag.retriever import retrieval_service
 from app.services.section_content import save_section_content
 from app.services.text_stats import body_chars
 
@@ -111,7 +112,8 @@ def compute_manifest(
                 manifest[KB_PREFIX + cid] = {"label": f"知识库片段（已删除）：{cid}", "sha": "deleted"}
                 continue
             title = chunk.get("section_title") or cid
-            manifest[KB_PREFIX + cid] = {"label": f"知识库片段：{title}", "sha": _kb_sha(cid, chunk.get("content", ""))}
+            manifest[KB_PREFIX + cid] = {"label": f"知识库片段：{title}",
+                                         "sha": _kb_sha(cid, retrieval_service.compose_content(chunk))}
     keys = asset_keys if asset_keys is not None else (evidence_asset_keys(evidence) if evidence else [])
     snapshot = evidence.asset_snapshot() if evidence is not None else None
     for key in keys:
@@ -292,15 +294,27 @@ def _require(project_id: str, section_id: str, proposal_id: str) -> SectionPropo
     return row
 
 
+def _basis_changes(project: Project, node: OutlineNode, row: SectionProposal) -> List[Dict[str, str]]:
+    """详情与采纳共用校验；旧候选稿使用过引用却没有指纹时，不补签当前内容。"""
+    stored = json.loads(row.input_manifest_json or "{}")
+    changes = diff_manifest(stored, compute_manifest(project, node, asset_keys=manifest_asset_keys(stored),
+                                                     kb_ids=manifest_kb_chunk_ids(stored)))
+    for ref in json.loads(row.evidence_json or "[]"):
+        if ref.get("ref_type", "kb") != "kb":
+            continue
+        key = KB_PREFIX + ref.get("chunk_id", "")
+        if not stored.get(key, {}).get("sha") and not any(c["key"] == key for c in changes):
+            changes.append({"key": key, "label": "旧候选稿缺少知识库引用指纹，请重新生成"})
+    return changes
+
+
 def proposal_state(project: Project, row: SectionProposal) -> Dict[str, Any]:
     """待处理候选稿与当前状态的比对：正文是否变化、依据变化项（采纳前提示，采纳时以服务端判断为准）"""
     node = find_node(project.outline, row.section_id)
     if node is None:
         return {"section_exists": False, "current_content": "", "current_revision": None,
                 "content_changed": True, "basis_changes": []}
-    stored = json.loads(row.input_manifest_json or "{}")
-    changes = diff_manifest(stored, compute_manifest(project, node, asset_keys=manifest_asset_keys(stored),
-                                                     kb_ids=manifest_kb_chunk_ids(stored)))
+    changes = _basis_changes(project, node, row)
     return {"section_exists": True, "current_content": node.content, "current_revision": node.revision,
             "current_status": node.status,
             "content_changed": node.revision != row.base_revision, "basis_changes": changes}
@@ -331,10 +345,6 @@ def apply_proposal(project_id: str, section_id: str, proposal_id: str) -> Dict[s
     row = _require(project_id, section_id, proposal_id)
     if row.status == "applied":
         return _applied(row, already=True)
-    stored = json.loads(row.input_manifest_json or "{}")
-    asset_keys = manifest_asset_keys(stored)
-    kb_ids = manifest_kb_chunk_ids(stored)
-
     def check(project: Project, node: OutlineNode):
         current = proposal_store.get(project_id, proposal_id)  # 写锁内重新读取：重复采纳只有一次生效
         if current is None:
@@ -346,7 +356,7 @@ def apply_proposal(project_id: str, section_id: str, proposal_id: str) -> Dict[s
         if node.revision != current.base_revision:
             raise _conflict("content_changed", "正文已变化：候选稿生成后，本节正文被修改过",
                             current_content=node.content, current_revision=node.revision)
-        changes = diff_manifest(stored, compute_manifest(project, node, asset_keys=asset_keys, kb_ids=kb_ids))
+        changes = _basis_changes(project, node, current)
         if changes:
             raise _conflict("basis_changed", "依据已变化：候选稿生成后，" + "、".join(c["label"] for c in changes) + "有变化",
                             changes=changes)

@@ -148,7 +148,7 @@ class RetrievalService:
                 doc_name=knowledge_index.get_doc_name(chunk["doc_id"]),
                 section_title=chunk["section_title"],
                 breadcrumb=chunk["breadcrumb"],
-                content=self._compose_content(chunk),
+                content=self.compose_content(chunk),
                 tags=chunk["tags"],
                 bm25_score=bm25_map.get(cid, 0.0),
                 dense_score=dense_map.get(cid, 0.0),
@@ -212,7 +212,7 @@ class RetrievalService:
         return scored
 
     @staticmethod
-    def _compose_content(chunk: dict) -> str:
+    def compose_content(chunk: dict) -> str:
         """命中块正文 + 父级上下文扩展（父章节摘要帮助模型理解块的位置语境）"""
         content = chunk["content"]
         parent = chunk.get("parent_summary", "")

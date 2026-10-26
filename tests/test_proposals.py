@@ -187,6 +187,40 @@ def test_requirements_only_change_invalidates_proposal_without_content_revision(
     assert _node(pid).content == "人工初稿" and _versions(client, pid) == []
 
 
+@pytest.mark.parametrize("change", ["none", "parent", "content"])
+def test_kb_fingerprint_includes_same_parent_context_as_generation(client, pid, monkeypatch, change):
+    from app.services.rag.retriever import retrieval_service
+    chunk = {"id": "c1", "content": "实施步骤", "parent_summary": "所属章节的背景说明"}
+    monkeypatch.setattr(prop_module.knowledge_index, "get_chunk", lambda _: chunk)
+    project = project_store.get(pid)
+    evidence = EvidenceSet(refs=[{"chunk_id": "c1", "content": retrieval_service.compose_content(chunk)}])
+    prop = propose(project, _node(pid), "新的方案正文", evidence, origin="batch")
+    if change == "parent":
+        chunk["parent_summary"] = "更新后的背景"
+    elif change == "content":
+        chunk["content"] = "更新后的步骤"
+    changes = client.get(_url(pid, prop)).json()["state"]["basis_changes"]
+    assert bool(changes) == (change != "none")
+    result = client.post(_url(pid, prop, "apply"))
+    assert result.status_code == (200 if change == "none" else 409)
+
+
+def test_legacy_kb_reference_without_fingerprint_requires_regeneration(client, pid):
+    prop = _propose(pid)
+    with get_session() as session:
+        row = session.get(SectionProposal, prop["id"])
+        manifest = json.loads(row.input_manifest_json)
+        del manifest["kb:c1"]
+        row.input_manifest_json = json.dumps(manifest)
+        session.add(row)
+        session.commit()
+    changes = client.get(_url(pid, prop)).json()["state"]["basis_changes"]
+    assert changes == [{"key": "kb:c1", "label": "旧候选稿缺少知识库引用指纹，请重新生成"}]
+    res = client.post(_url(pid, prop, "apply"))
+    assert res.status_code == 409 and res.json()["detail"]["changes"] == changes
+    assert _node(pid).content == "人工初稿"
+
+
 def test_legacy_proposal_without_requirements_fingerprint_cannot_bypass_check(client, pid):
     prop = _propose(pid)
     with get_session() as session:
