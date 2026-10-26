@@ -14,6 +14,8 @@ from app.services.project_store import project_store
 from app.services.exporter.docx_generator import docx_exporter
 from app.services.exporter.template_manager import template_manager
 from app.services.exporter.scoring_index import scoring_index_rows
+from app.models.schemas import EvidenceAppendixEntry
+from app.services.exporter.evidence_appendix import AppendixError, appendix_options, prepare_appendices
 
 router = APIRouter(tags=["模板与导出"])
 
@@ -32,6 +34,7 @@ class ExportRequest(BaseModel):
     template_id: str = "gov_standard"
     diagrams: List[DiagramImage] = Field(default_factory=list)
     include_scoring_index: bool = True
+    appendix_plan: List[EvidenceAppendixEntry] = Field(default_factory=list)
 
 
 def _decode_png(data: str) -> Optional[bytes]:
@@ -46,10 +49,14 @@ def _decode_png(data: str) -> Optional[bytes]:
 
 
 def _export_bid(project_id: str, template_id: Optional[str], diagrams: Optional[Dict[str, bytes]] = None,
-                include_scoring_index: bool = True):
+                include_scoring_index: bool = True, appendix_plan=None):
     project = project_store.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
+    try:
+        appendices = prepare_appendices(project, appendix_plan or []) if appendix_plan else []
+    except AppendixError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     out_path = docx_exporter.export_project_to_docx(
         project_name=project.name,
         client_name=project.client_name,
@@ -58,6 +65,7 @@ def _export_bid(project_id: str, template_id: Optional[str], diagrams: Optional[
         style_cfg=template_manager.get_template(template_id or "gov_standard"),
         diagrams=diagrams,
         scoring_index=scoring_index_rows(project) if include_scoring_index else None,
+        evidence_appendices=appendices,
     )
     return FileResponse(path=str(out_path), filename=docx_exporter.download_name(project.name), media_type=DOCX_MEDIA_TYPE,
                         background=BackgroundTask(out_path.unlink, missing_ok=True))
@@ -87,7 +95,8 @@ def export_preflight(project_id: str):
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
     latest = task_manager.list(1, project_id=project_id, task_type="compliance_check", with_result=True)
-    return {**build_preflight(project, latest[0] if latest else None), "scoring_index": scoring_index_rows(project)}
+    return {**build_preflight(project, latest[0] if latest else None), "scoring_index": scoring_index_rows(project),
+            "appendix_options": appendix_options(project)}
 
 
 @router.get("/project/{project_id}/export", summary="导出项目为高保真技术标书 Word（含目录与页码；架构图由服务端简化渲染）")
@@ -105,7 +114,7 @@ def export_project_bid_with_diagrams(project_id: str, req: ExportRequest):
         if raw is None:
             raise HTTPException(status_code=400, detail="架构图图片不是有效的 PNG（或超过 8MB）")
         diagrams[item.code] = raw
-    return _export_bid(project_id, req.template_id, diagrams, req.include_scoring_index)
+    return _export_bid(project_id, req.template_id, diagrams, req.include_scoring_index, req.appendix_plan)
 
 
 @router.get("/project/{project_id}/deviation/export", summary="单独导出技术偏离表 Word（原生表格）")

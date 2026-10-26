@@ -759,6 +759,7 @@ class DocxBidExporter:
         output_filename: Optional[str] = None,
         diagrams: Optional[Dict[str, bytes]] = None,
         scoring_index: Optional[List[dict]] = None,
+        evidence_appendices: Optional[list] = None,
     ) -> Path:
         """
         导出整本技术标书为标准 Word 文档。
@@ -769,8 +770,10 @@ class DocxBidExporter:
         ctx = _ExportContext(doc, cfg, diagrams)
         self._add_cover_page(doc, project_name, client_name, facts or GlobalFacts())
         self._add_toc(doc)
+        evidence_appendices = evidence_appendices or []
+        attachment_marks = {key: entry.bookmark for entry in evidence_appendices for key in entry.attachment_keys}
         if scoring_index:
-            self._add_scoring_index(ctx, scoring_index)
+            self._add_scoring_index(ctx, scoring_index, attachment_marks)
 
         def render_node(node: OutlineNode):
             self._add_heading(ctx, node.title, node.level)
@@ -778,15 +781,24 @@ class DocxBidExporter:
             bookmark(doc.paragraphs[-1], bookmark_name("s", node.id), ctx.bookmark_no)
             if node.content:
                 self._render_content(ctx, node.content, base_level=node.level, section_title=node.title)
+            section_entries = [e for e in evidence_appendices if e.entry.placement == "section" and e.entry.section_id == node.id]
+            for entry in section_entries:
+                self._add_evidence(ctx, entry, scoring_index)
+            if section_entries:
+                doc.add_page_break()
             for child in node.children:
                 render_node(child)
 
         for root_node in outline:
             render_node(root_node)
+        for entry in evidence_appendices:
+            if entry.entry.placement == "appendix":
+                self._add_evidence(ctx, entry, scoring_index)
 
         return self._save_document(doc, output_filename or self.download_name(project_name))
 
-    def _add_scoring_index(self, ctx, rows):
+    def _add_scoring_index(self, ctx, rows, attachment_marks=None):
+        attachment_marks = attachment_marks or {}
         self._add_heading(ctx, "评分标准响应索引表", 1)
         p = ctx.doc.add_paragraph("页码为动态域，最终排版后请在 Word 中全选并更新域。未编入的附件不标注页码。")
         p.paragraph_format.first_line_indent = Pt(0)
@@ -796,7 +808,7 @@ class DocxBidExporter:
         for row in rows:
             data.append(cells([row["name"], str(row["points"]) if row["points"] is not None else "未注明",
                                "\n".join(s["title"] + ("（未撰写）" if not s["written"] else "") for s in row["sections"]) or "待补",
-                               "\n".join(a["asset_name"] + " / " + a["name"] + "（未编入）" for a in row["attachments"]) or "待补 / 不适用",
+                               "\n".join(a["asset_name"] + " / " + a["name"] + ("" if f"{a['asset_key']}:{a['id']}" in attachment_marks else "（未编入）") for a in row["attachments"]) or "待补 / 不适用",
                                "待补" if not row["sections"] else ""]))
         table = self._add_table(ctx, data, 1, font_size=10)
         for index, row in enumerate(rows, 1):
@@ -807,7 +819,47 @@ class DocxBidExporter:
                 if i:
                     paragraph.add_run("、")
                 pageref(paragraph, section["bookmark"])
+            for attachment in row["attachments"]:
+                mark = attachment_marks.get(f"{attachment['asset_key']}:{attachment['id']}")
+                if mark:
+                    p = table.cell(index, 3).add_paragraph("附件页码：")
+                    p.paragraph_format.first_line_indent = Pt(0)
+                    pageref(p, mark)
         ctx.doc.add_page_break()
+
+    def _add_evidence(self, ctx, entry, scoring_index):
+        from PIL import Image
+
+        for i, (page_number, data) in enumerate(entry.images):
+            ctx.doc.add_page_break()
+            p = ctx.doc.add_paragraph()
+            p.paragraph_format.first_line_indent = Pt(0)
+            p.paragraph_format.keep_with_next = True
+            self._set_run_font(p.add_run(f"证明附件 {entry.entry.caption}（原件第 {page_number} 页）"), ctx.cfg.heading_font, 12, bold=True)
+            if i == 0:
+                ctx.bookmark_no += 1
+                bookmark(p, entry.bookmark, ctx.bookmark_no)
+            if i == 0 and scoring_index:
+                p = ctx.doc.add_paragraph("关联评分项索引页：")
+                p.paragraph_format.first_line_indent = Pt(0)
+                p.paragraph_format.keep_with_next = True
+                for row in scoring_index:
+                    if row["id"] in entry.item_ids:
+                        p.add_run(row["name"] + " ")
+                        pageref(p, row["bookmark"])
+                        p.add_run("；")
+            if entry.warnings:
+                p = ctx.doc.add_paragraph("待核实：" + "；".join(entry.warnings))
+                p.paragraph_format.keep_with_next = True
+            section = ctx.doc.sections[-1]
+            max_height = int(section.page_height - section.top_margin - section.bottom_margin - Pt(110))
+            with Image.open(io.BytesIO(data)) as im:
+                scale = min(ctx.text_width_emu / im.width, max_height / im.height)
+                width, height = int(im.width * scale), int(im.height * scale)
+            p = ctx.doc.add_paragraph()
+            p.paragraph_format.first_line_indent = Pt(0)
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.add_run().add_picture(io.BytesIO(data), width=Emu(width), height=Emu(height))
 
     def export_deviation_table(
         self,

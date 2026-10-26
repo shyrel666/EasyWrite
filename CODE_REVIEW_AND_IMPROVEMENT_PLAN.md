@@ -117,8 +117,9 @@
 | P1-1 | 已实施 | `7f7cc4a` | pytest 59；Vitest 105；ruff、build 通过 |
 | P1-2 | 已实施 | `d1a406b` | pytest 64；Vitest 106；ruff、build 通过 |
 | P1-3 | 已实施 | `f137893` | pytest 75；Vitest 108；ruff、build 通过 |
-| P1-4 | 已实施 | 本项提交 `feat(export): add native scoring response index and dynamic page references` | pytest 25；Vitest 109；ruff、build；Word 4 页渲染核对 |
-| P1-5～P1-8 | 待实施 | — | — |
+| P1-4 | 已实施 | `189db5a` | pytest 25；Vitest 109；ruff、build；Word 4 页渲染核对 |
+| P1-5 | 已实施 | 本项提交 `feat(export): compile verified evidence attachments with page plans and index links` | pytest 39；Vitest 110；ruff、build；Word 6 页渲染核对 |
+| P1-6～P1-8 | 待实施 | — | — |
 | P2-1～P2-3 | 待实施 | — | — |
 
 ### P1-1：分级事实模型与招标要求分离
@@ -163,6 +164,9 @@
 - **验证：** pytest 解包 docx 核对表格、书签唯一性、PAGEREF、仅目标分包、多章映射、未覆盖项、重复名称不同 ID；Vitest 验证开关及请求参数；人工用 Word 更新域后检查页码和表头跨页。
 
 ### P1-5：B1/B2 证明附件进入 Word 正文或附件册
+
+- **已实施（2026-10-26）：** 显式 `EvidenceAppendixPlan` 保存章节、资料/附件 ID、原件页序、图题、放置方式与指纹；导出界面选择、排序及提示缺口。服务端只读取受控目录内已登记且关联当前包的文件，核对文件指纹；PDF 逐页渲染，图片保持比例、不裁切边框/印章。可编入章节后或统一附件册，相同内容/页序去重并保留多个评分索引的双向 PAGEREF。缺页、损坏、过期、主体不符均有明确提示；资源上限为单文件 40 页、总计 100 页/80MB、单图 2400 万像素。
+- **验证记录：** 相关 pytest 39 项、Vitest 110 项、ruff、build 通过；合成两页横向证明按 2→1 页顺序编入，Word 更新域得到 6 页 PDF，逐页 PNG 核对页序、索引双向页码、完整边框及红色模拟印章无裁切。QA 位于 `downloads/improvement-qa/render-p1-5`；真实扫描件清晰度仍需按实际原件核实。
 
 - **风险 / ROI：高 / 很高。** 已有附件存储和证据链接，但导出函数没有证据输入；Markdown 图片分支不能替代企业证明附件编排。
 - **定位：** [backend/app/services/assets/asset_manager.py · attachment_file](<D:/Pycharm Project/EasyWrite/backend/app/services/assets/asset_manager.py:558>)、[backend/app/services/assets/evidence.py · resolve_links](<D:/Pycharm Project/EasyWrite/backend/app/services/assets/evidence.py:108>)、[backend/app/services/exporter/docx_generator.py · _add_runs](<D:/Pycharm Project/EasyWrite/backend/app/services/exporter/docx_generator.py:366>)、[backend/app/services/exporter/docx_generator.py · export_project_to_docx](<D:/Pycharm Project/EasyWrite/backend/app/services/exporter/docx_generator.py:750>)。

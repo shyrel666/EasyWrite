@@ -310,6 +310,20 @@ class AssetAttachment(BaseModel):
     uploaded_at: str = ""
 
 
+class EvidenceAppendixEntry(BaseModel):
+    section_id: str = ""
+    asset_key: str
+    attachment_id: str
+    pages: List[int] = Field(default_factory=list, description="从 1 开始的页序；空列表表示全部页")
+    caption: str = ""
+    placement: Literal["section", "appendix"] = "appendix"
+    sha256: str = Field(min_length=64, max_length=64)
+
+
+class EvidenceAppendixPlan(BaseModel):
+    entries: List[EvidenceAppendixEntry] = Field(default_factory=list, max_length=100)
+
+
 # 资质、人员、业绩三类资料的证明字段：附件、所属主体、确认时间。
 # attachments 只经附件接口增删，保存资料时服务端保留原值；confirmed_at 由服务端在资料改为"已确认"时记录
 ATTACHMENTS_FIELD = dict(default_factory=list, description="证明附件（只经附件接口增删）")
