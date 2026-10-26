@@ -171,7 +171,7 @@ class DeviationItem(BaseModel):
     section: str = Field(default="", description="条款在招标文件中的章节路径")
     package: str = Field(default="", description="条款所属分包（多分包项目），空 = 各包通用")
     response_source: str = Field(default="", description="ai 大模型拟稿（待人工核实）/ manual 人工填写")
-    response_status: str = Field(default="完全满足", description="响应结果：完全满足/正偏离/负偏离")
+    response_status: str = Field(default="待生成", description="响应结果：完全满足/正偏离/负偏离/待生成/待核实")
     response_detail: str = Field(default="", description="点对点具体实现技术论述与佐证")
     source_fingerprint: str = Field(default="", description="条款来源指纹（确定性抽取溯源）")
 

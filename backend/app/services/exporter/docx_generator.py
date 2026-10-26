@@ -803,14 +803,14 @@ class DocxBidExporter:
         self._add_table(ctx, rows, header_rows=1)
 
         negative = sum(1 for it in items if it.response_status == "负偏离")
-        pending = sum(1 for it in items if it.response_status == "待生成")
+        pending = sum(1 for it in items if it.response_status not in ("完全满足", "正偏离", "负偏离"))
         note = doc.add_paragraph()
         note.paragraph_format.first_line_indent = Pt(0)
         summary = f"共 {len(items)} 条"
         if negative:
             summary += f"，其中负偏离 {negative} 条"
         if pending:
-            summary += f"，尚有 {pending} 条未填写响应"
+            summary += f"，尚有 {pending} 条未填写响应或待核实"
         self._set_run_font(note.add_run(summary + "。"), cfg.primary_font, 10.5, color=RGBColor(90, 90, 90))
 
         safe_name = re.sub(r'[\\/*?:"<>|]', '_', project_name)

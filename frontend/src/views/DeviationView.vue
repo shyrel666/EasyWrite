@@ -30,7 +30,7 @@ const stats = computed(() => {
   const star = items.value.filter((i) => i.level === 'redline' || i.is_star).length
   const important = items.value.filter((i) => i.level === 'important').length
   const aiDraft = items.value.filter((i) => i.response_source === 'ai').length
-  const pending = items.value.filter((i) => i.response_status === '待生成').length
+  const pending = items.value.filter((i) => ['待生成', '待核实'].includes(i.response_status)).length
   const negative = items.value.filter((i) => i.response_status === '负偏离').length
   return { total, star, important, pending, negative, aiDraft }
 })
@@ -75,7 +75,7 @@ const FILTER_TESTS = {
   all: () => true,
   redline: (it) => levelOf(it) === 'redline',
   important: (it) => levelOf(it) === 'important',
-  pending: (it) => it.response_status === '待生成',
+  pending: (it) => ['待生成', '待核实'].includes(it.response_status),
   negative: (it) => it.response_status === '负偏离',
   ai: (it) => it.response_source === 'ai',
 }
@@ -83,7 +83,7 @@ const FILTERS = computed(() => [
   { key: 'all', label: '全部', count: stats.value.total },
   { key: 'redline', label: '废标红线', count: stats.value.star },
   { key: 'important', label: '重要条款', count: stats.value.important },
-  { key: 'pending', label: '待生成', count: stats.value.pending },
+  { key: 'pending', label: '待生成 / 待核实', count: stats.value.pending },
   { key: 'negative', label: '负偏离', count: stats.value.negative },
   { key: 'ai', label: 'AI 拟稿', count: stats.value.aiDraft },
 ])
@@ -101,7 +101,7 @@ const statCells = computed(() => [
   { label: '指标总数', value: stats.value.total, tone: 'text-ink' },
   { label: '废标红线', value: stats.value.star, tone: stats.value.star ? 'text-bad' : 'text-ink' },
   { label: '重要条款', value: stats.value.important, tone: stats.value.important ? 'text-warn' : 'text-ink' },
-  { label: '待生成响应', value: stats.value.pending, tone: stats.value.pending ? 'text-warn' : 'text-ok' },
+  { label: '待生成 / 待核实', value: stats.value.pending, tone: stats.value.pending ? 'text-warn' : 'text-ok' },
   { label: '负偏离', value: stats.value.negative, tone: stats.value.negative ? 'text-bad' : 'text-ok' },
   { label: 'AI 拟稿待核实', value: stats.value.aiDraft, tone: stats.value.aiDraft ? 'text-accent-fg' : 'text-ok' },
 ])
@@ -128,7 +128,7 @@ async function exportTable() {
   const { aiDraft, pending, negative } = stats.value
   const warnings = []
   if (aiDraft) warnings.push(`${aiDraft} 条响应为 AI 拟稿、尚未人工核实`)
-  if (pending) warnings.push(`${pending} 条尚未填写响应`)
+  if (pending) warnings.push(`${pending} 条尚未填写响应或待核实`)
   if (negative) warnings.push(`${negative} 条为负偏离`)
   if (warnings.length) {
     try {
@@ -340,7 +340,7 @@ onMounted(async () => {
                   </td>
                   <td>
                     <el-select v-model="item.response_status" size="default" @change="markManual(item)">
-                      <el-option v-for="s in ['完全满足', '正偏离', '负偏离', '待生成']" :key="s" :label="s" :value="s" />
+                      <el-option v-for="s in ['完全满足', '正偏离', '负偏离', '待生成', '待核实']" :key="s" :label="s" :value="s" />
                     </el-select>
                     <span v-if="item.response_source === 'ai'" class="chip chip-accent mt-1.5">AI 拟稿 · 待核实</span>
                   </td>

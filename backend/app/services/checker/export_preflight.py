@@ -136,9 +136,9 @@ def _deviation_pending(project: Project) -> Dict[str, Any]:
     if not project.deviation_matrix:
         return _check("deviation_pending", "偏离表待生成条目", OK, "未建立技术偏离表")
     pending = [_detail(f"第 {it.index} 条", it.clause_title[:80]) for it in project.deviation_matrix
-               if it.response_status == "待生成"]
-    return _check("deviation_pending", "偏离表待生成条目", WARN if pending else OK,
-                  f"{len(pending)} 条技术条款尚未应答" if pending else "偏离表条目均已应答", pending)
+               if it.response_status not in ("完全满足", "正偏离", "负偏离")]
+    return _check("deviation_pending", "偏离表未完成核实条目", WARN if pending else OK,
+                  f"{len(pending)} 条技术条款尚未应答或待核实" if pending else "偏离表条目均已应答", pending)
 
 
 def build_preflight(project: Project, latest_compliance: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

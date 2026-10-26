@@ -33,10 +33,11 @@ DEVIATION_PROMPT = """你是一名从业20年的资深投标技术专家，擅�
 请针对招标文件中的技术指标，结合我方的全局事实和产品能力，给出严谨、明确、有依据的"点对点技术响应说明"。
 
 【原则】：
-1. 态度端正、庄重明确，明确标明"完全满足"或"正偏离"；只有真有把握优越于要求时才可声明正偏离；
+1. 按实际能力选择"完全满足"、"正偏离"、"负偏离"或"待核实"；只有有依据优于要求时才可声明正偏离；
 2. 给出具体的实现技术手段（如：我司通过【产品名】的XXX组件，采用YYY机制实现，完全满足贵方要求）；
 3. 严谨杜绝空话，篇幅在 40~120 字左右；
-4. 若全局事实或资产中无相关能力支撑，宁可选"完全满足"并给出通用但具体的技术路径，也不得编造虚假资质。
+4. 无相关能力依据、资料待核实或事实未配置时选"待核实"并说明缺口，不得默认满足；历史标书不能证明本投标人的能力。
+5. 已知能力不满足要求时选"负偏离"并如实说明差距，废标红线也不得隐瞒；严禁擅自提高 SLA、人员、交付等已确认承诺。
 """
 
 LEVEL_LABELS = {"redline": "废标红线", "important": "重要条款", "normal": "一般条款"}
@@ -347,10 +348,7 @@ class DeviationEngine:
 
     @staticmethod
     def _facts_text(facts: GlobalFacts) -> str:
-        if facts.filled_count() > 0:
-            return (f"投标企业【{facts.company_name}】，核心产品【{facts.core_product_name}】，"
-                    f"技术栈【{facts.architecture_stack}】，数据库【{facts.database_selection}】")
-        return "（投标主体事实未配置——请给出通用但具体的技术路径表述，不得提及具体公司名）"
+        return facts.to_constraint_text() or "（投标主体事实未配置：能力响应须待核实，不得默认满足）"
 
     @staticmethod
     def _item_context(item: DeviationItem, exclude=None) -> Tuple[str, str]:
@@ -364,7 +362,7 @@ class DeviationEngine:
 
     @staticmethod
     def _apply(item: DeviationItem, status: str, detail: str):
-        item.response_status = status if status in ("完全满足", "正偏离") else "完全满足"
+        item.response_status = status if status in ("完全满足", "正偏离", "负偏离", "待核实") else "待核实"
         item.response_detail = detail.strip()[:300]
         item.response_source = "ai"
 
@@ -375,25 +373,25 @@ class DeviationEngine:
             user_prompt = (
                 f"【招标文件要求】：{item.clause_title}\n"
                 f"【条款等级】：{LEVEL_LABELS.get(item.level, '一般条款')}"
-                f"{'（绝不可产生负偏离）' if item.level == 'redline' else ''}\n"
+                f"{'（不满足时必须如实披露负偏离）' if item.level == 'redline' else ''}\n"
                 f"【我司全局事实】：{self._facts_text(facts)}\n"
                 f"【企业资料（用户录入）】：{comp_context or '无匹配资料'}\n"
                 f"【历史标书参考】：{ref_context or '无'}\n\n"
                 f"请以 JSON 格式输出：\n"
-                f'{{"response_status": "完全满足" 或 "正偏离", "response_detail": "点对点具体技术佐证阐述（50~120字）"}}'
+                f'{{"response_status": "完全满足/正偏离/负偏离/待核实", "response_detail": "点对点技术依据或待核实缺口（50~120字）"}}'
             )
             data = self.llm.chat_completion_structured(
                 system_prompt=DEVIATION_PROMPT, user_prompt=user_prompt, temperature=0.2, purpose="deviation_response"
             )
             if isinstance(data, dict) and data.get("response_detail") and self.llm.get_mode() == "llm":
-                self._apply(item, str(data.get("response_status", "完全满足")), str(data["response_detail"]))
+                self._apply(item, str(data.get("response_status", "待核实")), str(data["response_detail"]))
                 return item
             # 普通文本兜底（仅接受真实模型输出，模拟器内容不得冒充响应声明）
             res = self.llm.chat_completion(
                 system_prompt=DEVIATION_PROMPT, user_prompt=user_prompt, temperature=0.2, purpose="deviation_response"
             )
             if res and len(res) > 10 and self.llm.get_mode() == "llm":
-                self._apply(item, "正偏离" if ("优于" in res or "正偏离" in res) else "完全满足", res)
+                self._apply(item, "待核实", res)
                 return item
 
         # LLM 不可用：留空待生成（不编造响应承诺）
@@ -408,14 +406,14 @@ class DeviationEngine:
             ref_context, comp_context = self._item_context(item, exclude)
             blocks.append(
                 f"[{i}] 等级：{LEVEL_LABELS.get(item.level, '一般条款')}"
-                f"{'（绝不可负偏离）' if item.level == 'redline' else ''}\n"
+                f"{'（不满足时必须如实披露负偏离）' if item.level == 'redline' else ''}\n"
                 f"    招标要求：{item.clause_title[:600]}\n"
                 f"    可用资产：{comp_context or '无'}\n    历史参考：{ref_context or '无'}"
             )
         user_prompt = (
             f"【我司全局事实】：{self._facts_text(facts)}\n\n【逐条响应以下 {len(batch)} 项招标要求】：\n"
             + "\n".join(blocks)
-            + '\n\n请以 JSON 格式输出：{"responses": [{"no": 1, "response_status": "完全满足" 或 "正偏离", '
+            + '\n\n请以 JSON 格式输出：{"responses": [{"no": 1, "response_status": "完全满足/正偏离/负偏离/待核实", '
               '"response_detail": "点对点具体技术佐证阐述（50~120字）"}]}，no 与上面的编号一一对应，不得遗漏。'
         )
         data = self.llm.chat_completion_structured(
@@ -431,7 +429,7 @@ class DeviationEngine:
         for i, item in enumerate(batch, 1):
             r = answered.get(i)
             if r:
-                self._apply(item, str(r.get("response_status", "完全满足")), str(r["response_detail"]))
+                self._apply(item, str(r.get("response_status", "待核实")), str(r["response_detail"]))
             else:
                 failed.append(item)
         return failed
@@ -474,11 +472,11 @@ class DeviationEngine:
             lines.append(f"| {it.index} | {clean_clause} | {level_label} | {status_label} | {clean_detail} |")
 
         has_negative = any(it.response_status == "负偏离" for it in items)
-        has_pending = any(it.response_status == "待生成" for it in items)
+        has_pending = any(it.response_status not in ("完全满足", "正偏离", "负偏离") for it in items)
         if has_negative:
             conclusion = "\n\n**注意：存在负偏离条款，请立即整改后再行导出！**"
         elif has_pending:
-            conclusion = "\n\n**注意：部分条款响应尚未生成，请补充后再导出。**"
+            conclusion = "\n\n**注意：部分条款响应尚未生成或待核实，请补充核实后再导出。**"
         else:
             conclusion = (
                 "\n\n**技术偏离说明总结**：\n"

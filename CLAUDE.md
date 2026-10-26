@@ -55,6 +55,8 @@ Every real model request (chat, stream, embedding, connection test — including
 Run budgets (`core/run_budget.py`): inside a run (`current_run` contextvar holds a `RunBudget`, e.g. the `section_refine` task; limits `REFINE_MAX_CALLS`/`REFINE_MAX_SECONDS` in `core/config.py`, default 15 requests / 10 min) `llm_client` calls `run_budget.charge(purpose)` before every real request — rerank, writing, escalation and rate-limit retries each count. Over the limit it raises `BudgetExceeded`, which `llm_client` never treats as an ordinary failure (no mock fallback, no `llm_calls` row, `chat_completion_structured` doesn't return `None`) — it propagates to the run. Embeddings don't go through `llm_client` and aren't charged. Outside a run nothing is limited.
 
 Core rule across the codebase: **never fabricate data when the LLM is unavailable**.
+
+偏离响应须保留真实负偏离；无依据、未知状态或纯文本降级为“待核实”，红线条款也不能强制声明满足。生成提示词使用完整 `GlobalFacts.to_constraint_text()`，界面和导出检查均提示待核实状态。
 - `chat_completion*` falls back to `_mock_bid_generation` and sets mode `"mock"`; `llm_client.get_mode()` must be propagated in API responses as `mode` so the frontend shows the offline banner. `get_mode()` is per request/background-task context (a contextvar, so a batch task and a stream don't leak modes into each other), falling back to the global `last_mode()`, which is what `GET /ai/status` reports.
 - `chat_completion_structured()` returns `None` when unconfigured — callers must take an explicit degraded path (rules / sentinel values), not invent content.
 - Missing tender fields use the sentinel `NOT_MENTIONED = "未提及"` (`schemas.py`). Deviation responses stay `"待生成"` unless `get_mode() == "llm"`. Rule-based paths report `extraction_mode`/`mode: "rules"`.
