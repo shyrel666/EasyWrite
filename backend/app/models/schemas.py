@@ -1,4 +1,5 @@
 from typing import List, Literal, Optional, Dict, Any
+from uuid import uuid4
 from pydantic import BaseModel, Field, model_validator
 
 # 哨兵值：字段未在招标文件中出现时的显式占位（绝不静默编造默认值）
@@ -42,6 +43,27 @@ class OutlineNode(BaseModel):
 OutlineNode.model_rebuild()
 
 
+class Commitment(BaseModel):
+    """企业承诺与采购要求共用的数据结构；只有企业人工确认的记录可作事实。"""
+    id: str = Field(default_factory=lambda: uuid4().hex)
+    topic: Literal["duration", "warranty", "response", "onsite", "resolve", "staff", "inspection", "window"]
+    value: str = Field(min_length=1)
+    unit: str = "小时"
+    comparator: Literal["eq", "le", "ge"] = "eq"
+    severity: str = ""
+    scope: str = ""
+    subject: str = ""
+    source: str = "人工录入"
+    confirmed: bool = False
+
+    def description(self) -> str:
+        labels = {"duration": "工期", "warranty": "质保期", "response": "响应", "onsite": "到场",
+                  "resolve": "修复", "staff": "驻场", "inspection": "巡检", "window": "服务时间"}
+        context = " / ".join(v for v in (self.subject, self.scope, self.severity) if v) or "未限定"
+        relation = {"eq": "=", "le": "≤", "ge": "≥"}[self.comparator]
+        return f"{context} | {labels[self.topic]} | {relation} {self.value}{self.unit} | {self.source}"
+
+
 class GlobalFacts(BaseModel):
     """
     全局事实设定（借鉴 OpenBidKit / YuduBid）：
@@ -59,6 +81,7 @@ class GlobalFacts(BaseModel):
     # 事实完备模式：omit=未提供的事实保持模糊不编造 / placeholder=正文输出【待填写】占位
     fact_completeness_mode: str = Field(default="placeholder", description="omit | placeholder")
     custom_facts: Dict[str, str] = Field(default_factory=dict, description="其他用户自定义的特定只读事实")
+    commitments: List[Commitment] = Field(default_factory=list, description="分级企业承诺；须人工确认后参与生成与检查")
 
     def to_constraint_text(self) -> str:
         """将全局事实转换为大模型 System Prompt 约束文本"""
@@ -84,6 +107,11 @@ class GlobalFacts(BaseModel):
         lines = ["【全局事实硬约束（全文必须严格一致，禁止前后矛盾）】"]
         if filled:
             lines.extend(filled)
+        confirmed = [c for c in self.commitments if c.confirmed]
+        if confirmed:
+            lines.extend(["【已确认分级承诺表：主体 / 场景 / 级别 | 类别 | 数值 | 来源】",
+                          *(c.description() for c in confirmed),
+                          "仅适用于表内主体、场景和级别；不得跨级套用。未确认记录不构成企业承诺。"])
         if self.fact_completeness_mode == "placeholder":
             lines.append(
                 "【事实完备纪律】以上未列出的事实（如具体金额、日期、人员数量）不得编造，"
@@ -157,6 +185,7 @@ class TenderAnalysis18(BaseModel):
     target_package: str = Field(default="", description="多分包项目中本次投标的分包（对应 ScoringItem.package）")
     # 诚实信号：llm=大模型抽取 / rules=正则规则抽取（覆盖度有限）
     extraction_mode: str = Field(default="llm")
+    commitment_requirements: List[Commitment] = Field(default_factory=list, description="采购最低要求，与企业事实分开保存")
     extraction_note: str = Field(default="")
     # 来源说明：PDF 页数、章节识别方式（书签 / 版面推断）、扫描页告警；Word 为空
     source_note: str = Field(default="")

@@ -9,6 +9,7 @@ import AppShell from '@/components/layout/AppShell.vue'
 import TaskProgress from '@/components/common/TaskProgress.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import CommitmentEditor from '@/components/evidence/CommitmentEditor.vue'
 import { isActiveTask } from '@/utils/tasks'
 
 const route = useRoute()
@@ -69,7 +70,7 @@ const facts = ref({
   company_name: '', credit_code: '', legal_rep: '', registered_capital: '',
   core_product_name: '', architecture_stack: '', database_selection: '',
   sla_commitment: '', delivery_guarantee: '', fact_completeness_mode: 'placeholder',
-  custom_facts: {},
+  custom_facts: {}, commitments: [],
 })
 
 // 承诺建议：拆标只给出复述招标要求的措辞，用户采纳后才写入全局事实（忽略记录只存在本浏览器）
@@ -682,6 +683,7 @@ async function restoreAnalyzeTask() {
 
           <!-- ============ Step 3：全局事实 ============ -->
           <section v-else-if="step === 3" class="space-y-4 rise">
+            <CommitmentEditor v-model="facts.commitments" :requirements="store.project?.tender_analysis?.commitment_requirements || []" />
             <div class="note note-info">
               <el-icon class="mt-0.5 text-accent-fg shrink-0"><Lock /></el-icon>
               <span>未填写的字段遵循"不编造"纪律：正文中保持模糊或以【待填写】占位，导出前便于定位补齐。</span>

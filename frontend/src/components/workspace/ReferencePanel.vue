@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import api from '@/api/client'
 import { useProjectStore } from '@/stores/project'
 import EvidenceLinkDialog from '@/components/evidence/EvidenceLinkDialog.vue'
+import CommitmentEditor from '@/components/evidence/CommitmentEditor.vue'
 import TenderSourcePanel from '@/components/workspace/TenderSourcePanel.vue'
 import { materialChip } from '@/utils/material'
 
@@ -21,7 +22,7 @@ const instruction = ref('')
 const instructionTimer = ref(null)
 
 function open(node) {
-  factsDraft.value = { ...(store.facts || {}), custom_facts: { ...(store.facts?.custom_facts || {}) } }
+  factsDraft.value = { ...(store.facts || {}), custom_facts: { ...(store.facts?.custom_facts || {}) }, commitments: (store.facts?.commitments || []).map(c => ({ ...c })) }
 }
 
 defineExpose({ open })
@@ -250,6 +251,7 @@ function saveInstruction() {
       <!-- 全局事实 -->
       <template v-else-if="activeTab === 'facts'">
         <div v-if="factsDraft" class="space-y-3 text-sm p-1">
+          <CommitmentEditor v-model="factsDraft.commitments" :requirements="store.project?.tender_analysis?.commitment_requirements || []" />
           <p class="note note-info">
             <el-icon class="mt-0.5 text-accent-fg shrink-0"><Lock /></el-icon>
             <span>作为只读硬约束注入每次生成，保证全书公司名、产品与技术路线前后一致。留空即不编造。</span>

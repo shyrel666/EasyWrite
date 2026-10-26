@@ -41,6 +41,7 @@ def book_consistency(project: Project) -> Dict[str, Any]:
     for node in nodes:
         analysed = sc._mask(node.content, sc.CODE_BLOCK)
         for q in sc.extract_quantities(sc._mask(analysed, sc.PLACEHOLDER)):
+            sc._quantity_context(analysed, q, fact_qs)
             topic = q["topic"]
             if topic is None and not q["committed"]:
                 continue
@@ -54,7 +55,7 @@ def book_consistency(project: Project) -> Dict[str, Any]:
                               f"——正文为「{q['label']}」，全局事实为「{fact}」",
                 })
             elif relation != "backed":
-                unbacked.add((topic, str(q["value"])))
+                unbacked.add((topic, str(q["value"]), sc.scope_key(q)))
             # 跨章取值比对只看没有事实支撑的取值：与全局事实一致的是正确口径，
             # 偏离事实的按"与全局事实冲突"报，不再重复计"跨章取值不一致"
             if topic and relation == "unbacked":
@@ -68,8 +69,8 @@ def book_consistency(project: Project) -> Dict[str, Any]:
     value_conflicts: List[Dict[str, Any]] = []
     by_topic: Dict[tuple, List[Dict[str, Any]]] = {}
     for v in values:
-        by_topic.setdefault((v["topic"], v.get("dimension")), []).append(v)
-    for (topic, _dimension), group in by_topic.items():
+        by_topic.setdefault((v["topic"], v.get("dimension"), sc.scope_key(v)), []).append(v)
+    for (topic, _dimension, _scope), group in by_topic.items():
         clusters: List[List[Dict[str, Any]]] = []
         for v in group:
             for c in clusters:

@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Body
 from app.core.config import settings
 from app.core.task_manager import task_manager
 from app.models.schemas import TenderAnalysis18
-from app.services.parser.commitments import suggest_commitments
+from app.services.parser.commitments import structured_requirements, suggest_commitments
 from app.services.parser.document_parser import describe_source, parse_document, unsupported_reason
 from app.services.parser import tender_reader
 from app.services.parser.tender_analyzer import tender_analyzer
@@ -66,6 +66,7 @@ def analyze_tender_text(text: str = Body(..., embed=True)):
 
 @router.post("/project/{project_id}/tender/apply", summary="将18项拆标结果应用到项目（返回承诺建议，不改动全局事实）")
 def apply_tender_analysis(project_id: str, analysis: TenderAnalysis18, tender_text: str = Body(default="", embed=True)):
+    analysis.commitment_requirements = structured_requirements(analysis)
     def mutate(project):
         project.tender_analysis = analysis
         if analysis.purchaser_name and not project.client_name:
@@ -95,7 +96,8 @@ def get_commitment_suggestions(project_id: str):
     project = project_store.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
-    return {"suggestions": suggest_commitments(project.tender_analysis)}
+    return {"suggestions": suggest_commitments(project.tender_analysis),
+            "requirements": structured_requirements(project.tender_analysis) if project.tender_analysis else []}
 
 
 def _page(text: str, offset: int, limit: int) -> dict:

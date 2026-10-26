@@ -5,9 +5,33 @@
 措辞只复述招标原文要求，不添加招标文件以外的承诺（如自行补上的响应时限）。
 """
 import re
+import hashlib
 from typing import List, Optional
 
-from app.models.schemas import NOT_MENTIONED, CommitmentSuggestion, TenderAnalysis18
+from app.models.schemas import NOT_MENTIONED, Commitment, CommitmentSuggestion, TenderAnalysis18
+
+
+def structured_requirements(analysis: TenderAnalysis18) -> List[Commitment]:
+    """只提取采购要求供人工采纳，绝不自动确认为企业能力。"""
+    from app.services.checker.section_check import QUANTITY, extract_quantities
+
+    if analysis.commitment_requirements:
+        return [c.model_copy(update={"confirmed": False}) for c in analysis.commitment_requirements]
+    rows = []
+    sources = [("duration_requirement", analysis.duration_requirement, "duration"),
+               ("warranty_period", analysis.warranty_period, "warranty")]
+    sources += [("star_disqualification_items", s, None) for s in analysis.star_disqualification_items]
+    sources += [("important_items", s, None) for s in analysis.important_items]
+    for source, text, fallback in sources:
+        for q in extract_quantities(text, fallback):
+            if not q["topic"]:
+                continue
+            match = QUANTITY.fullmatch(q["label"])
+            value, unit = match.groups() if match else (q["label"], "")
+            ident = hashlib.sha256(f"{source}|{text}|{q['start']}".encode()).hexdigest()[:20]
+            rows.append(Commitment(id=f"requirement_{ident}", topic=q["topic"], value=value, unit=unit,
+                                   comparator=q["comparator"], severity=q["severity"], source=source))
+    return rows
 
 # 原文本身已是完整表述（含动作）时直接沿用，否则套用"X为…"的复述句式
 _SENTENCE_HINT = re.compile(r"完成|交付|上线|验收|竣工|提供|承担|负责|保修|维护|运维|服务")

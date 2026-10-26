@@ -235,6 +235,30 @@ def _topic(text: str, start: int, end: int, dim: str) -> Optional[str]:
 
 
 ASCII_ALNUM = re.compile(r"[A-Za-z0-9]")
+SEVERITY = re.compile(r"[一二三四五1-5]级(?:重大|严重|一般|轻微)?(?:故障|事件)?|(?:重大|严重|一般|紧急|轻微)故障|P[0-5]", re.I)
+
+
+def scope_key(q: Dict[str, Any]) -> tuple:
+    return tuple(q.get(k, "") for k in ("severity", "scope", "subject"))
+
+
+def _quantity_context(text: str, q: Dict[str, Any], known=()) -> Dict[str, Any]:
+    a, b = _clause_bounds(text, q["start"], q["end"])
+    clause = text[a:b]
+    levels = list(SEVERITY.finditer(clause))
+    q["severity"] = min(levels, key=lambda m: abs(m.start() - (q["start"] - a))).group() if levels else ""
+    # 主体/场景只接受明确出现的已知标签；不靠数值猜测归属。
+    for key in ("scope", "subject"):
+        matches = {f[key] for f in known if f.get(key) and f[key] in clause}
+        q[key] = next(iter(matches)) if len(matches) == 1 else ("?" if matches else "")
+    known_levels = {f["severity"] for f in known if f.get("severity") and f["severity"] in clause}
+    if len(known_levels) == 1:
+        q["severity"] = next(iter(known_levels))
+    elif len(known_levels) > 1:
+        q["severity"] = "?"
+    prefix = text[max(a, q["start"] - 8):q["start"]]
+    q["comparator"] = "ge" if re.search(r"不少于|至少|不低于|≥", prefix) else "le" if re.search(r"不超过|至多|不多于|≤", prefix) else "eq"
+    return q
 
 
 def _ascii_alnum(ch: str) -> bool:
@@ -294,7 +318,7 @@ def extract_quantities(text: str, fallback_topic: Optional[str] = None) -> List[
         out.append({"topic": topic, "value": norm, "label": m.group(0).strip(), "start": m.start(), "end": m.end(),
                     "committed": bool(COMMIT_WORDS.search(masked, a, b)), "approx": unit in ("个月", "年"),
                     "dimension": dim})
-    return sorted(out, key=lambda q: q["start"])
+    return [_quantity_context(text, q) for q in sorted(out, key=lambda q: q["start"])]
 
 
 def same_value(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
@@ -319,6 +343,21 @@ def fact_quantities(facts: GlobalFacts) -> List[Dict[str, Any]]:
         for q in extract_quantities(text, fallback):
             if q["topic"]:
                 out.append(dict(q, fact=f"{label}：{value.strip()}"))
+    structured = []
+    for c in facts.commitments:
+        if not c.confirmed:
+            continue
+        value_text = f"{c.value}{c.unit}"
+        if c.topic == "inspection" and c.unit.startswith("次/"):
+            value_text = f"每{c.unit[2:]}{c.value}次"
+        for q in extract_quantities(f"{TOPIC_LABELS[c.topic]} {value_text}", c.topic):
+            if q["topic"] == c.topic:
+                structured.append(dict(q, fact=c.description(), fact_key=c.id, comparator=c.comparator,
+                                       severity=c.severity, scope=c.scope, subject=c.subject))
+    # 精确作用域的结构化记录优先，旧文本仍支持未被迁移的作用域。
+    scopes = {(q["topic"], scope_key(q)) for q in structured}
+    out = [q for q in out if (q["topic"], scope_key(q)) not in scopes]
+    out.extend(structured)
     return out
 
 
@@ -362,7 +401,13 @@ def _better_or_equal(fact: Dict[str, Any], q: Dict[str, Any]) -> Optional[bool]:
 
 def commitment_relation(q: Dict[str, Any], known: List[Dict[str, Any]]) -> str:
     """单章与全书共用的判定；不可比的单位不应被武断标为事实冲突。"""
-    candidates = [f for f in known if f["topic"] == q["topic"]] if q["topic"] else known
+    related = [f for f in known if f["topic"] == q["topic"]] if q["topic"] else known
+    candidates = [f for f in related if scope_key(f) == scope_key(q)]
+    if related and not candidates:
+        return "scope_unknown"
+    if any(f.get("comparator", "eq") != q.get("comparator", "eq")
+           and {f.get("comparator", "eq"), q.get("comparator", "eq")} == {"le", "ge"} for f in candidates):
+        return "conflict"
     if any(same_value(f, q) for f in candidates):
         return "backed"
     if not candidates or not q["topic"]:
@@ -381,6 +426,7 @@ def _check_commitments(text: str, facts: GlobalFacts) -> Tuple[List[CheckIssue],
     verify: List[VerifyItem] = []
     seen = set()
     for q in extract_quantities(text):
+        _quantity_context(text, q, known)
         topic = q["topic"]
         if topic is None and not q["committed"]:
             continue
@@ -391,12 +437,13 @@ def _check_commitments(text: str, facts: GlobalFacts) -> Tuple[List[CheckIssue],
             continue
         label = TOPIC_LABELS.get(topic or "", "承诺数值")
         if same_topic:
-            if relation in ("stronger", "incomparable"):
+            if relation in ("stronger", "incomparable", "scope_unknown"):
                 # 优于或不劣于事实承诺：分阶段里程碑、分级时限与分级巡检常见于此，不算冲突，列入待核实
-                key = (topic, str(q["value"]))
+                key = (topic, str(q["value"]), scope_key(q))
                 if key not in seen:
                     seen.add(key)
                     note = ("不低于全局事实承诺，属分阶段/分档安排，确认后保留" if relation == "stronger"
+                            else "级别、场景或主体不能映射到已确认事实，请人工核实" if relation == "scope_unknown"
                             else "与全局事实的单位不可直接比较，请核实工作日与自然日等适用口径")
                     verify.append(VerifyItem(kind="commitment", text=excerpt, line=line,
                                              note=f"{label}「{q['label']}」{note}"))
@@ -405,7 +452,7 @@ def _check_commitments(text: str, facts: GlobalFacts) -> Tuple[List[CheckIssue],
             issues.append(CheckIssue(level="blocking", code="fact_conflict", excerpt=excerpt, line=line,
                                      message=f"{label}与全局事实不一致：正文为「{q['label']}」，全局事实为「{facts_text}」"))
             continue
-        key = (topic, str(q["value"]))
+        key = (topic, str(q["value"]), scope_key(q))
         if key in seen:
             continue
         seen.add(key)

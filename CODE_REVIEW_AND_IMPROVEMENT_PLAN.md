@@ -110,9 +110,18 @@
 
 ## 3. P1：提升标书可用性与交付质量
 
-以下均未实施。P0 修复不代表这些能力已经具备。
+按验收顺序单项实施；每项记录本地测试后独立提交。未完成的交付级验收与实现状态分开记录。
+
+| 编号 | 状态 | 单项提交 | 本地验证 |
+|---|---|---|---|
+| P1-1 | 已实施 | 本项提交 `feat(facts): add confirmed scoped commitments separate from tender requirements` | pytest 59；Vitest 105；ruff、build 通过 |
+| P1-2～P1-8 | 待实施 | — | — |
+| P2-1～P2-3 | 待实施 | — | — |
 
 ### P1-1：分级事实模型与招标要求分离
+
+- **已实施（2026-10-26）：** `Commitment` 保存类别、数值、单位、比较方向、级别、场景、主体、来源与确认状态；采购要求单列于拆标数据，只有人工确认的企业承诺进入提示词和检查。旧 SLA/自定义文本继续可用；同作用域结构化记录优先。单章和全书采用同一作用域匹配，无法映射时待核实；跨级数值不再误报冲突。向导及编纂台均可添加、编辑、确认、拒绝并保存恢复，编辑后清除确认。
+- **验证记录：** `tests/test_structured_commitments.py` 12 项覆盖分级、单位、场景/主体、比较方向、旧文本、采购要求隔离和 API 保存恢复；连同承诺一致性、章节检查、无依据承诺、偏离真实性、项目持久化共 59 项通过。前端全量 105 项通过，生产资源同步构建。未调用真实付费模型。
 
 - **风险 / ROI：高 / 高。** `sla_commitment` 和 `custom_facts` 是文本；检查器只按响应/解决等 topic 找同类数值，无法区分“重大故障 2 小时”和“一般故障 24 小时”。候选稿压缩或修订可能因此被误导。
 - **定位：** [backend/app/models/schemas.py · GlobalFacts](<D:/Pycharm Project/EasyWrite/backend/app/models/schemas.py:45>)、[backend/app/services/checker/section_check.py · fact_quantities](<D:/Pycharm Project/EasyWrite/backend/app/services/checker/section_check.py:310>)、[backend/app/services/checker/section_check.py · _check_commitments](<D:/Pycharm Project/EasyWrite/backend/app/services/checker/section_check.py:378>)。
