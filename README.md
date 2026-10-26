@@ -61,7 +61,7 @@
 | `UV_PYTHON_INSTALL_MIRROR` | Python 运行时 | `https://registry.npmmirror.com/-/binary/python-build-standalone` |
 | `EASYWRITE_UV_MIRROR` | uv 启动工具 | `https://pypi.tuna.tsinghua.edu.cn` |
 
-AI 设置保存于 `backend/data/ai_settings.json`；也可使用 `backend/.env`，配置项见 [环境变量示例](backend/.env.example)。这两个配置文件均由 Git 忽略。企业资料保存于 `backend/data/enterprise_assets.json`，证明附件保存于 `backend/data/asset_files/`，同样由 Git 忽略；首次启动生成的示例资料不会写入标书，可在「企业资产」页一键清除。
+AI 设置保存于 `backend/data/ai_settings.json`；也可使用 `backend/.env`，配置项见 [环境变量示例](backend/.env.example)。这两个配置文件均由 Git 忽略。企业资料保存于 `backend/data/enterprise_assets.json`，证明附件保存于 `backend/data/asset_files/`，同样由 Git 忽略；首次启动生成的示例资料不会写入标书，可在「企业资产」页清除；有历史修改的预设条目及附件会保留并提示核对，确认后手动改为待核实或已确认。旧数据迁移前自动备份原文件。
 
 </details>
 
@@ -143,3 +143,7 @@ python scripts/eval_sections.py summarize docs/eval/<日期>.md
 参考 [易标（OpenBidKit_Yibiao）](https://github.com/FB208/OpenBidKit_Yibiao) 的招标解析、全局事实约束、废标检查与知识库设计思路，感谢原作者的开源贡献。
 
 后续优化的实施路线与验收标准见 [改进计划](IMPROVEMENT_PLAN.md)。
+
+代码审查、实施优先级与修复台账见 [CODE_REVIEW_AND_IMPROVEMENT_PLAN.md](CODE_REVIEW_AND_IMPROVEMENT_PLAN.md)。
+
+资料迁移接口：`GET /api/v1/assets/migration-audit` 返回只读核对清单；`DELETE /api/v1/assets/examples` 返回实际删除数量及保留的待核对条目。

@@ -20,6 +20,11 @@ def get_assets_stats():
     return asset_manager.get_stats()
 
 
+@router.get("/migration-audit", summary="只读核对历史示例分类：列出有业务改动的预设条目及迁移记录")
+def audit_asset_migrations():
+    return asset_manager.migration_audit()
+
+
 @router.get("/material-check", summary="证明材料检查：资质/人员/业绩逐条核对附件、有效期、所属主体与核实状态")
 def check_asset_materials(project_id: Optional[str] = None):
     """传 project_id 时以该项目的投标截止时间与投标人全称为准；否则以当天为准、不核对所属主体"""
@@ -88,9 +93,10 @@ def delete_asset_attachment(kind: str, asset_id: str, file_id: str):
     return {"status": "success", "deleted_id": file_id}
 
 
-@router.delete("/examples", summary="清除全部预设示例资料（四类资料中 status=example 的条目）")
+@router.delete("/examples", summary="清除预设示例资料（保护已有业务修改的历史示例条目）")
 def clear_example_assets():
-    return {"status": "success", "removed": asset_manager.clear_examples()}
+    removed = asset_manager.clear_examples()
+    return {"status": "success", "removed": removed, "protected": asset_manager.migration_audit()["items"]}
 
 
 @router.get("/qualifications", response_model=List[CompanyQualification], summary="查询企业资质认证列表")

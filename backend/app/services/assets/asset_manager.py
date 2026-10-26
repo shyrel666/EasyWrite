@@ -323,11 +323,40 @@ class EnterpriseAssetManager:
         self.personnel: List[Dict[str, Any]] = []
         self.cases: List[Dict[str, Any]] = []
         self.components: List[Dict[str, Any]] = []
+        self._migration_history: List[Dict[str, Any]] = []
         self._load_or_init()
 
     def _defaults(self, kind: str) -> List[Dict[str, Any]]:
         """预设示例（深拷贝，标记为 example：只展示录入格式，不进入撰写提示词）"""
         return [dict(item, status="example") for item in copy.deepcopy(getattr(self, f"DEFAULT_{kind.upper()}"))]
+
+    def _default_differences(self, kind: str, item: Dict[str, Any]) -> Optional[List[str]]:
+        """预设 ID 的业务字段差异；holder/附件等后来新增字段也参与，默认空值不算修改。"""
+        default = next((d for d in getattr(self, f"DEFAULT_{kind.upper()}") if d["id"] == item.get("id")), None)
+        if default is None:
+            return None
+        differences = [k for k, value in default.items() if item.get(k) != value]
+        normalized = ASSET_MODELS[kind](**default).model_dump()
+        for key, value in item.items():
+            if key in default or key in ("status", "confirmed_at"):
+                continue
+            if value not in (None, "", [], {}) and value != normalized.get(key):
+                differences.append(key)
+        return differences
+
+    def migration_audit(self) -> Dict[str, Any]:
+        """只读核对：历史已标为 example 的预设条目若有业务改动，要求用户确认，绝不自动改状态。"""
+        with self._lock:
+            items = []
+            for kind in ASSET_KINDS:
+                for item in getattr(self, kind):
+                    differences = self._default_differences(kind, item) if item.get("status") == "example" else None
+                    if differences:
+                        items.append({"kind": kind, "asset_id": item["id"],
+                                      "name": item.get("name") or item.get("project_name") or item["id"],
+                                      "changed_fields": differences,
+                                      "reason": "沿用预设 ID 的示例资料已有修改，可能包含企业真实资料；请核对状态"})
+            return {"items": items, "total": len(items), "migrations": copy.deepcopy(self._migration_history)}
 
     def _load_or_init(self):
         """
@@ -356,30 +385,41 @@ class EnterpriseAssetManager:
                 os.replace(self.storage_file, backup)
                 data = {}
 
-            migrated = False
+            self._migration_history = data.get("_migration_history", [])
+            if not isinstance(self._migration_history, list):
+                self._migration_history = []
+            migrated = []
             for kind in ASSET_KINDS:
                 items = data.get(kind)
                 items = [x for x in items if isinstance(x, dict)] if isinstance(items, list) else []
-                defaults = {x["id"]: x for x in getattr(self, f"DEFAULT_{kind.upper()}")}
                 for item in items:
                     if item.get("status") in ASSET_STATUSES:
                         continue
-                    default = defaults.get(item.get("id"))
-                    if default is not None and all(item.get(k) == v for k, v in default.items()):
+                    old_status = item.get("status")
+                    differences = self._default_differences(kind, item)
+                    if differences == []:
                         item["status"] = "example"
                     else:
-                        if default is not None:
+                        if differences is not None:
                             logger.warning("企业资料 %s[%s] 沿用预设 ID 但内容与预设不一致，按待核实处理：请在企业资产中核对后确认",
                                            kind, item.get("id"))
-                        item["status"] = "unverified" if default is not None else "confirmed"
-                    migrated = True
+                        item["status"] = "unverified" if differences is not None else "confirmed"
+                    migrated.append({"kind": kind, "asset_id": item.get("id"), "old_status": old_status,
+                                     "new_status": item["status"], "changed_fields": differences or []})
                 setattr(self, kind, items)
+            if migrated:
+                backup = self.storage_file.with_name(f"{self.storage_file.name}.migration-{uuid.uuid4().hex}.bak")
+                shutil.copy2(self.storage_file, backup)  # 备份失败即中止，不能先覆盖原文件
+                self._migration_history.append({"source": "legacy_status_v2", "at": _now(),
+                                                "backup": backup.name, "items": migrated})
             if migrated or not data:
                 self._save()  # 写回迁移后的状态；损坏文件已备份时写回空库，避免下次启动补入示例
 
     def _save(self):
         """先写临时文件再原子替换，写到一半中断也不会留下截断的资料文件；失败时抛出异常"""
         payload = {kind: getattr(self, kind) for kind in ASSET_KINDS}
+        if self._migration_history:
+            payload["_migration_history"] = self._migration_history
         tmp = self.storage_file.with_name(f"{self.storage_file.name}.tmp")
         try:
             tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -544,14 +584,16 @@ class EnterpriseAssetManager:
         return True
 
     def clear_examples(self) -> Dict[str, int]:
-        """一次性删除四类资料中的全部预设示例，返回各类删除条数"""
+        """清除示例；有业务改动的预设条目及其附件保留，等待人工核对。"""
         with self._lock:
             updates, removed, removed_ids = {}, {}, []
+            audit = self.migration_audit()["items"]
             for kind in ASSET_KINDS:
                 current = getattr(self, kind)
-                kept = [x for x in current if x.get("status") != "example"]
+                protected = {it["asset_id"] for it in audit if it["kind"] == kind}
+                kept = [x for x in current if x.get("status") != "example" or x.get("id") in protected]
                 removed[kind] = len(current) - len(kept)
-                removed_ids += [x.get("id", "") for x in current if x.get("status") == "example"]
+                removed_ids += [x.get("id", "") for x in current if x.get("status") == "example" and x.get("id") not in protected]
                 if removed[kind]:
                     updates[kind] = kept
             if updates:

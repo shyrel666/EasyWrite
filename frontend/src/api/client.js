@@ -290,6 +290,7 @@ export const api = {
   // 资产
   assets: {
     stats: () => request('/assets/stats'),
+    migrationAudit: () => request('/assets/migration-audit'),
     list: (type, params = '') => request(`/assets/${type}${params}`),
     add: (type, body) => request(`/assets/${type}`, { method: 'POST', body }),
     remove: (type, id) => request(`/assets/${type}/${id}`, { method: 'DELETE' }),

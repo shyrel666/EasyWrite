@@ -21,8 +21,8 @@
 | P0-5 | 承诺单位、比较方向及全书口径错误 | 已修复 | `54afadd` | pytest 441；Vitest 93；ruff、build 通过 |
 | P0-6 | 资料仅检查首次出现，全书漏父章正文 | 已修复 | `4ce44bf` | pytest 446；Vitest 93；ruff、build 通过 |
 | P0-7 | 导出、回填等操作未可靠等待保存 | 已修复 | `7e0b130` | pytest 446；Vitest 101；ruff、build 通过 |
-| P0-8 | 修改正文后沿用已校审状态 | 已修复 | 本项提交，见 git log | pytest 454；Vitest 102；ruff、build 通过 |
-| P0-9 | 历史示例分类误伤及清理边界 | 待实施 | — | 计划见下文 |
+| P0-8 | 修改正文后沿用已校审状态 | 已修复 | `3d1e954` | pytest 454；Vitest 102；ruff、build 通过 |
+| P0-9 | 历史示例分类误伤及清理边界 | 已修复 | 本项提交，见 git log | pytest 466；Vitest 104；ruff、build 通过 |
 | P0-10 | 同名 Word 导出覆盖和文件生命周期 | 待实施 | — | 计划见下文 |
 
 ### P0-1：偏离表应忠实表达实际能力
@@ -91,6 +91,8 @@
 - **pytest / Vitest：** reviewed 后编辑降级，同文保存保留，重新确认恢复，旧修订确认冲突；AI/回填/恢复等共享写入路径均不能继承旧校审，导出清单同步提醒。
 
 ### P0-9：保护历史误分类的示例资料
+
+已按下述方案实施；新增只读 `GET /assets/migration-audit`、界面核对入口、迁移前备份与来源历史，批量清理保留可疑条目及附件。本轮未读取或自动确认真实企业资料。
 
 - **风险 / ROI：高 / 高。** 已有迁移只处理无合法 status 的条目；历史上已经标成 example 的编辑数据会直接跳过。预设字段相等也不能说明新增 holder/attachments 没有真实资料；清空示例会删除其附件。
 - **代码定位：** [backend/app/services/assets/asset_manager.py · _load_or_init](<D:/Pycharm Project/EasyWrite/backend/app/services/assets/asset_manager.py:332>)、[backend/app/services/assets/asset_manager.py · clear_examples](<D:/Pycharm Project/EasyWrite/backend/app/services/assets/asset_manager.py:546>)、[frontend/src/views/AssetsView.vue · load](<D:/Pycharm Project/EasyWrite/frontend/src/views/AssetsView.vue:86>)。

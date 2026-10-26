@@ -67,6 +67,7 @@ function switchType(key) {
 }
 const list = ref([])
 const stats = ref({})
+const migrationAudit = ref({ items: [], total: 0 })
 const dialogVisible = ref(false)
 const editing = ref(null)
 const editingStatus = ref('')
@@ -87,7 +88,19 @@ async function load() {
   const res = await api.assets.list(activeType.value)
   list.value = res
   stats.value = await api.assets.stats()
+  try {
+    migrationAudit.value = await api.assets.migrationAudit()
+  } catch (e) {
+    ElMessage.error('历史资料核对清单加载失败：' + e.message)
+  }
   if (isMaterial.value) loadChecks()
+}
+
+async function reviewMigration(item) {
+  activeType.value = item.kind
+  await load()
+  const found = list.value.find(x => x.id === item.asset_id)
+  if (found) openEdit(found)
 }
 
 // ---- 证明材料检查：默认以当天为准；选择项目后按其投标截止时间与投标人全称核对 ----
@@ -204,11 +217,12 @@ const exampleCount = computed(() => stats.value.total_examples || 0)
 
 async function clearExamples() {
   try {
-    await ElMessageBox.confirm(`删除全部 ${exampleCount.value} 条预设示例资料？用户录入的资料不受影响。`, '清除示例资料', { type: 'warning' })
+    await ElMessageBox.confirm(`清除标为示例的资料？已有业务修改、需核对的历史条目及其附件将保留。`, '清除示例资料', { type: 'warning' })
   } catch { return }
   try {
-    await api.assets.clearExamples()
-    ElMessage.success('示例资料已清除')
+    const res = await api.assets.clearExamples()
+    if (res.protected?.length) ElMessage.warning(`已清除未修改的示例，保留 ${res.protected.length} 条需核对资料`)
+    else ElMessage.success('示例资料已清除')
     load()
   } catch (e) {
     ElMessage.error('清除失败：' + e.message)
@@ -322,10 +336,20 @@ onMounted(async () => {
         有效期核对日 <span class="num">{{ checkRef.reference_date }}</span>（{{ checkRef.reference_source }}）<template v-if="checkRef.company_name">；所属主体与投标人「{{ checkRef.company_name }}」核对</template><template v-else-if="checkProject">；该项目未填写投标人全称，未核对所属主体</template>。
       </p>
 
+      <div v-if="migrationAudit.total" class="note note-warn mb-5">
+        <div>
+          <p class="font-medium">{{ migrationAudit.total }} 条历史示例存在业务修改，请核对资料状态</p>
+          <p class="hint mt-1">这些条目及附件会在清除示例时保留；核实后请手动改为待核实或已确认。</p>
+          <button v-for="item in migrationAudit.items" :key="`${item.kind}:${item.asset_id}`" class="block text-xs mt-2 underline" @click="reviewMigration(item)">
+            核对 {{ item.name }}（变更字段：{{ item.changed_fields.join('、') }}）
+          </button>
+        </div>
+      </div>
+
       <div v-if="exampleCount" class="note note-warn mb-5 items-center flex-wrap">
         <el-icon class="text-warn shrink-0"><WarningFilled /></el-icon>
-        <span class="flex-1 min-w-[14rem]">资料库中有 <b class="num">{{ exampleCount }}</b> 条预设示例（人员、证书编号、业绩均为虚构），只用于展示录入格式，不会写入标书。录入企业真实资料后可一键清除。</span>
-        <el-button size="small" @click="clearExamples">清除全部示例资料</el-button>
+        <span class="flex-1 min-w-[14rem]">资料库中有 <b class="num">{{ exampleCount }}</b> 条标为示例的资料，不会写入标书。原始预设内容为虚构；有历史修改的条目请先核对。</span>
+        <el-button size="small" @click="clearExamples">清除示例资料</el-button>
       </div>
 
       <EmptyState v-if="!list.length" :icon="currentType.icon" :title="`暂无${currentType.label}`" description="录入后在撰写相关章节时引用；未录入时正文以【待填写】占位，不会使用示例资料。">
