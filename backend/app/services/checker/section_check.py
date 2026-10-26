@@ -189,8 +189,8 @@ EXPERIENCE_AFTER = re.compile(r"[^，。；;\n]{0,4}(?:从业|经验)")        #
 
 # 承诺类别：关键词 → 允许的量纲
 TOPICS = {
-    "duration": (re.compile(r"工期|交付|完工|竣工|建设周期|实施周期|上线|交货"), {"day", "workday"}),
-    "warranty": (re.compile(r"质保|保修|维保期|免费维保|免费维护|售后服务期|免费服务期"), {"day"}),
+    "duration": (re.compile(r"工期|交付|完工|竣工|建设周期|实施周期|上线|交货"), {"minute", "day", "workday"}),
+    "warranty": (re.compile(r"质保|保修|维保期|免费维保|免费维护|售后服务期|免费服务期"), {"minute", "day"}),
     "response": (re.compile(r"响应"), {"minute", "workday", "day"}),
     "onsite": (re.compile(r"到场|到达现场|抵达现场|赶到现场|到达|上门|赶赴"), {"minute", "workday", "day"}),
     "resolve": (re.compile(r"解决|修复|恢复|排除故障|处理完毕"), {"minute", "workday", "day"}),
@@ -256,7 +256,7 @@ def extract_quantities(text: str, fallback_topic: Optional[str] = None) -> List[
         if _ascii_alnum(text[max(0, m.start() - 1):m.start()]) or _ascii_alnum(text[m.end():m.end() + 1]):
             continue
         out.append({"topic": "window", "value": f"{int(m.group(1))}×{int(m.group(2))}", "label": m.group(0).strip(),
-                    "start": m.start(), "end": m.end(), "committed": True, "approx": False})
+                    "start": m.start(), "end": m.end(), "committed": True, "approx": False, "dimension": "window"})
         masked = masked[:m.start()] + " " * (m.end() - m.start()) + masked[m.end():]
     for m in QUANTITY.finditer(masked):
         raw, unit = m.group(1), m.group(2)
@@ -286,17 +286,24 @@ def extract_quantities(text: str, fallback_topic: Optional[str] = None) -> List[
                 norm: Any = f"{period.group(1)}:{value:g}"
         else:
             norm = round(value * factor, 3) if dim != "workday" else f"workday:{value:g}"
+            if topic in ("response", "onsite", "resolve") and dim == "day":
+                norm, dim = round(norm * 1440, 3), "minute"
+            elif topic in ("duration", "warranty") and dim == "minute":
+                norm, dim = round(norm / 1440, 3), "day"
         a, b = _clause_bounds(masked, m.start(), m.end())
         out.append({"topic": topic, "value": norm, "label": m.group(0).strip(), "start": m.start(), "end": m.end(),
-                    "committed": bool(COMMIT_WORDS.search(masked, a, b)), "approx": unit in ("个月", "年")})
+                    "committed": bool(COMMIT_WORDS.search(masked, a, b)), "approx": unit in ("个月", "年"),
+                    "dimension": dim})
     return sorted(out, key=lambda q: q["start"])
 
 
 def same_value(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
     """数值是否一致：按月、年折算的期限允许 6 天误差（12个月 = 1年 = 365天）"""
     x, y = a["value"], b["value"]
+    if a.get("dimension") != b.get("dimension"):
+        return False
     if isinstance(x, float) and isinstance(y, float) and (a.get("approx") or b.get("approx")):
-        return abs(x - y) <= 6
+        return abs(x - y) <= (6 * 1440 if a.get("dimension") == "minute" else 6)
     return x == y
 
 
@@ -325,9 +332,11 @@ def _better_or_equal(fact: Dict[str, Any], q: Dict[str, Any]) -> Optional[bool]:
     评估 2026-10-25-2：分阶段里程碑（进场 7 日历天 < 总工期 30 日历天）、分级巡检（日检相对事实的月检）
     是常见且合法的写法，原判定一律记"与全局事实不一致"，制造大量阻塞误报；不劣于事实的取值改为列入待核实。"""
     x, y = fact["value"], q["value"]
+    if fact.get("dimension") != q.get("dimension"):
+        return None
     if isinstance(x, float) and isinstance(y, float):
         # 时限/工期/期限：更短为优；质保期相反：更长为优（对采购人更有利）
-        return y >= x if fact.get("topic") == "warranty" else y <= x
+        return y >= x if fact.get("topic") in ("warranty", "staff") else y <= x
     if isinstance(x, str) and isinstance(y, str) and "×" in x and "×" in y:  # 服务窗口 N×M：每周覆盖时长更宽为优
         try:
             ax, bx = (int(v) for v in x.split("×"))
@@ -338,6 +347,8 @@ def _better_or_equal(fact: Dict[str, Any], q: Dict[str, Any]) -> Optional[bool]:
     if isinstance(x, str) and isinstance(y, str) and ":" in x and ":" in y:  # 巡检频次 周期:次数
         px, _, cx = x.partition(":")
         py, _, cy = y.partition(":")
+        if px == py == "workday":
+            return float(cy) <= float(cx)
         if px not in PERIOD_DAYS or py not in PERIOD_DAYS:
             return None
         try:
@@ -347,6 +358,21 @@ def _better_or_equal(fact: Dict[str, Any], q: Dict[str, Any]) -> Optional[bool]:
             return None
         return per_text >= per_fact
     return None
+
+
+def commitment_relation(q: Dict[str, Any], known: List[Dict[str, Any]]) -> str:
+    """单章与全书共用的判定；不可比的单位不应被武断标为事实冲突。"""
+    candidates = [f for f in known if f["topic"] == q["topic"]] if q["topic"] else known
+    if any(same_value(f, q) for f in candidates):
+        return "backed"
+    if not candidates or not q["topic"]:
+        return "unbacked"
+    comparisons = [_better_or_equal(f, q) for f in candidates]
+    if any(v is True for v in comparisons):
+        return "stronger"
+    if any(v is None for v in comparisons):
+        return "incomparable"
+    return "conflict"
 
 
 def _check_commitments(text: str, facts: GlobalFacts) -> Tuple[List[CheckIssue], List[VerifyItem]]:
@@ -360,17 +386,20 @@ def _check_commitments(text: str, facts: GlobalFacts) -> Tuple[List[CheckIssue],
             continue
         excerpt, line = _locate(text, q["start"], q["end"])
         same_topic = [f for f in known if f["topic"] == topic] if topic else []
-        if any(same_value(f, q) for f in same_topic) or (topic is None and any(same_value(f, q) for f in known)):
+        relation = commitment_relation(q, known)
+        if relation == "backed":
             continue
         label = TOPIC_LABELS.get(topic or "", "承诺数值")
         if same_topic:
-            if any(_better_or_equal(f, q) for f in same_topic):
+            if relation in ("stronger", "incomparable"):
                 # 优于或不劣于事实承诺：分阶段里程碑、分级时限与分级巡检常见于此，不算冲突，列入待核实
                 key = (topic, str(q["value"]))
                 if key not in seen:
                     seen.add(key)
+                    note = ("不低于全局事实承诺，属分阶段/分档安排，确认后保留" if relation == "stronger"
+                            else "与全局事实的单位不可直接比较，请核实工作日与自然日等适用口径")
                     verify.append(VerifyItem(kind="commitment", text=excerpt, line=line,
-                                             note=f"{label}「{q['label']}」不低于全局事实承诺，属分阶段/分档安排，确认后保留"))
+                                             note=f"{label}「{q['label']}」{note}"))
                 continue
             facts_text = "；".join(dict.fromkeys(f["fact"] for f in same_topic))
             issues.append(CheckIssue(level="blocking", code="fact_conflict", excerpt=excerpt, line=line,

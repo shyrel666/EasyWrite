@@ -46,21 +46,20 @@ def book_consistency(project: Project) -> Dict[str, Any]:
             if topic is None and not q["committed"]:
                 continue
             same_topic = [f for f in fact_qs if f["topic"] == topic] if topic else []
-            backed = bool(same_topic) and any(sc.same_value(f, q) for f in same_topic)
-            if same_topic and not backed:
+            relation = sc.commitment_relation(q, fact_qs)
+            if relation == "conflict":
                 fact = "；".join(dict.fromkeys(f["fact"] for f in same_topic))
                 fact_conflicts.append({
                     "section_id": node.id,
                     "detail": f"{node.title}：{sc.TOPIC_LABELS.get(topic or '', '承诺数值')}与全局事实不一致"
                               f"——正文为「{q['label']}」，全局事实为「{fact}」",
                 })
-            elif not same_topic:
+            elif relation != "backed":
                 unbacked.add((topic, str(q["value"])))
             # 跨章取值比对只看没有事实支撑的取值：与全局事实一致的是正确口径，
             # 偏离事实的按"与全局事实冲突"报，不再重复计"跨章取值不一致"
-            if topic and not backed:
-                values.append({"topic": topic, "value": q["value"], "section_id": node.id,
-                               "section_title": node.title, "label": q["label"]})
+            if topic and relation == "unbacked":
+                values.append(dict(q, section_id=node.id, section_title=node.title))
 
         issues, _verify = sc._check_assets(analysed, snapshot)
         issues += sc._check_employment(analysed, snapshot)
@@ -68,10 +67,10 @@ def book_consistency(project: Project) -> Dict[str, Any]:
 
     # 同一类别在多个取值之间摇摆：按 same_value 聚类，超过一类即冲突
     value_conflicts: List[Dict[str, Any]] = []
-    by_topic: Dict[str, List[Dict[str, Any]]] = {}
+    by_topic: Dict[tuple, List[Dict[str, Any]]] = {}
     for v in values:
-        by_topic.setdefault(v["topic"], []).append(v)
-    for topic, group in by_topic.items():
+        by_topic.setdefault((v["topic"], v.get("dimension")), []).append(v)
+    for (topic, _dimension), group in by_topic.items():
         clusters: List[List[Dict[str, Any]]] = []
         for v in group:
             for c in clusters:
@@ -80,7 +79,7 @@ def book_consistency(project: Project) -> Dict[str, Any]:
                     break
             else:
                 clusters.append([v])
-        if len(clusters) > 1:
+        if len(clusters) > 1 and len({v["section_id"] for v in group}) > 1:
             where = "；".join(f"「{c[0]['label']}」（{c[0]['section_title']}）" for c in clusters)
             value_conflicts.append({
                 "section_id": group[0]["section_id"],

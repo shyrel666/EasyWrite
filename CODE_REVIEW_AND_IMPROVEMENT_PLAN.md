@@ -18,7 +18,7 @@
 | P0-2 | 知识库指纹口径不一致，旧候选稿缺指纹 | 已修复 | `c41d74a` | pytest 420；Vitest 93；ruff、build 通过 |
 | P0-3 | 跨分包条款去重和响应写回串项 | 已修复 | `3b7e0d8` | pytest 425；Vitest 93；ruff、build 通过 |
 | P0-4 | 删除的证明关联仍可能齐备或被替代 | 已修复 | `d927f14` | pytest 428；Vitest 93；ruff、build 通过 |
-| P0-5 | 承诺单位、比较方向及全书口径错误 | 待实施 | — | 计划见下文 |
+| P0-5 | 承诺单位、比较方向及全书口径错误 | 已修复 | 本项提交，见 git log | pytest 441；Vitest 93；ruff、build 通过 |
 | P0-6 | 资料仅检查首次出现，全书漏父章正文 | 待实施 | — | 计划见下文 |
 | P0-7 | 导出、回填等操作未可靠等待保存 | 待实施 | — | 计划见下文 |
 | P0-8 | 修改正文后沿用已校审状态 | 待实施 | — | 计划见下文 |
@@ -54,6 +54,8 @@
 - **验证：** [tests/test_evidence_links.py](<D:/Pycharm Project/EasyWrite/tests/test_evidence_links.py>)、[tests/test_evidence_set.py](<D:/Pycharm Project/EasyWrite/tests/test_evidence_set.py>) 覆盖部分和全部删除、禁止替代、导出警告；[frontend/src/utils/__tests__/material.test.js](<D:/Pycharm Project/EasyWrite/frontend/src/utils/__tests__/material.test.js>) 验证状态映射。
 
 ### P0-5：修复承诺的量纲和比较方向
+
+已按下述方案实施；新增 `tests/test_commitment_consistency.py`，单章/全书共享 `commitment_relation`。
 
 - **风险 / ROI：高 / 高。** 时限中“天”和“小时”使用不同数值基准；驻场人数误用越少越优；工作日与自然日不可直接比较；全书检查没有复用单章的“不劣于事实、列待核实”规则。单章内多个值也可能被报为跨章冲突。
 - **代码定位：** [backend/app/services/checker/section_check.py · extract_quantities](<D:/Pycharm Project/EasyWrite/backend/app/services/checker/section_check.py:245>)、[backend/app/services/checker/section_check.py · _better_or_equal](<D:/Pycharm Project/EasyWrite/backend/app/services/checker/section_check.py:322>)、[backend/app/services/checker/section_check.py · _check_commitments](<D:/Pycharm Project/EasyWrite/backend/app/services/checker/section_check.py:352>)、[backend/app/services/checker/book_consistency.py · book_consistency](<D:/Pycharm Project/EasyWrite/backend/app/services/checker/book_consistency.py:29>)。

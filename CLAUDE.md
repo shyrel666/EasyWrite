@@ -61,6 +61,8 @@ Core rule across the codebase: **never fabricate data when the LLM is unavailabl
 候选稿知识库指纹包含实际注入的父级背景（统一使用 `retrieval_service.compose_content`）；旧候选稿有知识库引用但缺少相应指纹时，详情和采纳均要求重新生成，不能按当前知识库补签。
 
 关联资料删除后材料状态为“关联失效”（更严重问题优先）；选材以关联键是否存在判断人工选择，即使全部已删除也不自动匹配替代资料，删除缺口记录在 excluded_assets。
+
+承诺数值比较通过 `commitment_relation` 统一单章与全书：时限为分钟、工期/质保为天，工作日单独处理；人数更多与质保更长为不劣，不可比时进入待核实。跨章冲突仅比较不同章节的同量纲无依据承诺。
 - `chat_completion*` falls back to `_mock_bid_generation` and sets mode `"mock"`; `llm_client.get_mode()` must be propagated in API responses as `mode` so the frontend shows the offline banner. `get_mode()` is per request/background-task context (a contextvar, so a batch task and a stream don't leak modes into each other), falling back to the global `last_mode()`, which is what `GET /ai/status` reports.
 - `chat_completion_structured()` returns `None` when unconfigured — callers must take an explicit degraded path (rules / sentinel values), not invent content.
 - Missing tender fields use the sentinel `NOT_MENTIONED = "未提及"` (`schemas.py`). Deviation responses stay `"待生成"` unless `get_mode() == "llm"`. Rule-based paths report `extraction_mode`/`mode: "rules"`.
