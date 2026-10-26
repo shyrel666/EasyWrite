@@ -369,6 +369,7 @@ def _wait(task_id: str, log: Callable[[str], None]) -> Tuple[Dict[str, Any], flo
 def measure(project_id: str, section_id: str, content: str) -> Dict[str, Any]:
     """两种写法的正文用同一套规则检查（不含模型评审）"""
     from app.services.checker.section_check import check_section
+    from app.services.checker.verification import verification_counts
     from app.services.project_store import find_node, project_store
 
     project = project_store.get(project_id)
@@ -377,7 +378,8 @@ def measure(project_id: str, section_id: str, content: str) -> Dict[str, Any]:
     return {
         "blocking": report.blocking_count, "quality": report.quality_count,
         "points_hit": sum(1 for p in report.points if p.mentioned), "points_total": len(report.points),
-        "pending": len(report.pending_verification), "chars": report.char_count,
+        "pending": verification_counts(report.pending_verification)["item_count"],
+        "pending_occurrences": verification_counts(report.pending_verification)["occurrence_count"], "chars": report.char_count,
         "blocking_issues": [i.message for i in report.issues if i.level == "blocking"],
     }
 
@@ -538,6 +540,7 @@ def aggregate(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
             "points_hit": sum(m.get("points_hit", 0) for m in ms),
             "points_total": sum(m.get("points_total", 0) for m in ms),
             "pending": sum(m.get("pending", 0) for m in ms),
+            "pending_occurrences": sum(m.get("pending_occurrences", m.get("pending", 0)) for m in ms),
             "calls": sum(u.get("calls", 0) for u in usage),
             "seconds": round(sum(m.get("seconds", 0) for m in ms), 1),
             "usage": {"calls": sum(u.get("calls", 0) for u in usage),
@@ -641,6 +644,7 @@ def render_report(results: Dict[str, Any], workspace: Path, report_path: Path,
         f"| 评分要点文字覆盖率 | {_pct(s['points_hit'], s['points_total'])}（{s['points_hit']}/{s['points_total']}） "
         f"| {_pct(r['points_hit'], r['points_total'])}（{r['points_hit']}/{r['points_total']}） |",
         f"| 待核实项（占位、全局事实外的数值、待核实资料） | {s['pending']} | {r['pending']} |",
+        f"| 待核实事项出现次数 | {s['pending_occurrences']} | {r['pending_occurrences']} |",
         f"| 模型请求次数 | {s['calls']} | {r['calls']} |",
         f"| 耗时（秒） | {s['seconds']} | {r['seconds']} |",
         f"| 服务商返回的用量（tokens） | {_tokens(s['usage'])} | {_tokens(r['usage'])} |",

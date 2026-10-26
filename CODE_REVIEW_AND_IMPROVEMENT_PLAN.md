@@ -115,8 +115,9 @@
 | 编号 | 状态 | 单项提交 | 本地验证 |
 |---|---|---|---|
 | P1-1 | 已实施 | `7f7cc4a` | pytest 59；Vitest 105；ruff、build 通过 |
-| P1-2 | 已实施 | 本项提交 `feat(refine): measure compression progress and roll back degraded drafts` | pytest 64；Vitest 106；ruff、build 通过 |
-| P1-3～P1-8 | 待实施 | — | — |
+| P1-2 | 已实施 | `d1a406b` | pytest 64；Vitest 106；ruff、build 通过 |
+| P1-3 | 已实施 | 本项提交 `feat(checker): unify verification identities counts and evidence-bound decisions` | pytest 75；Vitest 108；ruff、build 通过 |
+| P1-4～P1-8 | 待实施 | — | — |
 | P2-1～P2-3 | 待实施 | — | — |
 
 ### P1-1：分级事实模型与招标要求分离
@@ -140,6 +141,10 @@
 - **验证：** pytest 用模型桩模拟持续压缩、压缩不动、删掉评分点、预算很小、只有图表等情况；Vitest 显示字数进展和仍超限原因，不能把部分完成显示为目标达成。
 
 ### P1-3：待核实事项统一身份及统计口径
+
+- **已实施（2026-10-26）：** `VerifyItem` 增加稳定身份、资料/事实键、来源、依据指纹与全部位置。共享聚合函数用于章节、全书、导出与评估；重复资料和其占位标注合并，承诺身份包含量纲及级别/场景/主体，不跨业务合并。前端分别显示事项数/出现次数，并保留所有定位。核实结论通过服务端持久化、比较依据指纹，变更后显示失效并拒绝旧依据确认；记录结论不自动升级企业能力，正文占位与资料状态仍须处理。
+- **验证记录：** 新增跨章重复、资产/占位重合、同名不同主体、同值不同级别、图代码排除、结论失效与 409 回归；相关 pytest 共 75 项通过。前端全量 108 项、ruff、生产构建通过。
+- **后续业务样本约定：** 用户已确认使用仓库现有招标样本和合成用例继续 P2；未进行的真实项目人工验收仍单独记录。
 
 - **风险 / ROI：中 / 高。** 同一条资料可同时成为 unverified_asset 与 placeholder；占位按原文去重，承诺按 topic/value，评估、章节和全书统计口径不一致。
 - **定位：** [backend/app/models/schemas.py · VerifyItem](<D:/Pycharm Project/EasyWrite/backend/app/models/schemas.py:447>)、[backend/app/services/checker/section_check.py · _placeholders](<D:/Pycharm Project/EasyWrite/backend/app/services/checker/section_check.py:562>)、[backend/app/services/checker/section_check.py · check_section](<D:/Pycharm Project/EasyWrite/backend/app/services/checker/section_check.py:621>)、[backend/app/services/checker/book_consistency.py · book_consistency](<D:/Pycharm Project/EasyWrite/backend/app/services/checker/book_consistency.py:28>)。

@@ -245,6 +245,7 @@ class Project(BaseModel):
     outline: List[OutlineNode]
     evidence_links: Dict[str, List[str]] = Field(
         default_factory=dict, description="评分项与证明资料的关联 {评分项ID: [kind:资料ID, …]}，只由用户确认保存")
+    verification_decisions: Dict[str, Dict[str, str]] = Field(default_factory=dict)
     stage: str = Field(default="created", description="向导阶段：created/tender_analyzed/outline_confirmed/writing")
     created_at: str
     updated_at: str
@@ -474,12 +475,29 @@ class CheckIssue(BaseModel):
     line: Optional[int] = Field(default=None, description="定位：所在行（从 1 开始）")
 
 
+class VerifyOccurrence(BaseModel):
+    section_id: str = ""
+    section_title: str = ""
+    text: str = ""
+    line: Optional[int] = None
+    start: Optional[int] = None
+    end: Optional[int] = None
+
+
 class VerifyItem(BaseModel):
     """待核实事项：正文中需要企业确认、但不阻塞采纳的内容"""
     kind: str = Field(..., description="commitment 全局事实中没有的承诺数值 / placeholder 占位 / unverified_asset 待核实资料")
     text: str
     note: str = ""
     line: Optional[int] = None
+    stable_key: str = ""
+    asset_key: str = ""
+    fact_key: str = ""
+    source: str = "rule"
+    basis_hash: str = ""
+    occurrences: List[VerifyOccurrence] = Field(default_factory=list)
+    decision_state: str = "pending"
+    decision_note: str = ""
 
 
 class PointCheck(BaseModel):
@@ -506,6 +524,8 @@ class SectionCheckReport(BaseModel):
     quality_count: int = 0
     issues: List[CheckIssue] = Field(default_factory=list)
     pending_verification: List[VerifyItem] = Field(default_factory=list)
+    verification_count: int = 0
+    verification_occurrences: int = 0
     points: List[PointCheck] = Field(default_factory=list, description="本节承接的评分要点逐条结果")
     llm_review: str = Field(default="skipped", description="模型评审：done / skipped / failed")
     llm_note: str = Field(default="", description="模型评审说明，如\"未做模型评审（未配置模型）\"")

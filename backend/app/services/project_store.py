@@ -109,6 +109,7 @@ class ProjectStore:
             ],
             outline=[OutlineNode(**n) for n in json.loads(row.outline_json or "[]")],
             evidence_links=json.loads(row.evidence_json or "{}"),
+            verification_decisions=json.loads(row.verification_json or "{}"),
             stage=row.stage,
             created_at=row.created_at,
             updated_at=row.updated_at,
@@ -130,6 +131,7 @@ class ProjectStore:
             [n.model_dump() for n in project.outline], ensure_ascii=False
         )
         row.evidence_json = json.dumps(project.evidence_links, ensure_ascii=False)
+        row.verification_json = json.dumps(project.verification_decisions, ensure_ascii=False)
         row.stage = project.stage
         row.updated_at = now_str()
 

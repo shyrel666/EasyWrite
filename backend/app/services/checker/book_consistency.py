@@ -14,6 +14,7 @@ from typing import Any, Dict, List
 from app.models.schemas import OutlineNode, Project
 from app.services.assets.asset_manager import asset_manager
 from app.services.checker import section_check as sc
+from app.services.checker.verification import project_verification, verification_counts
 
 
 def _written_nodes(outline: List[OutlineNode]) -> List[OutlineNode]:
@@ -36,7 +37,6 @@ def book_consistency(project: Project) -> Dict[str, Any]:
     values: List[Dict[str, Any]] = []      # 每处带类别的承诺数值
     fact_conflicts: List[Dict[str, Any]] = []
     asset_issues: List[Dict[str, Any]] = []
-    unbacked = set()
 
     for node in nodes:
         analysed = sc._mask(node.content, sc.CODE_BLOCK)
@@ -54,8 +54,6 @@ def book_consistency(project: Project) -> Dict[str, Any]:
                     "detail": f"{node.title}：{sc.TOPIC_LABELS.get(topic or '', '承诺数值')}与全局事实不一致"
                               f"——正文为「{q['label']}」，全局事实为「{fact}」",
                 })
-            elif relation != "backed":
-                unbacked.add((topic, str(q["value"]), sc.scope_key(q)))
             # 跨章取值比对只看没有事实支撑的取值：与全局事实一致的是正确口径，
             # 偏离事实的按"与全局事实冲突"报，不再重复计"跨章取值不一致"
             if topic and relation == "unbacked":
@@ -86,6 +84,8 @@ def book_consistency(project: Project) -> Dict[str, Any]:
                 "detail": f"{sc.TOPIC_LABELS.get(topic, topic)}在不同章节取值不一致：{where}",
             })
 
+    verification = project_verification(project, snapshot)
     return {"sections_checked": len(nodes), "fact_conflicts": fact_conflicts,
             "value_conflicts": value_conflicts, "asset_issues": asset_issues,
-            "commitments_unbacked": len(unbacked)}
+            "commitments_unbacked": sum(v.kind == "commitment" for v in verification),
+            "verification": [v.model_dump() for v in verification], **verification_counts(verification)}

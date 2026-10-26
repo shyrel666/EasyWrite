@@ -311,6 +311,7 @@ export const api = {
     downloadPost(`/project/${id}/export`, { template_id: templateId || 'gov_standard', diagrams }, '技术标书.docx'),
   // 导出前检查清单（只提示，不阻止导出）
   exportPreflight: (id) => request(`/project/${id}/export/preflight`),
+  confirmVerification: (id, key, body) => request(`/project/${id}/verification/${encodeURIComponent(key)}`, { method: 'PUT', body }),
   deviationExportUrl: (id, templateId) =>
     `${BASE}/project/${id}/deviation/export?template_id=${templateId || 'gov_standard'}`,
 

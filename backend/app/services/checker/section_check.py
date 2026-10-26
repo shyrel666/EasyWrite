@@ -21,10 +21,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.llm_client import llm_client
 from app.models.schemas import (
-    CheckIssue, GlobalFacts, OutlineNode, PointCheck, Project, ScoringItem, SectionCheckReport, VerifyItem,
+    CheckIssue, GlobalFacts, OutlineNode, PointCheck, Project, ScoringItem, SectionCheckReport, VerifyItem, VerifyOccurrence,
 )
 from app.services.assets.material_check import MATERIAL_KINDS, asset_name
 from app.services.checker.placeholders import PLACEHOLDER, VERIFY_MARK
+from app.services.checker.verification import aggregate_verification, fingerprint, verification_counts
 from app.services.checker.quality_inspector import DE_AI_CLICHE_PATTERNS, INFORMAL_OR_WEAK_PHRASES
 from app.services.checker.scoring_coverage import is_mentioned
 from app.services.generator import rubric_planner as rp
@@ -431,6 +432,13 @@ def _check_commitments(text: str, facts: GlobalFacts) -> Tuple[List[CheckIssue],
         if topic is None and not q["committed"]:
             continue
         excerpt, line = _locate(text, q["start"], q["end"])
+        fact_key = fingerprint((topic, q["value"], q["dimension"], q.get("comparator"), scope_key(q)))
+
+        def pending(note, excerpt=excerpt, line=line, fact_key=fact_key, q=q):
+            return VerifyItem(kind="commitment", text=excerpt, line=line, note=note, fact_key=fact_key,
+                              stable_key=f"commitment:{fact_key}", basis_hash=fingerprint(facts.model_dump()),
+                              occurrences=[VerifyOccurrence(text=excerpt, line=line, start=q["start"], end=q["end"])])
+
         same_topic = [f for f in known if f["topic"] == topic] if topic else []
         relation = commitment_relation(q, known)
         if relation == "backed":
@@ -439,25 +447,23 @@ def _check_commitments(text: str, facts: GlobalFacts) -> Tuple[List[CheckIssue],
         if same_topic:
             if relation in ("stronger", "incomparable", "scope_unknown"):
                 # 优于或不劣于事实承诺：分阶段里程碑、分级时限与分级巡检常见于此，不算冲突，列入待核实
-                key = (topic, str(q["value"]), scope_key(q))
+                key = (topic, str(q["value"]), scope_key(q), q["start"])
                 if key not in seen:
                     seen.add(key)
                     note = ("不低于全局事实承诺，属分阶段/分档安排，确认后保留" if relation == "stronger"
                             else "级别、场景或主体不能映射到已确认事实，请人工核实" if relation == "scope_unknown"
                             else "与全局事实的单位不可直接比较，请核实工作日与自然日等适用口径")
-                    verify.append(VerifyItem(kind="commitment", text=excerpt, line=line,
-                                             note=f"{label}「{q['label']}」{note}"))
+                    verify.append(pending(f"{label}「{q['label']}」{note}"))
                 continue
             facts_text = "；".join(dict.fromkeys(f["fact"] for f in same_topic))
             issues.append(CheckIssue(level="blocking", code="fact_conflict", excerpt=excerpt, line=line,
                                      message=f"{label}与全局事实不一致：正文为「{q['label']}」，全局事实为「{facts_text}」"))
             continue
-        key = (topic, str(q["value"]), scope_key(q))
+        key = (topic, str(q["value"]), scope_key(q), q["start"])
         if key in seen:
             continue
         seen.add(key)
-        verify.append(VerifyItem(kind="commitment", text=excerpt, line=line,
-                                 note=f"{label}「{q['label']}」不在全局事实中，确认后写入全局事实，或改为【待填写】"))
+        verify.append(pending(f"{label}「{q['label']}」不在全局事实中，确认后写入全局事实，或改为【待填写】"))
     return issues, verify
 
 
@@ -527,8 +533,14 @@ def _check_assets(text: str, assets: Dict) -> Tuple[List[CheckIssue], List[Verif
                     issues.append(CheckIssue(level="blocking", code="example_asset", excerpt=excerpt, line=line,
                                              message=f"正文出现预设示例资料「{name}」：示例不是企业的真实资料，须删除或改为企业录入的资料"))
                 elif _marked(text, start, end, verify_spans):
+                    marked = next(((a, b) for a, b in verify_spans if a <= start < b or
+                                   (end <= a and "\n" not in text[end:a] and not re.search(r"[。；;]", text[end:a]))), (start, end))
+                    asset_key = f"{kind}:{item.get('id', fingerprint(item))}"
                     verify.append(VerifyItem(kind="unverified_asset", text=excerpt, line=line,
-                                             note=f"待核实资料「{name}」：核实后到企业资产中改为已确认"))
+                                             note=f"待核实资料「{name}」：核实后到企业资产中改为已确认",
+                                             stable_key=f"asset:{asset_key}", asset_key=asset_key,
+                                             basis_hash=fingerprint(item), source="enterprise_assets",
+                                             occurrences=[VerifyOccurrence(text=excerpt, line=line, start=min(start, marked[0]), end=max(end, marked[1]))]))
                 else:
                     issues.append(CheckIssue(level="blocking", code="unmarked_unverified", excerpt=excerpt, line=line,
                                              message=f"待核实资料「{name}」未用【待核实】标注：未经企业确认的资料只能写作【待核实：…】"))
@@ -609,13 +621,15 @@ def _check_quality(text: str, node: OutlineNode) -> List[CheckIssue]:
 
 
 def _placeholders(text: str) -> List[VerifyItem]:
-    out, seen = [], set()
+    out = []
     for m in PLACEHOLDER.finditer(text):
-        if m.group(0) in seen:
-            continue
-        seen.add(m.group(0))
         _, line = _locate(text, m.start(), m.end())
-        out.append(VerifyItem(kind="placeholder", text=m.group(0), line=line, note="占位待补齐"))
+        a, b = _clause_bounds(text, m.start(), m.end())
+        # 同文通用占位必须带业务上下文，避免把“响应【待填写】”和“工期【待填写】”合为一事。
+        context = text[a:b].strip() if m.group(0) in ("【待填写】", "【待核实】") else m.group(0)
+        out.append(VerifyItem(kind="placeholder", text=m.group(0), line=line, note="占位待补齐",
+                              stable_key=f"placeholder:{fingerprint(context)}", basis_hash=fingerprint(context),
+                              occurrences=[VerifyOccurrence(text=m.group(0), line=line, start=m.start(), end=m.end())]))
     return out
 
 
@@ -691,7 +705,8 @@ def check_section(
     asset_issues, asset_verify = _check_assets(analysed, snapshot)
     employment_issues = _check_employment(analysed, snapshot)
     issues = point_issues + commitment_issues + asset_issues + employment_issues + _check_quality(text, node)
-    verify = commitment_verify + asset_verify + _placeholders(text)
+    verify = aggregate_verification(commitment_verify + asset_verify + _placeholders(analysed), node.id, node.title,
+                                    project.verification_decisions)
 
     if llm_review:
         llm_issues, state, note = _llm_review(project, text, evidence)
@@ -703,6 +718,8 @@ def check_section(
 
     report.issues = issues
     report.pending_verification = verify
+    totals = verification_counts(verify)
+    report.verification_count, report.verification_occurrences = totals["item_count"], totals["occurrence_count"]
     report.points = points
     report.blocking_count = sum(1 for i in issues if i.level == "blocking")
     report.quality_count = sum(1 for i in issues if i.level == "quality")

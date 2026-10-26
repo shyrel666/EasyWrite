@@ -10,6 +10,8 @@ from app.models.schemas import (
 from app.services.project_store import find_node, merge_outline, project_store
 from app.services.proposals import proposal_store
 from app.services.version_store import version_store
+from app.services.checker.verification import project_verification, verification_counts
+from app.services.project_store import now_str
 
 router = APIRouter(tags=["项目管理"])
 
@@ -52,6 +54,27 @@ def update_project_facts(project_id: str, facts: GlobalFacts):
 
     project_store.update(project_id, mutate)
     return {"status": "success", "facts": facts}
+
+
+@router.get("/project/{project_id}/verification", summary="全书核实事项与全部定位")
+def get_verification(project_id: str):
+    rows = project_verification(_get_or_404(project_id))
+    return {"items": rows, **verification_counts(rows)}
+
+
+@router.put("/project/{project_id}/verification/{stable_key}", summary="记录核实结论，依据变化后失效；不替代资料或事实的确认")
+def confirm_verification(project_id: str, stable_key: str, basis_hash: str = Body(...), note: str = Body(...)):
+    if not note.strip():
+        raise HTTPException(400, "请填写核实结论及依据")
+
+    def mutate(project):
+        item = next((v for v in project_verification(project) if v.stable_key == stable_key), None)
+        if not item or item.basis_hash != basis_hash:
+            raise HTTPException(409, "事项或依据已变化，请重新检查")
+        project.verification_decisions[stable_key] = {"basis_hash": basis_hash, "note": note.strip(), "at": now_str()}
+        return project.verification_decisions[stable_key]
+
+    return project_store.update(project_id, mutate)
 
 
 @router.put("/project/{project_id}/outline", summary="人工编辑保存大纲树（结构、标题、字数预算；已有章节的正文与状态以服务端为准）")

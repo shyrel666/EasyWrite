@@ -1,4 +1,5 @@
 <script setup>
+import VerificationList from '@/components/evidence/VerificationList.vue'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAiStore } from '@/stores/ai'
@@ -376,6 +377,7 @@ async function exportWord() {
           </div>
         </div>
         <p class="hint mt-1.5">清单只作提示，不影响导出。</p>
+        <VerificationList :project-id="projectId" :items="preflight?.verification || []" @locate="locateSection" @changed="loadPreflight" />
       </section>
 
       <p class="text-xs text-ink-2 mb-3">选择排版模板（字体、主题色、页边距与页眉），可在「排版模板」中自定义。导出含封面、目录域与页码。</p>

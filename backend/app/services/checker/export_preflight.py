@@ -11,6 +11,7 @@ from app.services.assets.evidence import evidence_report
 from app.services.assets.material_check import COMPLETE
 from app.services.checker.book_consistency import book_consistency
 from app.services.checker.placeholders import PLACEHOLDER
+from app.services.checker.verification import project_verification, verification_counts
 
 MAX_DETAILS = 50
 OK, WARN, UNKNOWN = "ok", "warn", "unknown"
@@ -43,17 +44,29 @@ def _unwritten(leaves: List[OutlineNode]) -> Dict[str, Any]:
                   f"{len(empty)} 个章节尚未撰写" if empty else "全部章节都已有正文", empty)
 
 
-def _placeholders(nodes: List[OutlineNode]) -> Dict[str, Any]:
+def _placeholders(nodes: List[OutlineNode], verification) -> Dict[str, Any]:
     details, total = [], 0
+    by_section = {}
+    item_keys = set()
+    node_map = {n.id: n for n in nodes}
+    for v in verification:
+        for o in v.occurrences:
+            node = node_map.get(o.section_id)
+            if node is None or o.start is None or o.end is None:
+                continue
+            if PLACEHOLDER.search(node.content[o.start:o.end]):
+                by_section.setdefault(node.id, []).append(node.content[o.start:o.end])
+                item_keys.add(v.stable_key)
     for n in nodes:
-        found = PLACEHOLDER.findall(n.content)
+        found = by_section.get(n.id, [])
         if found:
             total += len(found)
             samples = list(dict.fromkeys(found))[:3]
             details.append(_detail(n.title, f"{len(found)} 处：{'、'.join(samples)}", n.id))
-    return _check("placeholders", "剩余【待填写】/【待核实】占位", WARN if total else OK,
+    result = _check("placeholders", "剩余【待填写】/【待核实】占位", WARN if total else OK,
                   f"{len(details)} 个章节共 {total} 处占位，导出前补齐或确认" if total else "正文中没有占位",
                   details, count=total)
+    return {**result, "item_count": len(item_keys), "occurrence_count": total}
 
 
 def _unverified_assets(nodes: List[OutlineNode]) -> Dict[str, Any]:
@@ -147,9 +160,10 @@ def _deviation_pending(project: Project) -> Dict[str, Any]:
 def build_preflight(project: Project, latest_compliance: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     nodes = _flatten(project.outline)
     leaves = [n for n in nodes if not n.children]
+    verification = project_verification(project)
     checks = [
         _unwritten(leaves),
-        _placeholders(nodes),
+        _placeholders(nodes, verification),
         _unverified_assets(nodes),
         _book_consistency(project),
         _material(project),
@@ -158,4 +172,8 @@ def build_preflight(project: Project, latest_compliance: Optional[Dict[str, Any]
         _deviation_pending(project),
     ]
     attention = sum(1 for c in checks if c["status"] != OK)
-    return {"checks": checks, "attention": attention, "ready": attention == 0}
+    totals = verification_counts(verification)
+    if totals["item_count"]:
+        checks[1]["message"] += f"；全书待核实 {totals['item_count']} 项 / {totals['occurrence_count']} 处"
+    return {"checks": checks, "attention": attention, "ready": attention == 0,
+            "verification": [v.model_dump() for v in verification], "verification_counts": totals}

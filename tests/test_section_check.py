@@ -176,7 +176,8 @@ def test_example_and_unmarked_unverified_assets_are_blocking(project, client):
     marked = "技术负责人【待核实：李建国，PMP证书】负责实施。"
     r = _check(project, "sec_2", marked)
     assert "unmarked_unverified" not in _codes(r)
-    assert {v.kind for v in r.pending_verification} == {"unverified_asset", "placeholder"}
+    assert {v.kind for v in r.pending_verification} == {"unverified_asset"}
+    assert r.verification_count == r.verification_occurrences == 1
 
     # 示例清空后同名文本不再报示例资料
     client.delete("/api/v1/assets/examples")

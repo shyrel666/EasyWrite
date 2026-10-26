@@ -22,7 +22,7 @@ const missingPoints = computed(() => (props.report?.points || []).filter((p) => 
     <div class="flex flex-wrap items-center gap-2">
       <span class="chip" :class="verdict.chip">{{ verdict.label }}</span>
       <span class="chip chip-warn" :class="{ 'chip-mute': !report.quality_count }">质量问题 {{ report.quality_count }}</span>
-      <span class="chip chip-mute">待核实 {{ report.pending_verification.length }}</span>
+      <span class="chip chip-mute">待核实 {{ report.verification_count ?? report.pending_verification.length }} 项 / {{ report.verification_occurrences ?? report.pending_verification.length }} 处</span>
       <span class="num text-ink-3">
         {{ report.char_count }} 字<template v-if="report.word_budget"> / 预算 {{ report.word_budget }}</template>
       </span>
@@ -85,6 +85,11 @@ const missingPoints = computed(() => (props.report?.points || []).filter((p) => 
             @click="locatable && emit('locate', { excerpt: v.text, line: v.line })"
           >{{ v.text }}</button>
           <span v-if="v.note && v.kind !== 'placeholder'" class="block text-2xs text-ink-3">{{ v.note }}</span>
+          <p v-if="v.decision_state === 'stale'" class="text-warn">核实依据已变化，原结论失效</p>
+          <p v-else-if="v.decision_state === 'confirmed'" class="text-ink-3">已记录核实结论：{{ v.decision_note }}（正文占位仍须补齐）</p>
+          <ul v-if="v.occurrences?.length" class="pl-3 text-2xs space-y-1">
+            <li v-for="(o, k) in v.occurrences" :key="k"><button type="button" :disabled="!locatable" class="text-accent-fg text-left" @click="emit('locate', { excerpt: o.text, line: o.line, start: o.start, end: o.end })">{{ o.section_title }} 第 {{ o.line }} 行：{{ o.text }}</button></li>
+          </ul>
         </li>
       </ul>
     </section>

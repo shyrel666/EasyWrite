@@ -306,6 +306,7 @@ function onReviseFailed(task) {
               <span class="chip chip-warn mr-1">{{ VERIFY_KIND[v.kind] || v.kind }}</span>
               <span class="text-ink-2">{{ v.text }}</span>
               <span v-if="v.note && v.kind !== 'placeholder'" class="block text-2xs text-ink-3">{{ v.note }}</span>
+              <ul v-if="v.occurrences?.length" class="text-2xs text-ink-3 pl-3"><li v-for="(o, k) in v.occurrences" :key="k">{{ o.section_title }} 第 {{ o.line }} 行：{{ o.text }}</li></ul>
             </li>
           </ul>
         </div>
