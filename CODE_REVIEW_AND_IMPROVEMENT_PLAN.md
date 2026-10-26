@@ -23,7 +23,7 @@
 | P0-7 | 导出、回填等操作未可靠等待保存 | 已修复 | `7e0b130` | pytest 446；Vitest 101；ruff、build 通过 |
 | P0-8 | 修改正文后沿用已校审状态 | 已修复 | `3d1e954` | pytest 454；Vitest 102；ruff、build 通过 |
 | P0-9 | 历史示例分类误伤及清理边界 | 已修复 | `bc9d583` | pytest 466；Vitest 104；ruff、build 通过 |
-| P0-10 | 同名 Word 导出覆盖和文件生命周期 | 已修复 | 本项提交，见 git log | pytest 476；Vitest 104；ruff、build 通过 |
+| P0-10 | 同名 Word 导出覆盖和文件生命周期 | 已修复 | `3910372` | pytest 476；Vitest 104；ruff、build 通过 |
 
 ### P0-1：偏离表应忠实表达实际能力
 
@@ -101,7 +101,7 @@
 
 ### P0-10：Word 导出文件隔离
 
-已按下述方案实施；新增 `tests/test_export_isolation.py` 的 10 项回归，覆盖实际并发下载及文件清理。
+已按下述方案实施；新增 [tests/test_export_isolation.py](<D:/Pycharm Project/EasyWrite/tests/test_export_isolation.py>) 的 10 项回归，覆盖实际并发下载及文件清理。
 
 - **风险 / ROI：高 / 高。** 物理文件名只由项目名决定，不同项目同名或同项目并发导出会覆盖；FileResponse 发送时可能读到另一请求内容。
 - **代码定位：** [backend/app/services/exporter/docx_generator.py · export_project_to_docx](<D:/Pycharm Project/EasyWrite/backend/app/services/exporter/docx_generator.py:750>)、[backend/app/services/exporter/docx_generator.py · export_deviation_table](<D:/Pycharm Project/EasyWrite/backend/app/services/exporter/docx_generator.py:782>)、[backend/app/api/export.py · _export_bid](<D:/Pycharm Project/EasyWrite/backend/app/api/export.py:46>)。
