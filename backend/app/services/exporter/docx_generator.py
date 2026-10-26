@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 from docx import Document
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
+from docx.enum.section import WD_ORIENT, WD_SECTION_START
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import nsdecls, qn
 from docx.shared import Cm, Emu, Pt, RGBColor
@@ -18,6 +19,7 @@ from app.core.config import settings
 from app.models.schemas import DeviationItem, GlobalFacts, OutlineNode
 from app.services.exporter.diagram_renderer import diagram_renderer
 from app.services.exporter.scoring_index import bookmark, bookmark_name, pageref
+from app.services.exporter.diagram_spec import diagram_parts
 
 # 与前端预览（markdown-it，breaks: true）同一套解析规则；不解析内联 HTML
 _MD = MarkdownIt("commonmark", {"html": False, "breaks": True}).enable(["table", "strikethrough"])
@@ -635,6 +637,17 @@ class DocxBidExporter:
         仍不行则放代码插槽，绝不画与代码无关的图。图题按全文顺序编号。
         """
         title, body = _split_mermaid_title(mermaid_code)
+        parts = diagram_parts(body)
+        if parts:
+            for part in parts:
+                self._render_mermaid_block(ctx, part['code'], (title or section_title) + ' ' + part['title'])
+                ctx.doc.paragraphs[-1].paragraph_format.keep_with_next = True
+                p = ctx.doc.add_paragraph(part['legend'])
+                p.paragraph_format.first_line_indent = Pt(0)
+                if part['connections']:
+                    p.paragraph_format.keep_with_next = True
+                    ctx.doc.add_paragraph('跨图连接：' + '；'.join(part['connections']))
+            return
         # 图题：元数据 title 优先，否则用所属章节标题（去掉「第一章」「1.1」等编号）
         section_name = re.sub(r"^(?:第[一二三四五六七八九十百\d]+[章节篇部]|\d+(?:\.\d+)*[.、]?)\s*", "", section_title or "")
         caption_title = title or section_name or "系统架构图"
@@ -646,6 +659,16 @@ class DocxBidExporter:
         ctx.figure_no += 1
         caption = f"图 {ctx.figure_no}  {caption_title}"
         if image:
+            from PIL import Image
+            with Image.open(io.BytesIO(image)) as im:
+                wide = im.width / im.height > 1.8 and im.width > 1200
+                pixels = im.size
+            previous = ctx.doc.sections[-1]
+            layout = (previous.page_width, previous.page_height, previous.orientation)
+            if wide:
+                section = ctx.doc.add_section(WD_SECTION_START.NEW_PAGE)
+                section.orientation = WD_ORIENT.LANDSCAPE
+                section.page_width, section.page_height = max(layout[:2]), min(layout[:2])
             p_img = ctx.doc.add_paragraph()
             p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
             p_img.paragraph_format.first_line_indent = Pt(0)
@@ -655,6 +678,13 @@ class DocxBidExporter:
             width, height = self._picture_size(ctx, image)
             p_img.add_run().add_picture(io.BytesIO(image), width=Emu(width), height=Emu(height) if height else None)
             self._add_caption(ctx, caption)
+            estimated_font = 32 * (width / _EMU_PER_INCH) * 72 / pixels[0]
+            if estimated_font < 8:
+                note = ctx.doc.add_paragraph('【图中文字可能小于 8 磅，请按逻辑层继续拆图并人工复核】')
+                note.paragraph_format.first_line_indent = Pt(0)
+            if wide:
+                section = ctx.doc.add_section(WD_SECTION_START.NEW_PAGE)
+                section.page_width, section.page_height, section.orientation = layout
             return
 
         # 降级：带底纹的代码插槽，提示在 Word 中替换为正式图

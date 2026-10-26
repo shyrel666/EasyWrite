@@ -1,5 +1,6 @@
 import re
 import uuid
+import textwrap
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple
 import matplotlib
@@ -7,6 +8,7 @@ matplotlib.use('Agg')  # 无头模式
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from app.core.config import settings
+from app.services.exporter.diagram_spec import parse_spec
 
 # 中文字体兼容配置
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'SimSun', 'DejaVu Sans']
@@ -96,7 +98,10 @@ class DiagramRenderer:
         将 Mermaid 代码渲染为一张高保真技术拓扑图片并返回文件路径
         """
         try:
-            nodes, edges = self._parse_mermaid(mermaid_code)
+            spec = parse_spec(mermaid_code)
+            if spec is None:
+                return None
+            nodes, edges = spec.nodes, spec.edges
             if not nodes:
                 return None
 
@@ -133,9 +138,12 @@ class DiagramRenderer:
                 layers.append(next_layer)
                 visited.update(next_layer)
 
+            layers = [layer[i:i + 3] for layer in layers for i in range(0, len(layer), 3)]
+
             # 绘图初始化
-            fig_width = max(8.5, len(max(layers, key=len)) * 2.8)
-            fig_height = max(5.5, len(layers) * 1.8)
+            fig_width = 7.0
+            max_lines = max(len(textwrap.wrap(label, 10)) for label in nodes.values())
+            fig_height = max(2.5, len(layers) * max(0.85, max_lines * 0.24 + 0.45))
             fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=200)
             ax.set_facecolor("#FFFFFF")
             fig.patch.set_facecolor("#FFFFFF")
@@ -143,21 +151,25 @@ class DiagramRenderer:
             # 计算各节点绘制中心坐标 (x, y)
             positions: Dict[str, Tuple[float, float]] = {}
             total_layers = len(layers)
+            pitch = 0.80 / max(1, total_layers)
+            card_height = pitch * 0.60
+            padding = pitch * 0.04
+            arrow_offset = card_height / 2 + padding
 
             for l_idx, layer in enumerate(layers):
-                y = 0.90 - (l_idx / max(1, total_layers - 0.5)) * 0.75
+                y = 0.90 - l_idx * pitch
                 layer_count = len(layer)
                 for n_idx, nid in enumerate(layer):
                     x = (n_idx + 1) / (layer_count + 1)
                     positions[nid] = (x, y)
 
             # 绘制连线与箭头
-            for u, v, _ in edges:
+            for u, v, edge_label in edges:
                 if u in positions and v in positions:
                     x1, y1 = positions[u]
                     x2, y2 = positions[v]
                     arrow = patches.FancyArrowPatch(
-                        (x1, y1 - 0.05), (x2, y2 + 0.05),
+                        (x1, y1 - arrow_offset), (x2, y2 + arrow_offset),
                         arrowstyle='-|>',
                         mutation_scale=14,
                         linewidth=1.8,
@@ -165,41 +177,40 @@ class DiagramRenderer:
                         connectionstyle="arc3,rad=0.0"
                     )
                     ax.add_patch(arrow)
+                    if edge_label:
+                        ax.text((x1 + x2) / 2, (y1 + y2) / 2, edge_label, fontsize=9, ha='center', backgroundcolor='white')
 
             # 绘制节点卡片
-            for i, nid in enumerate(node_ids):
+            for nid in node_ids:
                 if nid not in positions:
                     continue
                 x, y = positions[nid]
                 label = nodes[nid]
-                col = self.THEME_COLORS[i % len(self.THEME_COLORS)]
+                col = self.THEME_COLORS[3]
 
                 # 绘制阴影底框
                 shadow = patches.FancyBboxPatch(
-                    (x - 0.12 + 0.003, y - 0.04 - 0.003), 0.24, 0.08,
-                    boxstyle="round,pad=0.015,rounding_size=0.02",
+                    (x - 0.12 + 0.003, y - card_height / 2 - 0.003), 0.24, card_height,
+                    boxstyle=f"round,pad={padding},rounding_size={padding}",
                     fc="#E2E8F0", ec="none", zorder=2
                 )
                 ax.add_patch(shadow)
 
                 # 绘制主卡片框
                 rect = patches.FancyBboxPatch(
-                    (x - 0.12, y - 0.04), 0.24, 0.08,
-                    boxstyle="round,pad=0.015,rounding_size=0.02",
+                    (x - 0.12, y - card_height / 2), 0.24, card_height,
+                    boxstyle=f"round,pad={padding},rounding_size={padding}",
                     fc=col["box"], ec=col["border"], lw=1.6, zorder=3
                 )
                 ax.add_patch(rect)
 
                 # 填入文字（自动换行）
-                if len(label) > 12:
-                    display_text = label[:10] + "\n" + label[10:22]
-                else:
-                    display_text = label
+                display_text = '\n'.join(textwrap.wrap(label, 10))
 
                 ax.text(
                     x, y, display_text,
                     ha='center', va='center',
-                    fontsize=10.5,
+                    fontsize=12,
                     fontweight='bold',
                     color=col["text"],
                     zorder=4

@@ -118,8 +118,9 @@
 | P1-2 | 已实施 | `d1a406b` | pytest 64；Vitest 106；ruff、build 通过 |
 | P1-3 | 已实施 | `f137893` | pytest 75；Vitest 108；ruff、build 通过 |
 | P1-4 | 已实施 | `189db5a` | pytest 25；Vitest 109；ruff、build；Word 4 页渲染核对 |
-| P1-5 | 已实施 | 本项提交 `feat(export): compile verified evidence attachments with page plans and index links` | pytest 39；Vitest 110；ruff、build；Word 6 页渲染核对 |
-| P1-6～P1-8 | 待实施 | — | — |
+| P1-5 | 已实施 | `f581f5b` | pytest 39；Vitest 110；ruff、build；Word 6 页渲染核对 |
+| P1-6 | 已实施 | 本项提交 `feat(diagrams): split dense graphs and check export readability` | pytest 15；Vitest 111；ruff、build；Word 10/30/60 节点图核对 |
+| P1-7～P1-8 | 待实施 | — | — |
 | P2-1～P2-3 | 待实施 | — | — |
 
 ### P1-1：分级事实模型与招标要求分离
@@ -174,6 +175,9 @@
 - **验证：** pytest 覆盖多页 PDF 顺序、横向扫描件、损坏附件、缺页、跨评分项共用附件、主体不符、附件指纹变更和受控路径；Vitest 验证附件选择/排序/缺口提示；渲染 Word 后人工检查可读性、分页和无裁切。
 
 ### P1-6：图表有语义规范和可读性检查
+
+- **已实施（2026-10-26）：** 提示词按图类列出语义要求，结构化解析节点、连线、逻辑组、标题与图例；超过 10 节点时按组拆分，保留跨图连接说明。浏览器 PNG 固定中性主题并限制像素；离线仅处理可无损解析的流程图。宽图切换横向页后恢复原页式，失败保留插槽，预检提示密度、长标签和复杂语法。图、题注、图例及跨图说明保持同页。
+- **验证记录：** 15 项 pytest、111 项 Vitest、ruff、build 通过。Word 16.0 更新域后，10/30/60 节点样本分别 3/6/9 页，逐页检查并修正了 10 节点框重叠及图例孤页；节点、箭头与跨图连线说明完整。复杂语法仍需浏览器实际渲染及人工核对，不用降级图猜测其语义。
 
 - **风险 / ROI：中 / 高。** 已支持 Mermaid 真渲染与本地降级，不能称“没有架构图”；薄弱点是复杂图的层级、密度、图例与 Word 内文字尺寸，不能只按图片缩放解决。
 - **定位：** [backend/app/services/generator/section_generator.py · build_prompts](<D:/Pycharm Project/EasyWrite/backend/app/services/generator/section_generator.py:140>)、[backend/app/services/exporter/docx_generator.py · _picture_size](<D:/Pycharm Project/EasyWrite/backend/app/services/exporter/docx_generator.py:615>)、[backend/app/services/exporter/docx_generator.py · _render_mermaid_block](<D:/Pycharm Project/EasyWrite/backend/app/services/exporter/docx_generator.py:630>)。

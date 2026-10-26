@@ -16,6 +16,7 @@ from app.services.exporter.template_manager import template_manager
 from app.services.exporter.scoring_index import scoring_index_rows
 from app.models.schemas import EvidenceAppendixEntry
 from app.services.exporter.evidence_appendix import AppendixError, appendix_options, prepare_appendices
+from app.services.exporter.diagram_spec import diagram_checks
 
 router = APIRouter(tags=["模板与导出"])
 
@@ -96,7 +97,7 @@ def export_preflight(project_id: str):
         raise HTTPException(status_code=404, detail="项目不存在")
     latest = task_manager.list(1, project_id=project_id, task_type="compliance_check", with_result=True)
     return {**build_preflight(project, latest[0] if latest else None), "scoring_index": scoring_index_rows(project),
-            "appendix_options": appendix_options(project)}
+            "appendix_options": appendix_options(project), "diagram_checks": diagram_checks(project.outline)}
 
 
 @router.get("/project/{project_id}/export", summary="导出项目为高保真技术标书 Word（含目录与页码；架构图由服务端简化渲染）")

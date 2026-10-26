@@ -6,14 +6,18 @@
 import mermaid from 'mermaid'
 import MarkdownIt from 'markdown-it'
 
+export function configureMermaid(theme = 'neutral') {
 mermaid.initialize({
   startOnLoad: false,
-  theme: 'neutral',
+  theme,
   securityLevel: 'loose',
   fontFamily: '"Microsoft YaHei", "PingFang SC", sans-serif',
   htmlLabels: false,
   flowchart: { htmlLabels: false },
+  themeVariables: { fontSize: '16px' },
 })
+}
+configureMermaid()
 
 export default mermaid
 
@@ -44,12 +48,14 @@ export async function renderMermaidSvg(code) {
  * Mermaid 代码 → PNG data URL（白底，scale 倍像素，后端按 2 倍像素换算 Word 中的尺寸）
  */
 export async function renderMermaidPng(code, scale = 2) {
+  configureMermaid('neutral') // Word 始终采用白底中性主题，不随应用深色主题改变
   const svg = await renderMermaidSvg(code)
   const svgDoc = new DOMParser().parseFromString(svg, 'image/svg+xml')
   const el = svgDoc.documentElement
   const viewBox = (el.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number)
   const width = Math.ceil(viewBox[2] || parseFloat(el.getAttribute('width')) || 800)
   const height = Math.ceil(viewBox[3] || parseFloat(el.getAttribute('height')) || 600)
+  if (width * height * scale * scale > 24000000 || width <= 0 || height <= 0) throw new Error('图表过密，请按逻辑层拆图')
   el.setAttribute('width', String(width))
   el.setAttribute('height', String(height))
   el.removeAttribute('style') // 去掉 max-width 等响应式样式，按真实尺寸绘制

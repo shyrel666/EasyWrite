@@ -324,6 +324,16 @@ class EvidenceAppendixPlan(BaseModel):
     entries: List[EvidenceAppendixEntry] = Field(default_factory=list, max_length=100)
 
 
+class DiagramSpec(BaseModel):
+    title: str = ""
+    kind: Literal["architecture", "network", "deployment", "flow"] = "flow"
+    nodes: Dict[str, str] = Field(default_factory=dict)
+    edges: List[List[str]] = Field(default_factory=list)
+    groups: Dict[str, List[str]] = Field(default_factory=dict)
+    legend: str = "箭头表示原图定义的连接方向；跨图连接见图下注释。"
+    theme: str = "neutral"
+
+
 # 资质、人员、业绩三类资料的证明字段：附件、所属主体、确认时间。
 # attachments 只经附件接口增删，保存资料时服务端保留原值；confirmed_at 由服务端在资料改为"已确认"时记录
 ATTACHMENTS_FIELD = dict(default_factory=list, description="证明附件（只经附件接口增删）")

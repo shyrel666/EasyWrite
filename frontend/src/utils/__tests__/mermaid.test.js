@@ -43,3 +43,20 @@ describe('Mermaid 代码块提取', () => {
     expect(progress).toEqual([[1, 2], [2, 2]])
   })
 })
+
+it('长标签完整传给渲染器，导出使用中性主题并输出 PNG', async () => {
+  const { default: mermaid, configureMermaid, renderMermaidPng } = await import('@/utils/mermaid')
+  configureMermaid('dark')
+  expect(mermaid.initialize).toHaveBeenLastCalledWith(expect.objectContaining({ theme: 'dark' }))
+  mermaid.render.mockResolvedValueOnce({ svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 200"><text>长标签</text></svg>' })
+  const previousImage = globalThis.Image
+  globalThis.Image = class { async decode() {} }
+  const context = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ fillRect: vi.fn(), scale: vi.fn(), drawImage: vi.fn() })
+  const output = vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,test')
+  try {
+    const code = 'graph TD\nA[完整保留的非常长的业务节点标签不能被截断] --> B[终点]'
+    expect(await renderMermaidPng(code)).toBe('data:image/png;base64,test')
+    expect(mermaid.render).toHaveBeenLastCalledWith(expect.any(String), code)
+    expect(mermaid.initialize).toHaveBeenLastCalledWith(expect.objectContaining({ theme: 'neutral' }))
+  } finally { globalThis.Image = previousImage; context.mockRestore(); output.mockRestore() }
+})

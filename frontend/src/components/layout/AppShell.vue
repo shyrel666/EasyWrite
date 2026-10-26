@@ -381,6 +381,7 @@ async function exportWord() {
         </div>
         <p class="hint mt-1.5">清单只作提示，不影响导出。</p>
         <VerificationList :project-id="projectId" :items="preflight?.verification || []" @locate="locateSection" @changed="loadPreflight" />
+        <ul v-if="preflight?.diagram_checks?.length" class="note note-warn mt-2 text-xs"><li v-for="(d, i) in preflight.diagram_checks" :key="i"><button class="text-accent-fg" @click="locateSection(d.section_id)">{{ d.title }}</button>：{{ d.detail }}</li></ul>
       </section>
 
       <p class="text-xs text-ink-2 mb-3">选择排版模板（字体、主题色、页边距与页眉），可在「排版模板」中自定义。导出含封面、目录域与页码。</p>

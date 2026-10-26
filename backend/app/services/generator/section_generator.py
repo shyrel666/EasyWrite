@@ -17,6 +17,7 @@ from typing import Dict, Any, List, Optional, AsyncGenerator, Tuple
 from app.core.llm_client import llm_client
 from app.models.schemas import OutlineNode, GlobalFacts, Project
 from app.services.generator.evidence_set import EvidenceSet
+from app.services.exporter.diagram_spec import DIAGRAM_DISCIPLINE
 
 logger = logging.getLogger("easywrite.section")
 
@@ -233,6 +234,7 @@ class SectionGenerator:
 【当前待撰写章节】：{section_title}
 【完整大纲路径】：{section_path or section_title}
 {budget_line}
+{DIAGRAM_DISCIPLINE}
 
 【本章节须响应的招标要点/评分项】：
 {req_lines}
