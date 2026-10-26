@@ -116,8 +116,9 @@
 |---|---|---|---|
 | P1-1 | 已实施 | `7f7cc4a` | pytest 59；Vitest 105；ruff、build 通过 |
 | P1-2 | 已实施 | `d1a406b` | pytest 64；Vitest 106；ruff、build 通过 |
-| P1-3 | 已实施 | 本项提交 `feat(checker): unify verification identities counts and evidence-bound decisions` | pytest 75；Vitest 108；ruff、build 通过 |
-| P1-4～P1-8 | 待实施 | — | — |
+| P1-3 | 已实施 | `f137893` | pytest 75；Vitest 108；ruff、build 通过 |
+| P1-4 | 已实施 | 本项提交 `feat(export): add native scoring response index and dynamic page references` | pytest 25；Vitest 109；ruff、build；Word 4 页渲染核对 |
+| P1-5～P1-8 | 待实施 | — | — |
 | P2-1～P2-3 | 待实施 | — | — |
 
 ### P1-1：分级事实模型与招标要求分离
@@ -152,6 +153,9 @@
 - **验证：** pytest 覆盖同一资产多处出现、资产标签与占位重合、同文不同主体、多个相同数值但不同级别、跨章合并；Vitest 验证事项计数和定位列表，保留所有整改位置。
 
 ### P1-4：自动生成评分标准响应索引表
+
+- **已实施（2026-10-26）：** 目录后生成原生评分索引，按目标分包和评分项 ID 映射全部章节，未承接显示待补。章节与索引条目使用唯一书签，页码为 PAGEREF 域，表头设置跨页重复；附件尚未编入时明确显示“未编入”，不伪造页码。导出弹窗提供开关和预览，GET/POST 导出均支持。
+- **验证记录：** 评分索引、Word 保真、隔离与模板回归共 25 项 pytest；Vitest 全量 109 项；ruff、构建通过。本机 Word 16.0 更新目录及页码域后生成 4 页 PDF，逐页检查 PNG；索引两处 PAGEREF 均为实际第 4 页。QA 位于本机忽略目录 `downloads/improvement-qa/render-p1-4`。多页长表压力样本随 P2-3 交付门禁继续核验。
 
 - **风险 / ROI：中 / 很高。** 当前导出只有封面、目录和正文，未将评分项及章节映射形成专家快速定位表。
 - **定位：** [backend/app/services/exporter/docx_generator.py · export_project_to_docx](<D:/Pycharm Project/EasyWrite/backend/app/services/exporter/docx_generator.py:750>)、[backend/app/models/schemas.py · OutlineNode](<D:/Pycharm Project/EasyWrite/backend/app/models/schemas.py:8>)、[backend/app/api/export.py · _export_bid](<D:/Pycharm Project/EasyWrite/backend/app/api/export.py:46>)。

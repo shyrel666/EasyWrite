@@ -13,6 +13,7 @@ from app.services.checker.export_preflight import build_preflight
 from app.services.project_store import project_store
 from app.services.exporter.docx_generator import docx_exporter
 from app.services.exporter.template_manager import template_manager
+from app.services.exporter.scoring_index import scoring_index_rows
 
 router = APIRouter(tags=["模板与导出"])
 
@@ -30,6 +31,7 @@ class DiagramImage(BaseModel):
 class ExportRequest(BaseModel):
     template_id: str = "gov_standard"
     diagrams: List[DiagramImage] = Field(default_factory=list)
+    include_scoring_index: bool = True
 
 
 def _decode_png(data: str) -> Optional[bytes]:
@@ -43,7 +45,8 @@ def _decode_png(data: str) -> Optional[bytes]:
     return raw
 
 
-def _export_bid(project_id: str, template_id: Optional[str], diagrams: Optional[Dict[str, bytes]] = None):
+def _export_bid(project_id: str, template_id: Optional[str], diagrams: Optional[Dict[str, bytes]] = None,
+                include_scoring_index: bool = True):
     project = project_store.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -54,6 +57,7 @@ def _export_bid(project_id: str, template_id: Optional[str], diagrams: Optional[
         facts=project.facts,
         style_cfg=template_manager.get_template(template_id or "gov_standard"),
         diagrams=diagrams,
+        scoring_index=scoring_index_rows(project) if include_scoring_index else None,
     )
     return FileResponse(path=str(out_path), filename=docx_exporter.download_name(project.name), media_type=DOCX_MEDIA_TYPE,
                         background=BackgroundTask(out_path.unlink, missing_ok=True))
@@ -83,12 +87,12 @@ def export_preflight(project_id: str):
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
     latest = task_manager.list(1, project_id=project_id, task_type="compliance_check", with_result=True)
-    return build_preflight(project, latest[0] if latest else None)
+    return {**build_preflight(project, latest[0] if latest else None), "scoring_index": scoring_index_rows(project)}
 
 
 @router.get("/project/{project_id}/export", summary="导出项目为高保真技术标书 Word（含目录与页码；架构图由服务端简化渲染）")
-def export_project_bid(project_id: str, template_id: Optional[str] = "gov_standard"):
-    return _export_bid(project_id, template_id)
+def export_project_bid(project_id: str, template_id: Optional[str] = "gov_standard", include_scoring_index: bool = True):
+    return _export_bid(project_id, template_id, include_scoring_index=include_scoring_index)
 
 
 @router.post("/project/{project_id}/export", summary="导出技术标书 Word，附带前端用 Mermaid 渲染好的架构图图片")
@@ -101,7 +105,7 @@ def export_project_bid_with_diagrams(project_id: str, req: ExportRequest):
         if raw is None:
             raise HTTPException(status_code=400, detail="架构图图片不是有效的 PNG（或超过 8MB）")
         diagrams[item.code] = raw
-    return _export_bid(project_id, req.template_id, diagrams)
+    return _export_bid(project_id, req.template_id, diagrams, req.include_scoring_index)
 
 
 @router.get("/project/{project_id}/deviation/export", summary="单独导出技术偏离表 Word（原生表格）")

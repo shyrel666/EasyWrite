@@ -307,8 +307,8 @@ export const api = {
   templates: () => request('/templates/list'),
   createTemplate: (data) => request('/templates/create', { method: 'POST', body: data }),
   // diagrams：前端用 Mermaid 渲染好的架构图 [{code, image}]
-  exportBid: (id, templateId, diagrams) =>
-    downloadPost(`/project/${id}/export`, { template_id: templateId || 'gov_standard', diagrams }, '技术标书.docx'),
+  exportBid: (id, templateId, diagrams, options = {}) =>
+    downloadPost(`/project/${id}/export`, { template_id: templateId || 'gov_standard', diagrams, ...options }, '技术标书.docx'),
   // 导出前检查清单（只提示，不阻止导出）
   exportPreflight: (id) => request(`/project/${id}/export/preflight`),
   confirmVerification: (id, key, body) => request(`/project/${id}/verification/${encodeURIComponent(key)}`, { method: 'PUT', body }),

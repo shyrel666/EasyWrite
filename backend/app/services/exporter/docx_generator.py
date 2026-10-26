@@ -17,6 +17,7 @@ from markdown_it import MarkdownIt
 from app.core.config import settings
 from app.models.schemas import DeviationItem, GlobalFacts, OutlineNode
 from app.services.exporter.diagram_renderer import diagram_renderer
+from app.services.exporter.scoring_index import bookmark, bookmark_name, pageref
 
 # 与前端预览（markdown-it，breaks: true）同一套解析规则；不解析内联 HTML
 _MD = MarkdownIt("commonmark", {"html": False, "breaks": True}).enable(["table", "strikethrough"])
@@ -139,6 +140,7 @@ class _ExportContext:
         self.numbering = _Numbering(doc)
         self.figure_no = 0
         self.table_no = 0
+        self.bookmark_no = 0
 
     @property
     def text_width_emu(self) -> int:
@@ -756,6 +758,7 @@ class DocxBidExporter:
         style_cfg: Optional[DocxStyleConfig] = None,
         output_filename: Optional[str] = None,
         diagrams: Optional[Dict[str, bytes]] = None,
+        scoring_index: Optional[List[dict]] = None,
     ) -> Path:
         """
         导出整本技术标书为标准 Word 文档。
@@ -766,9 +769,13 @@ class DocxBidExporter:
         ctx = _ExportContext(doc, cfg, diagrams)
         self._add_cover_page(doc, project_name, client_name, facts or GlobalFacts())
         self._add_toc(doc)
+        if scoring_index:
+            self._add_scoring_index(ctx, scoring_index)
 
         def render_node(node: OutlineNode):
             self._add_heading(ctx, node.title, node.level)
+            ctx.bookmark_no += 1
+            bookmark(doc.paragraphs[-1], bookmark_name("s", node.id), ctx.bookmark_no)
             if node.content:
                 self._render_content(ctx, node.content, base_level=node.level, section_title=node.title)
             for child in node.children:
@@ -778,6 +785,29 @@ class DocxBidExporter:
             render_node(root_node)
 
         return self._save_document(doc, output_filename or self.download_name(project_name))
+
+    def _add_scoring_index(self, ctx, rows):
+        self._add_heading(ctx, "评分标准响应索引表", 1)
+        p = ctx.doc.add_paragraph("页码为动态域，最终排版后请在 Word 中全选并更新域。未编入的附件不标注页码。")
+        p.paragraph_format.first_line_indent = Pt(0)
+        def cells(values):
+            return [([_Tok("text", v)], "") for v in values]
+        data = [cells(["评分项", "分值", "响应章节", "证明附件", "页码"])]
+        for row in rows:
+            data.append(cells([row["name"], str(row["points"]) if row["points"] is not None else "未注明",
+                               "\n".join(s["title"] + ("（未撰写）" if not s["written"] else "") for s in row["sections"]) or "待补",
+                               "\n".join(a["asset_name"] + " / " + a["name"] + "（未编入）" for a in row["attachments"]) or "待补 / 不适用",
+                               "待补" if not row["sections"] else ""]))
+        table = self._add_table(ctx, data, 1, font_size=10)
+        for index, row in enumerate(rows, 1):
+            ctx.bookmark_no += 1
+            bookmark(table.cell(index, 0).paragraphs[0], row["bookmark"], ctx.bookmark_no)
+            paragraph = table.cell(index, 4).paragraphs[0]
+            for i, section in enumerate(row["sections"]):
+                if i:
+                    paragraph.add_run("、")
+                pageref(paragraph, section["bookmark"])
+        ctx.doc.add_page_break()
 
     def export_deviation_table(
         self,

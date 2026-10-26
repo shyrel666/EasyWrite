@@ -97,6 +97,7 @@ const templateId = ref('gov_standard')
 
 // 导出前检查清单：只提示、不阻止导出
 const preflight = ref(null)
+const includeScoringIndex = ref(true)
 const preflightLoading = ref(false)
 const openChecks = ref(new Set())
 const PREFLIGHT_ICON = {
@@ -181,7 +182,7 @@ async function exportWord() {
       exportProgress.value = `渲染架构图 ${i}/${n}…`
     })
     exportProgress.value = '生成 Word…'
-    await api.exportBid(props.projectId, templateId.value, diagrams)
+    await api.exportBid(props.projectId, templateId.value, diagrams, { include_scoring_index: includeScoringIndex.value })
     exportDialog.value = false
     if (failed) {
       ElMessage.warning(`已导出技术标书 Word；${failed} 张架构图代码有误未能渲染，文档中已留出插图位置`)
@@ -381,6 +382,12 @@ async function exportWord() {
       </section>
 
       <p class="text-xs text-ink-2 mb-3">选择排版模板（字体、主题色、页边距与页眉），可在「排版模板」中自定义。导出含封面、目录域与页码。</p>
+      <label class="text-sm block mb-2"><input v-model="includeScoringIndex" type="checkbox" data-test="scoring-index" /> 包含评分标准响应索引表</label>
+      <details v-if="includeScoringIndex && preflight?.scoring_index?.length" class="mb-3 text-xs">
+        <summary class="cursor-pointer">预览评分响应索引（{{ preflight.scoring_index.length }} 项）</summary>
+        <table class="table-clean w-full"><thead><tr><th>评分项</th><th>分值</th><th>响应章节</th><th>证明附件</th></tr></thead><tbody><tr v-for="r in preflight.scoring_index" :key="r.id"><td>{{ r.name }}</td><td>{{ r.points ?? '未注明' }}</td><td>{{ r.sections.map(s => s.title).join('；') || '待补' }}</td><td>{{ r.attachments.map(a => a.name).join('；') || '待补 / 不适用' }}</td></tr></tbody></table>
+        <p class="hint">页码由 Word 更新域后计算，请在最终版式下复核。</p>
+      </details>
       <div class="grid sm:grid-cols-2 gap-2.5 max-h-[30vh] overflow-auto p-0.5">
         <button
           v-for="t in templates"

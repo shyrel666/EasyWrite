@@ -4,6 +4,7 @@ import { createPinia } from 'pinia'
 import { ElMessage } from 'element-plus'
 import api from '@/api/client'
 import AppShell from '@/components/layout/AppShell.vue'
+import { renderOutlineDiagrams } from '@/utils/mermaid'
 
 vi.mock('vue-router', () => ({ useRoute: () => ({ fullPath: '/', name: 'workspace' }), useRouter: () => ({ push: vi.fn() }) }))
 vi.mock('@/utils/mermaid', () => ({ renderOutlineDiagrams: vi.fn().mockResolvedValue({ diagrams: [], total: 0, failed: 0 }) }))
@@ -11,6 +12,7 @@ let wrapper
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 
 beforeEach(() => {
+  renderOutlineDiagrams.mockResolvedValue({ diagrams: [], total: 0, failed: 0 })
   vi.spyOn(api, 'exportPreflight').mockResolvedValue({ ready: true, checks: [] })
   vi.spyOn(api, 'templates').mockResolvedValue({ templates: [{ id: 'gov_standard', name: '标准' }] })
   vi.spyOn(api, 'getProject').mockResolvedValue({ outline: [] })
@@ -64,4 +66,16 @@ it.each([false, 'throw'])('保存失败 %s 时停止检查和导出', async resu
   await click('导出 Word')
   expect(api.getProject).not.toHaveBeenCalled()
   expect(api.exportBid).not.toHaveBeenCalled()
+})
+
+it('评分索引默认开启，支持预览及关闭并传给导出接口', async () => {
+  api.exportPreflight.mockResolvedValue({ ready: true, checks: [], scoring_index: [{ id: 'i1', name: '评分甲', points: 10, sections: [], attachments: [] }] })
+  mount(vi.fn().mockResolvedValue(true))
+  await click('导出标书 Word')
+  expect(wrapper.text()).toContain('评分甲')
+  expect(wrapper.get('[data-test="scoring-index"]').element.checked).toBe(true)
+  await wrapper.get('[data-test="scoring-index"]').setValue(false)
+  await click('导出 Word')
+  expect(ElMessage.error).not.toHaveBeenCalled()
+  expect(api.exportBid).toHaveBeenCalledWith('p1', 'gov_standard', [], { include_scoring_index: false })
 })
