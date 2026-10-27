@@ -213,6 +213,7 @@ export const api = {
   // 承诺建议只复述招标要求，用户采纳后经 updateFacts 写入全局事实
   commitmentSuggestions: (id) => request(`/project/${id}/tender/commitment-suggestions`),
   tenderVersions: (id) => request(`/project/${id}/tender/versions`),
+  saveBlindBid: (id, body) => request(`/project/${id}/blind-bid`, { method: 'PUT', body }),
   addTenderDocument: (id, body) => request(`/project/${id}/tender/documents`, { method: 'POST', body }),
   uploadAddendum: (id, file, meta) => uploadFile(`/project/${id}/tender/documents/upload`, file, meta),
   suggestOverride: (id, body) => request(`/project/${id}/tender/overrides`, { method: 'POST', body }),
@@ -315,7 +316,7 @@ export const api = {
   exportBid: (id, templateId, diagrams, options = {}) =>
     downloadPost(`/project/${id}/export`, { template_id: templateId || 'gov_standard', diagrams, ...options }, '技术标书.docx'),
   // 导出前检查清单（只提示，不阻止导出）
-  exportPreflight: (id) => request(`/project/${id}/export/preflight`),
+  exportPreflight: (id, templateId = 'gov_standard') => request(`/project/${id}/export/preflight?template_id=${encodeURIComponent(templateId)}`),
   confirmVerification: (id, key, body) => request(`/project/${id}/verification/${encodeURIComponent(key)}`, { method: 'PUT', body }),
   deviationExportUrl: (id, templateId) =>
     `${BASE}/project/${id}/deviation/export?template_id=${templateId || 'gov_standard'}`,

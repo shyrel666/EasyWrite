@@ -271,6 +271,16 @@ class TenderVersions(BaseModel):
     active_document_id: str = ""
 
 
+class BlindBidConfig(BaseModel):
+    enabled: Optional[bool] = Field(default=None, description="项目级：None 表示沿用导出模板的默认设置")
+    font_name: Literal["宋体", "黑体", "仿宋", "楷体", "Arial", "Times New Roman"] = "宋体"
+    font_size: float = Field(default=12, ge=8, le=24)
+    numbering: Literal["decimal"] = "decimal"
+    rules: str = Field(default="", max_length=10000, description="招标方格式要求原文，供逐页核对")
+    identifiers: List[str] = Field(default_factory=list, max_length=200)
+    omit_images: bool = False
+
+
 class Project(BaseModel):
     id: str
     name: str
@@ -279,6 +289,7 @@ class Project(BaseModel):
     facts: GlobalFacts = Field(default_factory=GlobalFacts)
     tender_analysis: Optional[TenderAnalysis18] = None
     tender_versions: TenderVersions = Field(default_factory=TenderVersions)
+    blind_bid: BlindBidConfig = Field(default_factory=BlindBidConfig)
     deviation_matrix: List[DeviationItem] = Field(default_factory=list)
     outline: List[OutlineNode]
     evidence_links: Dict[str, List[str]] = Field(

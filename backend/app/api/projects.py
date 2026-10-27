@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Body
 
 from app.models.schemas import (
     Project, ProjectCreate, GlobalFacts,
-    OutlineUpdateRequest, ProjectListItem,
+    OutlineUpdateRequest, ProjectListItem, BlindBidConfig,
 )
 from app.services.project_store import find_node, merge_outline, project_store
 from app.services.proposals import proposal_store
@@ -54,6 +54,13 @@ def update_project_facts(project_id: str, facts: GlobalFacts):
 
     project_store.update(project_id, mutate)
     return {"status": "success", "facts": facts}
+
+
+@router.put("/project/{project_id}/blind-bid", summary="保存暗标技术册设置（enabled 为 null 表示沿用导出模板默认）")
+def update_blind_bid(project_id: str, config: BlindBidConfig):
+    # 导出格式设置不是标书内容，不刷新 updated_at，以免红线核查被误判为过期
+    project_store.update(project_id, lambda p: setattr(p, "blind_bid", config), touch=False)
+    return config
 
 
 @router.get("/project/{project_id}/verification", summary="全书核实事项与全部定位")

@@ -111,13 +111,14 @@ class ProjectStore:
             evidence_links=json.loads(row.evidence_json or "{}"),
             verification_decisions=json.loads(row.verification_json or "{}"),
             tender_versions=json.loads(row.tender_versions_json or "{}"),
+            blind_bid=json.loads(row.blind_bid_json or "{}"),
             stage=row.stage,
             created_at=row.created_at,
             updated_at=row.updated_at,
         )
 
     @staticmethod
-    def _apply_domain(row: ProjectModel, project: Project):
+    def _apply_domain(row: ProjectModel, project: Project, touch: bool = True):
         row.name = project.name
         row.client_name = project.client_name
         row.description = project.description
@@ -134,8 +135,10 @@ class ProjectStore:
         row.evidence_json = json.dumps(project.evidence_links, ensure_ascii=False)
         row.verification_json = json.dumps(project.verification_decisions, ensure_ascii=False)
         row.tender_versions_json = project.tender_versions.model_dump_json()
+        row.blind_bid_json = project.blind_bid.model_dump_json()
         row.stage = project.stage
-        row.updated_at = now_str()
+        if touch:
+            row.updated_at = now_str()
 
     # ---------------- CRUD ----------------
 
@@ -251,13 +254,14 @@ class ProjectStore:
 
     def update(
         self, project_id: str, mutate: Callable[[Project], T],
-        also: Optional[Callable[[Session, T], None]] = None,
+        also: Optional[Callable[[Session, T], None]] = None, touch: bool = True,
     ) -> T:
         """
         原子更新：写锁 + 单事务内读取最新项目 → mutate 就地修改 → 写回，返回 mutate 的返回值。
         mutate 内只做内存修改；LLM 调用等耗时操作必须放在 update 之外，避免长时间占锁。
         also(session, result)：在同一事务内、提交前执行的附加写入（如章节历史版本）。
         mutate 或 also 抛出异常时整个事务回滚、项目与附加写入都不落库。
+        touch=False：只改导出设置等非内容字段时不刷新 updated_at（红线核查据此判断内容是否有更新）。
         """
         with _write_lock, get_session() as session:
             row = session.get(ProjectModel, project_id)
@@ -265,7 +269,7 @@ class ProjectStore:
                 raise ProjectNotFound(project_id)
             project = self._to_domain(row)
             result = mutate(project)
-            self._apply_domain(row, project)
+            self._apply_domain(row, project, touch)
             session.add(row)
             if also is not None:
                 also(session, result)

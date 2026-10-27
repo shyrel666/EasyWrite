@@ -790,6 +790,7 @@ class DocxBidExporter:
         diagrams: Optional[Dict[str, bytes]] = None,
         scoring_index: Optional[List[dict]] = None,
         evidence_appendices: Optional[list] = None,
+        include_cover: bool = True,
     ) -> Path:
         """
         导出整本技术标书为标准 Word 文档。
@@ -798,7 +799,8 @@ class DocxBidExporter:
         cfg = style_cfg or self.default_style
         doc = self._new_document(cfg)
         ctx = _ExportContext(doc, cfg, diagrams)
-        self._add_cover_page(doc, project_name, client_name, facts or GlobalFacts())
+        if include_cover:
+            self._add_cover_page(doc, project_name, client_name, facts or GlobalFacts())
         self._add_toc(doc)
         evidence_appendices = evidence_appendices or []
         attachment_marks = {key: entry.bookmark for entry in evidence_appendices for key in entry.attachment_keys}

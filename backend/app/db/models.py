@@ -39,6 +39,7 @@ class ProjectModel(SQLModel, table=True):
     evidence_json: str = "{}"
     verification_json: str = "{}"
     tender_versions_json: str = "{}"
+    blind_bid_json: str = "{}"
     # 向导流程状态：created / tender_analyzed / outline_confirmed / writing
     stage: str = "created"
     status: str = "active"  # active / archived

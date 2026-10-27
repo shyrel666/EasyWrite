@@ -77,5 +77,5 @@ it('评分索引默认开启，支持预览及关闭并传给导出接口', asyn
   await wrapper.get('[data-test="scoring-index"]').setValue(false)
   await click('导出 Word')
   expect(ElMessage.error).not.toHaveBeenCalled()
-  expect(api.exportBid).toHaveBeenCalledWith('p1', 'gov_standard', [], { include_scoring_index: false, appendix_plan: [] })
+  expect(api.exportBid).toHaveBeenCalledWith('p1', 'gov_standard', [], { include_scoring_index: false, appendix_plan: [], book_kind: 'technical' })
 })

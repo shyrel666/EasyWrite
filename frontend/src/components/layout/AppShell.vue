@@ -1,6 +1,7 @@
 <script setup>
 import VerificationList from '@/components/evidence/VerificationList.vue'
 import AppendixPlanner from '@/components/evidence/AppendixPlanner.vue'
+import BlindBidSettings from '@/components/evidence/BlindBidSettings.vue'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAiStore } from '@/stores/ai'
@@ -100,6 +101,9 @@ const templateId = ref('gov_standard')
 const preflight = ref(null)
 const includeScoringIndex = ref(true)
 const appendixPlan = ref([])
+const blindConfig = ref({ enabled: false })
+const bookKind = ref('technical')
+const isBlind = computed(() => blindConfig.value.enabled && bookKind.value === 'technical')
 const preflightLoading = ref(false)
 const openChecks = ref(new Set())
 const PREFLIGHT_ICON = {
@@ -122,7 +126,8 @@ async function loadPreflight() {
   openChecks.value = new Set()
   try {
     if (!await prepareExport()) return false
-    preflight.value = await api.exportPreflight(props.projectId)
+    preflight.value = await api.exportPreflight(props.projectId, templateId.value)
+    blindConfig.value = preflight.value.blind_bid?.config || { enabled: false }
   } catch (e) {
     preflight.value = null
     ElMessage.error('导出前检查失败：' + e.message)
@@ -131,6 +136,12 @@ async function loadPreflight() {
   }
   return true
 }
+
+async function saveBlindMode() {
+  try { await api.saveBlindBid(props.projectId, blindConfig.value); await loadPreflight() }
+  catch (e) { ElMessage.error('保存暗标规则失败：' + e.message) }
+}
+watch(templateId, () => { if (exportDialog.value) loadPreflight() })
 
 function toggleCheck(key) {
   const next = new Set(openChecks.value)
@@ -177,14 +188,17 @@ async function exportWord() {
   exporting.value = true
   try {
     if (!await prepareExport()) return
+    if (JSON.stringify(blindConfig.value) !== JSON.stringify(preflight.value?.blind_bid?.config || { enabled: false })) {
+      await api.saveBlindBid(props.projectId, blindConfig.value)
+    }
     exportProgress.value = '读取标书内容…'
     const project = await api.getProject(props.projectId)
     const { renderOutlineDiagrams } = await import('@/utils/mermaid')
-    const { diagrams, failed, total } = await renderOutlineDiagrams(project.outline, (i, n) => {
+    const { diagrams, failed, total } = await renderOutlineDiagrams(isBlind.value || bookKind.value === 'qualification' ? [] : project.outline, (i, n) => {
       exportProgress.value = `渲染架构图 ${i}/${n}…`
     })
     exportProgress.value = '生成 Word…'
-    await api.exportBid(props.projectId, templateId.value, diagrams, { include_scoring_index: includeScoringIndex.value, appendix_plan: appendixPlan.value })
+    await api.exportBid(props.projectId, templateId.value, diagrams, { include_scoring_index: includeScoringIndex.value, appendix_plan: isBlind.value ? [] : appendixPlan.value, book_kind: bookKind.value })
     exportDialog.value = false
     if (failed) {
       ElMessage.warning(`已导出技术标书 Word；${failed} 张架构图代码有误未能渲染，文档中已留出插图位置`)
@@ -385,8 +399,10 @@ async function exportWord() {
       </section>
 
       <p class="text-xs text-ink-2 mb-3">选择排版模板（字体、主题色、页边距与页眉），可在「排版模板」中自定义。导出含封面、目录域与页码。</p>
-      <label class="text-sm block mb-2"><input v-model="includeScoringIndex" type="checkbox" data-test="scoring-index" /> 包含评分标准响应索引表</label>
-      <AppendixPlanner v-model="appendixPlan" :options="preflight?.appendix_options || []" />
+      <label class="text-sm block mb-2">导出册别 <select v-model="bookKind" aria-label="导出册别"><option value="technical">技术册</option><option value="qualification">明标资格证明册</option></select></label>
+      <BlindBidSettings v-if="bookKind === 'technical'" v-model="blindConfig" :report="preflight?.blind_bid" @save="saveBlindMode" @locate="locateSection" />
+      <label class="text-sm block mb-2"><input v-model="includeScoringIndex" :disabled="bookKind === 'qualification'" type="checkbox" data-test="scoring-index" /> 包含评分标准响应索引表</label>
+      <fieldset :disabled="isBlind"><AppendixPlanner v-model="appendixPlan" :options="preflight?.appendix_options || []" /></fieldset>
       <details v-if="includeScoringIndex && preflight?.scoring_index?.length" class="mb-3 text-xs">
         <summary class="cursor-pointer">预览评分响应索引（{{ preflight.scoring_index.length }} 项）</summary>
         <table class="table-clean w-full"><thead><tr><th>评分项</th><th>分值</th><th>响应章节</th><th>证明附件</th></tr></thead><tbody><tr v-for="r in preflight.scoring_index" :key="r.id"><td>{{ r.name }}</td><td>{{ r.points ?? '未注明' }}</td><td>{{ r.sections.map(s => s.title).join('；') || '待补' }}</td><td>{{ r.attachments.map(a => a.name).join('；') || '待补 / 不适用' }}</td></tr></tbody></table>
@@ -413,7 +429,7 @@ async function exportWord() {
       </div>
       <template #footer>
         <el-button :disabled="exporting" @click="exportDialog = false">取消</el-button>
-        <el-button type="primary" :disabled="!templateId" :loading="exporting" @click="exportWord">
+        <el-button type="primary" :disabled="!templateId || (isBlind && preflight?.blind_bid?.images?.length && !blindConfig.omit_images)" :loading="exporting" @click="exportWord">
           {{ exporting ? exportProgress : '导出 Word' }}
         </el-button>
       </template>
